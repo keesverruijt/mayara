@@ -86,30 +86,24 @@ async fn join_multicast(addr: SocketAddr) -> io::Result<UdpSocket> {
     Ok(socket)
 }
 
-pub async fn new(shutdown: Shutdown) -> io::Result<()> {
+async fn process_beacons(sock: &UdpSocket) -> io::Result<()> {
+    let mut buf = Vec::with_capacity(2048);
 
+    loop {
+        let (len, from) = sock.recv_buf_from(&mut buf).await?;
+
+        info!("Received {} bytes from {}", len, from);
+    }
+}
+
+pub async fn new(shutdown: Shutdown) -> io::Result<()> {
     let shutdown_handle = shutdown.handle();
     let sock: UdpSocket = join_multicast(NAVICO_BEACON_ADDRESS).await?;
 
-    let mut buf = Vec::with_capacity(2048);
-
     info!("Entering loop, listening for {}", NAVICO_BEACON_ADDRESS);
 
-    // #[allow(dead_code)]
     tokio::select! {
-        _ = async {
-            loop {
-                let (len, from) = sock.recv_buf_from(&mut buf).await?;
-
-                info!("Received {} bytes from {}", len, from);
-                if len > 3000 {
-                    break;
-                }
-            }
-
-            // Help the rust type inferencer out
-            Ok::<_, io::Error>(())
-        } => {}
+        _ = process_beacons(&sock) => {}
         _ = shutdown_handle => {
             info!("terminating locator loop");
         }
