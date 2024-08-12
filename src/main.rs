@@ -1,10 +1,10 @@
-
 mod locator;
 
 extern crate tokio;
 
-use env_logger::Env;
 use clap::Parser;
+use env_logger::Env;
+use log::info;
 
 /// Search for a pattern in a file and display the lines that contain it.
 #[derive(Parser)]
@@ -15,14 +15,15 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<(), ()> {
-
     let args = Cli::parse();
 
+    let log_level = args.verbose.log_level_filter();
     env_logger::Builder::from_env(Env::default())
-    .filter_level(args.verbose.log_level_filter())
-    .init();
+        .filter_level(log_level)
+        .init();
 
-    
+    info!("Mayara v0.xx loglevel {}", log_level);
+
     let shutdown = tokio_shutdown::Shutdown::new().expect("shutdown creation works on first call");
 
     // Start the locators which will populate our known radar list

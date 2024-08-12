@@ -1,23 +1,26 @@
 //
 // The locator finds all radars by listening for known packets on the network.
-// 
+//
 // Some radars can only be found by this method because they use fluent multicast
 // addresses, some are "easier" to locate by a fixed method, or just assuming they
-// are present. 
+// are present.
 // Still, we use this location method for all radars so the process is uniform.
 //
 
+mod navico;
+
 const NAVICO_BEACON_IPV4_ADDRESS: Ipv4Addr = Ipv4Addr::new(236, 6, 7, 5);
-const NAVICO_BEACON_PORT: u16 = 6878; 
-const NAVICO_BEACON_ADDRESS: SocketAddr = SocketAddr::new(IpAddr::V4(NAVICO_BEACON_IPV4_ADDRESS), NAVICO_BEACON_PORT); 
-   
+const NAVICO_BEACON_PORT: u16 = 6878;
+const NAVICO_BEACON_ADDRESS: SocketAddr =
+    SocketAddr::new(IpAddr::V4(NAVICO_BEACON_IPV4_ADDRESS), NAVICO_BEACON_PORT);
+
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
+use socket2::{Domain, Protocol, Type};
 use tokio::net::UdpSocket;
 use tokio_shutdown;
 use tokio_shutdown::Shutdown;
-use socket2::{Domain, Type, Protocol};
 
 use log::info;
 
@@ -38,13 +41,11 @@ fn new_socket(addr: &SocketAddr) -> io::Result<socket2::Socket> {
     Ok(socket)
 }
 
-
 /// On Windows, unlike all Unix variants, it is improper to bind to the multicast address
 ///
 /// see https://msdn.microsoft.com/en-us/library/windows/desktop/ms737550(v=vs.85).aspx
 #[cfg(windows)]
 fn bind_multicast(socket: &socket2::Socket, addr: SocketAddr) -> io::Result<()> {
-
     use core::net::Ipv6Addr;
 
     let addr = match addr {
@@ -80,35 +81,26 @@ async fn join_multicast(addr: SocketAddr) -> io::Result<UdpSocket> {
         }
     };
 
+    // let addr = SocketAddr::new(Ipv4Addr::new(10, 211, 55, 2).into(), 6878);
+
     bind_multicast(&socket, addr)?;
 
     let socket = UdpSocket::from_std(socket.into())?;
     Ok(socket)
 }
 
-async fn process_beacons(sock: &UdpSocket) -> io::Result<()> {
-    let mut buf = Vec::with_capacity(2048);
-
-    loop {
-        let (len, from) = sock.recv_buf_from(&mut buf).await?;
-
-        info!("Received {} bytes from {}", len, from);
-    }
-}
-
 pub async fn new(shutdown: Shutdown) -> io::Result<()> {
     let shutdown_handle = shutdown.handle();
-    let sock: UdpSocket = join_multicast(NAVICO_BEACON_ADDRESS).await?;
+    let navico_sock: UdpSocket = join_multicast(NAVICO_BEACON_ADDRESS).await?;
 
     info!("Entering loop, listening for {}", NAVICO_BEACON_ADDRESS);
 
     tokio::select! {
-        _ = process_beacons(&sock) => {}
+        _ = navico::process_navico_beacons(&navico_sock) => {}
         _ = shutdown_handle => {
             info!("terminating locator loop");
         }
     }
 
     Ok(())
-
 }
