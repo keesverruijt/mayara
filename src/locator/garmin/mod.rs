@@ -11,6 +11,7 @@ use tokio::net::UdpSocket;
 use tokio::time::sleep;
 
 use super::{join_multicast, RadarLocator};
+mod report;
 
 const GARMIN_BEACON_IPV4_ADDRESS: Ipv4Addr = Ipv4Addr::new(239, 254, 2, 0);
 const GARMIN_BEACON_PORT: u16 = 50100;
@@ -67,6 +68,7 @@ fn process_beacon(report: &[u8], from: SocketAddr) {
     }
 
     trace!("{}: Garmin beacon: {:?}", from, report);
+    report::process(report);
 }
 
 struct GarminLocator {
@@ -79,13 +81,17 @@ impl GarminLocator {
         match join_multicast(GARMIN_BEACON_ADDRESS).await {
             Ok(sock) => {
                 self.sock = Some(sock);
+                debug!(
+                    "Listening on {} for Garmin xHD (and others?)",
+                    GARMIN_BEACON_ADDRESS
+                );
                 Ok(())
             }
             Err(e) => {
                 sleep(Duration::from_millis(1000)).await;
                 debug!("Beacon multicast failed: {}", e);
                 Ok(())
-              }
+            }
         }
     }
 }

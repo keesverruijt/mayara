@@ -1,3 +1,78 @@
+
+
+use async_trait::async_trait;
+use bincode::deserialize;
+use log::{debug, error, trace};
+use serde::Deserialize;
+use std::fmt;
+use std::fmt::Display;
+use std::io;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::time::Duration;
+use tokio::net::UdpSocket;
+use tokio::time::sleep;
+
+use super::{join_multicast, RadarLocator};
+
+pub struct RadarLocationInfo {
+    serial_nr: String,             // Serial # for this radar
+    which: Option<String>,         // "A", "B" or None
+    addr: SocketAddr,              // The assigned IP address of the radar
+    spoke_data_addr: SocketAddr,   // Where the radar will send data spokes
+    report_addr: SocketAddr,       // Where the radar will send reports
+    send_command_addr: SocketAddr, // Where displays will send commands to the radar
+}
+
+impl RadarLocationInfo {
+    fn new(
+        serial_no: &str,
+        which: Option<&str>,
+        addr: SocketAddrV4,
+        data: SocketAddrV4,
+        report: SocketAddrV4,
+        send: SocketAddrV4,
+    ) -> Self {
+        RadarLocationInfo {
+            serial_nr: serial_no.to_owned(),
+            which: which.map(String::from),
+            addr: addr.into(),
+            spoke_data_addr: data.into(),
+            report_addr: report.into(),
+            send_command_addr: send.into(),
+        }
+    }
+}
+
+impl Display for RadarLocationInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Radar ")?;
+        if let Some(which) = &self.which {
+            write!(f, "{} ", which)?;
+        }
+        write!(f, "[{}] at {}", &self.serial_nr, &self.addr)?;
+        write!(
+            f,
+            " multicast addr {}/{}/{}",
+            &self.spoke_data_addr, &self.report_addr, &self.send_command_addr
+        )
+    }
+}
+
+const NAVICO_BEACON_ADDRESS: SocketAddr =
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(236, 6, 7, 5)), 6878);
+
+#[derive(Deserialize, Debug, Copy, Clone)]
+struct NetworkSocketAddrV4 {
+    addr: Ipv4Addr,
+    port: [u8; 2],
+}
+
+impl From<NetworkSocketAddrV4> for SocketAddrV4 {
+    fn from(item: NetworkSocketAddrV4) -> Self {
+        SocketAddrV4::new(item.addr, u16::from_be_bytes(item.port))
+    }
+}
+
 /*
 RADAR REPORTS
 
@@ -48,82 +123,6 @@ EC 06 07 0C 1A 04 11 00 00 00
 EC 06 07 0D 1A 05 12 00 00 00
 EC 06 07 0E 1A 06
 */
-
-use async_trait::async_trait;
-use bincode::deserialize;
-use log::{debug, error, trace};
-use serde::Deserialize;
-use tokio::time::sleep;
-use std::fmt;
-use std::fmt::Display;
-use std::io;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::time::Duration;
-use tokio::net::UdpSocket;
-
-use super::{join_multicast, RadarLocator};
-
-pub struct RadarLocationInfo {
-    serial_nr: String,             // Serial # for this radar
-    which: Option<String>,         // "A", "B" or None
-    addr: SocketAddr,              // The assigned IP address of the radar
-    spoke_data_addr: SocketAddr,   // Where the radar will send data spokes
-    report_addr: SocketAddr,       // Where the radar will send reports
-    send_command_addr: SocketAddr, // Where displays will send commands to the radar
-}
-
-impl RadarLocationInfo {
-    fn new(
-        serial_no: &str,
-        which: Option<&str>,
-        addr: SocketAddrV4,
-        data: SocketAddrV4,
-        report: SocketAddrV4,
-        send: SocketAddrV4,
-    ) -> Self {
-        RadarLocationInfo {
-            serial_nr: serial_no.to_owned(),
-            which: which.map(String::from),
-            addr: addr.into(),
-            spoke_data_addr: data.into(),
-            report_addr: report.into(),
-            send_command_addr: send.into(),
-        }
-    }
-}
-
-impl Display for RadarLocationInfo {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Radar ")?;
-        if let Some(which) = &self.which {
-            write!(f, "{} ", which)?;
-        }
-        write!(f, "[{}] at {}", &self.serial_nr, &self.addr)?;
-        write!(
-            f,
-            " multicast addr {}/{}/{}",
-            &self.spoke_data_addr, &self.report_addr, &self.send_command_addr
-        )
-    }
-}
-
-const NAVICO_BEACON_IPV4_ADDRESS: Ipv4Addr = Ipv4Addr::new(236, 6, 7, 5);
-const NAVICO_BEACON_PORT: u16 = 6878;
-const NAVICO_BEACON_ADDRESS: SocketAddr =
-    SocketAddr::new(IpAddr::V4(NAVICO_BEACON_IPV4_ADDRESS), NAVICO_BEACON_PORT);
-
-#[derive(Deserialize, Debug, Copy, Clone)]
-struct NetworkSocketAddrV4 {
-    addr: Ipv4Addr,
-    port: [u8; 2],
-}
-
-impl From<NetworkSocketAddrV4> for SocketAddrV4 {
-    fn from(item: NetworkSocketAddrV4) -> Self {
-        SocketAddrV4::new(item.addr, u16::from_be_bytes(item.port))
-    }
-}
-
 #[derive(Deserialize, Debug, Copy, Clone)]
 #[repr(packed)]
 struct NavicoBeaconHeader {
@@ -184,8 +183,53 @@ struct NavicoBeaconDual {
     */
 }
 
+const NAVICO_OLDGEN_BEACON_ADDRESS: SocketAddr =
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(236, 6, 7, 4)), 6768);
+
+/*  The following beacon package has been seen:
+    1, 178, // 0: id =
+    49, 48, 52, 55, 51, 48, 48, 48, 52, 51, 0, 0, 0, 0, 0, 0, // 2: Serial Nr
+    169, 254, 210, 23, 1, 1 // 18: Radar IP address
+    2, 0, 18, 0, 32, 1, 3, 0, 18, 0, 0, 0, // 
+    236, 6, 7, 19, 26, 33,
+    17, 0, 0, 0,
+    236, 6, 7, 20, 26, 34,
+    16, 0, 0, 0,
+    236, 6, 7, 18, 26, 32,
+    16, 0, 32, 1, 3, 0, 18, 0, 0, 0,
+    236, 6, 7, 9, 26, 23, // Report addr
+    17, 0, 0, 0,
+    236, 6, 7, 10, 26, 24,  // Send command addr
+    16, 0, 0, 0,
+    236, 6, 7, 8, 26, 22 // Data addr
+
+*/
+
+// The beacon message from BR24 (and first gen 3G) is _slightly_ different,
+// so it needs a different structure. It is also sent to a different MultiCast address!
+#[derive(Deserialize, Debug, Copy, Clone)]
+#[repr(packed)]
+struct BR24Beacon {
+    _id: u16,
+    serial_no: [u8; 16], // ASCII serial number, zero terminated
+    radar_addr: NetworkSocketAddrV4,
+    _filler1: [u8; 12],
+    _addr1: NetworkSocketAddrV4,
+    _filler2: [u8; 4],
+    _addr2: NetworkSocketAddrV4,
+    _filler3: [u8; 4],
+    _addr3: NetworkSocketAddrV4,
+    _filler4: [u8; 10],
+    data: NetworkSocketAddrV4, // Note different order from newer radars
+    _filler5: [u8; 4],
+    send: NetworkSocketAddrV4,
+    _filler6: [u8; 4],
+    report: NetworkSocketAddrV4,
+}
+
 const NAVICO_BEACON_SINGLE_SIZE: usize = size_of::<NavicoBeaconSingle>();
 const NAVICO_BEACON_DUAL_SIZE: usize = size_of::<NavicoBeaconDual>();
+const NAVICO_BEACON_BR24_SIZE: usize = size_of::<BR24Beacon>();
 
 fn c_string(bytes: &[u8]) -> Option<&str> {
     let bytes_without_null = match bytes.iter().position(|&b| b == 0) {
@@ -201,15 +245,17 @@ fn process_beacon(report: &[u8], from: SocketAddr) {
         return;
     }
 
-    trace!("{}: Navico beacon: {:?}", from, report);
+    trace!("{}: Navico beacon: {:?} len {}", from, report, report.len());
+    trace!("Known lengths: BR24={} Single={} Dual={}", NAVICO_BEACON_BR24_SIZE, NAVICO_BEACON_SINGLE_SIZE, NAVICO_BEACON_DUAL_SIZE);
     if report[0] == 0x01 && report[1] == 0xB1 {
         // Wake radar
         debug!("Wake radar request from {}", from);
         return;
     }
     if report[0] == 0x1 && report[1] == 0xB2 {
-        // Common Navico message from 4G++
-        if report.len() < size_of::<NavicoBeaconSingle>() {
+        // Common Navico message
+
+        if report.len() < size_of::<BR24Beacon>() {
             debug!("Incomplete beacon from {}, length {}", from, report.len());
             return;
         }
@@ -280,62 +326,159 @@ fn process_beacon(report: &[u8], from: SocketAddr) {
             }
             return;
         }
+
+
+        if report.len() == NAVICO_BEACON_BR24_SIZE {
+          match deserialize::<BR24Beacon>(report) {
+              Ok(data) => {
+                  if let Some(serial_no) = c_string(&data.serial_no) {
+                      let radar_addr: SocketAddrV4 = data.radar_addr.into();
+
+                      let radar_data: SocketAddrV4 = data.data.into();
+                      let radar_report: SocketAddrV4 = data.report.into();
+                      let radar_send: SocketAddrV4 = data.send.into();
+                      let location_info: RadarLocationInfo = RadarLocationInfo::new(
+                          serial_no,
+                          None,
+                          radar_addr,
+                          radar_data,
+                          radar_report,
+                          radar_send,
+                      );
+                      debug!("Received beacon from {}", &location_info);
+                  }
+              }
+              Err(e) => {
+                  error!("Failed to decode BR24 data: {}", e);
+              }
+          }
+          return;
+      }
+
     }
 }
 
-
 struct NavicoLocator {
-  buf: Vec<u8>,
-  sock: Option<UdpSocket>,
+    buf: Vec<u8>,
+    sock: Option<UdpSocket>,
 }
 
 impl NavicoLocator {
-  async fn start(&mut self) -> io::Result<()> {
-      match join_multicast(NAVICO_BEACON_ADDRESS).await {
-          Ok(sock) => {
-              self.sock = Some(sock);
-              Ok(())
-          }
-          Err(e) => {
-              sleep(Duration::from_millis(1000)).await;
-              debug!("Beacon multicast failed: {}", e);
-              Ok(())
+    async fn start(&mut self) -> io::Result<()> {
+        match join_multicast(NAVICO_BEACON_ADDRESS).await {
+            Ok(sock) => {
+                self.sock = Some(sock);
+                debug!("Listening on {} for Navico radars", NAVICO_BEACON_ADDRESS);
+                Ok(())
             }
-      }
-  }
+            Err(e) => {
+                sleep(Duration::from_millis(1000)).await;
+                debug!("Beacon multicast failed: {}", e);
+                Ok(())
+            }
+        }
+    }
 }
 
 #[async_trait]
 impl RadarLocator for NavicoLocator {
-  async fn process_beacons(&mut self) -> io::Result<()> {
-      self.start().await.unwrap();
-      loop {
-          match &self.sock {
-              Some(sock) => {
-                  self.buf.clear();
-                  match sock.recv_buf_from(&mut self.buf).await {
-                      Ok((_len, from)) => {
-                          process_beacon(&self.buf, from);
-                      }
-                      Err(e) => {
-                        debug!("Beacon read failed: {}", e);
-                          self.sock = None;
-                      }
-                  }
-              }
-              None => {
-                  sleep(Duration::from_millis(1000)).await;
-                  self.start().await.unwrap();
-              }
-          }
-      }
-  }
+    async fn process_beacons(&mut self) -> io::Result<()> {
+        self.start().await.unwrap();
+        loop {
+            match &self.sock {
+                Some(sock) => {
+                    self.buf.clear();
+                    match sock.recv_buf_from(&mut self.buf).await {
+                        Ok((_len, from)) => {
+                            process_beacon(&self.buf, from);
+                        }
+                        Err(e) => {
+                            debug!("Beacon read failed: {}", e);
+                            self.sock = None;
+                        }
+                    }
+                }
+                None => {
+                    sleep(Duration::from_millis(1000)).await;
+                    self.start().await.unwrap();
+                }
+            }
+        }
+    }
 }
 
 pub fn create_locator() -> Box<dyn RadarLocator + Send> {
-  let locator = NavicoLocator {
-      buf: Vec::with_capacity(2048),
-      sock: None,
-  };
-  Box::new(locator)
+    let locator = NavicoLocator {
+        buf: Vec::with_capacity(2048),
+        sock: None,
+    };
+    Box::new(locator)
+}
+
+fn process_oldgen_beacon(report: &[u8], from: SocketAddr) {
+    if report.len() < 2 {
+        return;
+    }
+
+    trace!("{}: Navico beacon: {:?}", from, report);
+}
+
+struct NavicoOldGenLocator {
+    buf: Vec<u8>,
+    sock: Option<UdpSocket>,
+}
+
+impl NavicoOldGenLocator {
+    async fn start(&mut self) -> io::Result<()> {
+        match join_multicast(NAVICO_OLDGEN_BEACON_ADDRESS).await {
+            Ok(sock) => {
+                self.sock = Some(sock);
+                debug!(
+                    "Listening on {} for Navico BR24",
+                    NAVICO_OLDGEN_BEACON_ADDRESS
+                );
+                Ok(())
+            }
+            Err(e) => {
+                sleep(Duration::from_millis(1000)).await;
+                debug!("Beacon multicast failed: {}", e);
+                Ok(())
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl RadarLocator for NavicoOldGenLocator {
+    async fn process_beacons(&mut self) -> io::Result<()> {
+        self.start().await.unwrap();
+        loop {
+            match &self.sock {
+                Some(sock) => {
+                    self.buf.clear();
+                    match sock.recv_buf_from(&mut self.buf).await {
+                        Ok((_len, from)) => {
+                            process_beacon(&self.buf, from);
+                        }
+                        Err(e) => {
+                            debug!("Beacon read failed: {}", e);
+                            self.sock = None;
+                        }
+                    }
+                }
+                None => {
+                    sleep(Duration::from_millis(1000)).await;
+                    self.start().await.unwrap();
+                }
+            }
+        }
+    }
+}
+
+pub fn create_oldgen_locator() -> Box<dyn RadarLocator + Send> {
+    let locator = NavicoOldGenLocator {
+        buf: Vec::with_capacity(2048),
+        sock: None,
+    };
+    Box::new(locator)
 }
