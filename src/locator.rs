@@ -95,14 +95,14 @@ pub async fn join_multicast(addr: SocketAddr) -> io::Result<UdpSocket> {
 pub async fn new(shutdown: Shutdown) -> io::Result<()> {
     let shutdown_handle = shutdown.handle();
     let mut navico_locator = navico::create_locator();
-    let mut navico_oldgen_locator = navico::create_oldgen_locator();
+    let mut navico_br24_locator = navico::create_br24_locator();
     let mut garmin_locator = garmin::create_locator();
 
     info!("Entering loop, listening for Navico and Garmin radars");
 
     tokio::select! {
         _ = navico_locator.process_beacons() => {}
-        _ = navico_oldgen_locator.process_beacons() => {}
+        _ = navico_br24_locator.process_beacons() => {}
         _ = garmin_locator.process_beacons() => {}
         _ = shutdown_handle => {
             info!("terminating locator loop");

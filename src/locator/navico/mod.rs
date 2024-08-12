@@ -183,7 +183,7 @@ struct NavicoBeaconDual {
     */
 }
 
-const NAVICO_OLDGEN_BEACON_ADDRESS: SocketAddr =
+const NAVICO_BR24_BEACON_ADDRESS: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(236, 6, 7, 4)), 6768);
 
 /*  The following beacon package has been seen:
@@ -415,7 +415,7 @@ pub fn create_locator() -> Box<dyn RadarLocator + Send> {
     Box::new(locator)
 }
 
-fn process_oldgen_beacon(report: &[u8], from: SocketAddr) {
+fn process_BR24_beacon(report: &[u8], from: SocketAddr) {
     if report.len() < 2 {
         return;
     }
@@ -423,19 +423,19 @@ fn process_oldgen_beacon(report: &[u8], from: SocketAddr) {
     trace!("{}: Navico beacon: {:?}", from, report);
 }
 
-struct NavicoOldGenLocator {
+struct NavicoBR24Locator {
     buf: Vec<u8>,
     sock: Option<UdpSocket>,
 }
 
-impl NavicoOldGenLocator {
+impl NavicoBR24Locator {
     async fn start(&mut self) -> io::Result<()> {
-        match join_multicast(NAVICO_OLDGEN_BEACON_ADDRESS).await {
+        match join_multicast(NAVICO_BR24_BEACON_ADDRESS).await {
             Ok(sock) => {
                 self.sock = Some(sock);
                 debug!(
                     "Listening on {} for Navico BR24",
-                    NAVICO_OLDGEN_BEACON_ADDRESS
+                    NAVICO_BR24_BEACON_ADDRESS
                 );
                 Ok(())
             }
@@ -449,7 +449,7 @@ impl NavicoOldGenLocator {
 }
 
 #[async_trait]
-impl RadarLocator for NavicoOldGenLocator {
+impl RadarLocator for NavicoBR24Locator {
     async fn process_beacons(&mut self) -> io::Result<()> {
         self.start().await.unwrap();
         loop {
@@ -475,8 +475,8 @@ impl RadarLocator for NavicoOldGenLocator {
     }
 }
 
-pub fn create_oldgen_locator() -> Box<dyn RadarLocator + Send> {
-    let locator = NavicoOldGenLocator {
+pub fn create_br24_locator() -> Box<dyn RadarLocator + Send> {
+    let locator = NavicoBR24Locator {
         buf: Vec::with_capacity(2048),
         sock: None,
     };
