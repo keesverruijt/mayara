@@ -1,11 +1,9 @@
 use async_trait::async_trait;
-use bincode::deserialize;
-use log::{debug, error, trace};
-use serde::Deserialize;
+use log::{debug, trace};
 use std::fmt;
 use std::fmt::Display;
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::time::sleep;
@@ -13,14 +11,13 @@ use tokio::time::sleep;
 use super::{join_multicast, RadarLocator};
 mod report;
 
-const GARMIN_BEACON_IPV4_ADDRESS: Ipv4Addr = Ipv4Addr::new(239, 254, 2, 0);
-const GARMIN_BEACON_PORT: u16 = 50100;
-const GARMIN_BEACON_ADDRESS: SocketAddr =
-    SocketAddr::new(IpAddr::V4(GARMIN_BEACON_IPV4_ADDRESS), GARMIN_BEACON_PORT);
+const GARMIN_REPORT_ADDRESS: SocketAddr =
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(239, 254, 2, 0)), 50100);
+const GARMIN_SEND_PORT: u16 = 50101;
+const GARMIN_DATA_ADDRESS: SocketAddr =
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(239, 254, 2, 0)), 50102);
 
 pub struct RadarLocationInfo {
-    serial_nr: String,             // Serial # for this radar
-    which: Option<String>,         // "A", "B" or None
     addr: SocketAddr,              // The assigned IP address of the radar
     spoke_data_addr: SocketAddr,   // Where the radar will send data spokes
     report_addr: SocketAddr,       // Where the radar will send reports
@@ -28,21 +25,12 @@ pub struct RadarLocationInfo {
 }
 
 impl RadarLocationInfo {
-    fn new(
-        serial_no: &str,
-        which: Option<&str>,
-        addr: SocketAddrV4,
-        data: SocketAddrV4,
-        report: SocketAddrV4,
-        send: SocketAddrV4,
-    ) -> Self {
+    fn new(addr: SocketAddr, data: SocketAddr, report: SocketAddr, send: SocketAddr) -> Self {
         RadarLocationInfo {
-            serial_nr: serial_no.to_owned(),
-            which: which.map(String::from),
-            addr: addr.into(),
-            spoke_data_addr: data.into(),
-            report_addr: report.into(),
-            send_command_addr: send.into(),
+            addr: addr,
+            spoke_data_addr: data,
+            report_addr: report,
+            send_command_addr: send,
         }
     }
 }
@@ -50,10 +38,7 @@ impl RadarLocationInfo {
 impl Display for RadarLocationInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Radar ")?;
-        if let Some(which) = &self.which {
-            write!(f, "{} ", which)?;
-        }
-        write!(f, "[{}] at {}", &self.serial_nr, &self.addr)?;
+        write!(f, "[Garmin] at {}", &self.addr)?;
         write!(
             f,
             " multicast addr {}/{}/{}",
@@ -72,18 +57,19 @@ fn process_beacon(report: &[u8], from: SocketAddr) {
 }
 
 struct GarminLocator {
+    found: bool,
     buf: Vec<u8>,
     sock: Option<UdpSocket>,
 }
 
 impl GarminLocator {
     async fn start(&mut self) -> io::Result<()> {
-        match join_multicast(GARMIN_BEACON_ADDRESS).await {
+        match join_multicast(GARMIN_REPORT_ADDRESS).await {
             Ok(sock) => {
                 self.sock = Some(sock);
                 debug!(
                     "Listening on {} for Garmin xHD (and others?)",
-                    GARMIN_BEACON_ADDRESS
+                    GARMIN_REPORT_ADDRESS
                 );
                 Ok(())
             }
@@ -106,7 +92,21 @@ impl RadarLocator for GarminLocator {
                     self.buf.clear();
                     match sock.recv_buf_from(&mut self.buf).await {
                         Ok((_len, from)) => {
-                            process_beacon(&self.buf, from);
+                            if self.found {
+                                process_beacon(&self.buf, from);
+                            } else {
+                                let mut radar_send = from.clone();
+
+                                radar_send.set_port(GARMIN_SEND_PORT);
+                                let location_info: RadarLocationInfo = RadarLocationInfo::new(
+                                    from,
+                                    GARMIN_DATA_ADDRESS,
+                                    GARMIN_REPORT_ADDRESS,
+                                    radar_send,
+                                );
+                                debug!("Received beacon from {}", &location_info);
+                                self.found = true;
+                            }
                         }
                         Err(e) => {
                             debug!("Beacon read failed: {}", e);
@@ -125,6 +125,7 @@ impl RadarLocator for GarminLocator {
 
 pub fn create_locator() -> Box<dyn RadarLocator + Send> {
     let locator = GarminLocator {
+        found: false,
         buf: Vec::with_capacity(2048),
         sock: None,
     };

@@ -5,6 +5,7 @@ use env_logger::Env;
 use log::info;
 
 mod locator;
+mod util;
 
 /// Search for a pattern in a file and display the lines that contain it.
 #[derive(Parser)]

@@ -1,5 +1,3 @@
-
-
 use async_trait::async_trait;
 use bincode::deserialize;
 use log::{debug, error, trace};
@@ -13,9 +11,10 @@ use tokio::net::UdpSocket;
 use tokio::time::sleep;
 
 use super::{join_multicast, RadarLocator};
+use crate::util::c_string;
 
 pub struct RadarLocationInfo {
-    serial_nr: String,             // Serial # for this radar
+    serial_no: String,             // Serial # for this radar
     which: Option<String>,         // "A", "B" or None
     addr: SocketAddr,              // The assigned IP address of the radar
     spoke_data_addr: SocketAddr,   // Where the radar will send data spokes
@@ -33,7 +32,7 @@ impl RadarLocationInfo {
         send: SocketAddrV4,
     ) -> Self {
         RadarLocationInfo {
-            serial_nr: serial_no.to_owned(),
+            serial_no: serial_no.to_owned(),
             which: which.map(String::from),
             addr: addr.into(),
             spoke_data_addr: data.into(),
@@ -49,7 +48,7 @@ impl Display for RadarLocationInfo {
         if let Some(which) = &self.which {
             write!(f, "{} ", which)?;
         }
-        write!(f, "[{}] at {}", &self.serial_nr, &self.addr)?;
+        write!(f, "[{}] at {}", &self.serial_no, &self.addr)?;
         write!(
             f,
             " multicast addr {}/{}/{}",
@@ -190,7 +189,7 @@ const NAVICO_BR24_BEACON_ADDRESS: SocketAddr =
     1, 178, // 0: id =
     49, 48, 52, 55, 51, 48, 48, 48, 52, 51, 0, 0, 0, 0, 0, 0, // 2: Serial Nr
     169, 254, 210, 23, 1, 1 // 18: Radar IP address
-    2, 0, 18, 0, 32, 1, 3, 0, 18, 0, 0, 0, // 
+    2, 0, 18, 0, 32, 1, 3, 0, 18, 0, 0, 0, //
     236, 6, 7, 19, 26, 33,
     17, 0, 0, 0,
     236, 6, 7, 20, 26, 34,
@@ -231,22 +230,18 @@ const NAVICO_BEACON_SINGLE_SIZE: usize = size_of::<NavicoBeaconSingle>();
 const NAVICO_BEACON_DUAL_SIZE: usize = size_of::<NavicoBeaconDual>();
 const NAVICO_BEACON_BR24_SIZE: usize = size_of::<BR24Beacon>();
 
-fn c_string(bytes: &[u8]) -> Option<&str> {
-    let bytes_without_null = match bytes.iter().position(|&b| b == 0) {
-        Some(ix) => &bytes[..ix],
-        None => bytes,
-    };
-
-    std::str::from_utf8(bytes_without_null).ok()
-}
-
 fn process_beacon(report: &[u8], from: SocketAddr) {
     if report.len() < 2 {
         return;
     }
 
     trace!("{}: Navico beacon: {:?} len {}", from, report, report.len());
-    trace!("Known lengths: BR24={} Single={} Dual={}", NAVICO_BEACON_BR24_SIZE, NAVICO_BEACON_SINGLE_SIZE, NAVICO_BEACON_DUAL_SIZE);
+    trace!(
+        "Known lengths: BR24={} Single={} Dual={}",
+        NAVICO_BEACON_BR24_SIZE,
+        NAVICO_BEACON_SINGLE_SIZE,
+        NAVICO_BEACON_DUAL_SIZE
+    );
     if report[0] == 0x01 && report[1] == 0xB1 {
         // Wake radar
         debug!("Wake radar request from {}", from);
@@ -327,34 +322,32 @@ fn process_beacon(report: &[u8], from: SocketAddr) {
             return;
         }
 
-
         if report.len() == NAVICO_BEACON_BR24_SIZE {
-          match deserialize::<BR24Beacon>(report) {
-              Ok(data) => {
-                  if let Some(serial_no) = c_string(&data.serial_no) {
-                      let radar_addr: SocketAddrV4 = data.radar_addr.into();
+            match deserialize::<BR24Beacon>(report) {
+                Ok(data) => {
+                    if let Some(serial_no) = c_string(&data.serial_no) {
+                        let radar_addr: SocketAddrV4 = data.radar_addr.into();
 
-                      let radar_data: SocketAddrV4 = data.data.into();
-                      let radar_report: SocketAddrV4 = data.report.into();
-                      let radar_send: SocketAddrV4 = data.send.into();
-                      let location_info: RadarLocationInfo = RadarLocationInfo::new(
-                          serial_no,
-                          None,
-                          radar_addr,
-                          radar_data,
-                          radar_report,
-                          radar_send,
-                      );
-                      debug!("Received beacon from {}", &location_info);
-                  }
-              }
-              Err(e) => {
-                  error!("Failed to decode BR24 data: {}", e);
-              }
-          }
-          return;
-      }
-
+                        let radar_data: SocketAddrV4 = data.data.into();
+                        let radar_report: SocketAddrV4 = data.report.into();
+                        let radar_send: SocketAddrV4 = data.send.into();
+                        let location_info: RadarLocationInfo = RadarLocationInfo::new(
+                            serial_no,
+                            None,
+                            radar_addr,
+                            radar_data,
+                            radar_report,
+                            radar_send,
+                        );
+                        debug!("Received beacon from {}", &location_info);
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to decode BR24 data: {}", e);
+                }
+            }
+            return;
+        }
     }
 }
 
@@ -413,14 +406,6 @@ pub fn create_locator() -> Box<dyn RadarLocator + Send> {
         sock: None,
     };
     Box::new(locator)
-}
-
-fn process_BR24_beacon(report: &[u8], from: SocketAddr) {
-    if report.len() < 2 {
-        return;
-    }
-
-    trace!("{}: Navico beacon: {:?}", from, report);
 }
 
 struct NavicoBR24Locator {
