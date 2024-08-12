@@ -7,12 +7,8 @@
 // Still, we use this location method for all radars so the process is uniform.
 //
 
+mod garmin;
 mod navico;
-
-const NAVICO_BEACON_IPV4_ADDRESS: Ipv4Addr = Ipv4Addr::new(236, 6, 7, 5);
-const NAVICO_BEACON_PORT: u16 = 6878;
-const NAVICO_BEACON_ADDRESS: SocketAddr =
-    SocketAddr::new(IpAddr::V4(NAVICO_BEACON_IPV4_ADDRESS), NAVICO_BEACON_PORT);
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -23,6 +19,13 @@ use tokio_shutdown;
 use tokio_shutdown::Shutdown;
 
 use log::info;
+
+use async_trait::async_trait;
+
+#[async_trait]
+pub trait RadarLocator {
+    async fn process_beacons(&mut self) -> io::Result<()>;
+}
 
 // this will be common for all our sockets
 fn new_socket(addr: &SocketAddr) -> io::Result<socket2::Socket> {
@@ -66,7 +69,7 @@ fn bind_multicast(socket: &socket2::Socket, addr: SocketAddr) -> io::Result<()> 
     Ok(())
 }
 
-async fn join_multicast(addr: SocketAddr) -> io::Result<UdpSocket> {
+pub async fn join_multicast(addr: SocketAddr) -> io::Result<UdpSocket> {
     let socket: socket2::Socket = new_socket(&addr)?;
 
     // depending on the IP protocol we have slightly different work
@@ -91,12 +94,16 @@ async fn join_multicast(addr: SocketAddr) -> io::Result<UdpSocket> {
 
 pub async fn new(shutdown: Shutdown) -> io::Result<()> {
     let shutdown_handle = shutdown.handle();
-    let navico_sock: UdpSocket = join_multicast(NAVICO_BEACON_ADDRESS).await?;
-
-    info!("Entering loop, listening for {}", NAVICO_BEACON_ADDRESS);
+    let mut navico_locator= navico::create_locator();
+    let mut garmin_locator = garmin::create_locator();
+    
+    info!(
+        "Entering loop, listening for Navico and Garmin radars"
+    );
 
     tokio::select! {
-        _ = navico::process_navico_beacons(&navico_sock) => {}
+        _ = navico_locator.process_beacons() => {}
+        _ = garmin_locator.process_beacons() => {}
         _ = shutdown_handle => {
             info!("terminating locator loop");
         }

@@ -1,10 +1,10 @@
-mod locator;
-
 extern crate tokio;
 
 use clap::Parser;
 use env_logger::Env;
 use log::info;
+
+mod locator;
 
 /// Search for a pattern in a file and display the lines that contain it.
 #[derive(Parser)]
