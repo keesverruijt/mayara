@@ -1,14 +1,15 @@
 use async_trait::async_trait;
-use log::{debug, info};
-use std::fmt;
-use std::fmt::Display;
+use log::debug;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::time::sleep;
 
-use super::{join_multicast, RadarLocator};
+use crate::radar::{located, Radars};
+
+use super::{join_multicast, RadarLocationInfo, RadarLocator};
 mod report;
 
 const GARMIN_REPORT_ADDRESS: SocketAddr =
@@ -16,36 +17,6 @@ const GARMIN_REPORT_ADDRESS: SocketAddr =
 const GARMIN_SEND_PORT: u16 = 50101;
 const GARMIN_DATA_ADDRESS: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(239, 254, 2, 0)), 50102);
-
-pub struct RadarLocationInfo {
-    addr: SocketAddr,              // The assigned IP address of the radar
-    spoke_data_addr: SocketAddr,   // Where the radar will send data spokes
-    report_addr: SocketAddr,       // Where the radar will send reports
-    send_command_addr: SocketAddr, // Where displays will send commands to the radar
-}
-
-impl RadarLocationInfo {
-    fn new(addr: SocketAddr, data: SocketAddr, report: SocketAddr, send: SocketAddr) -> Self {
-        RadarLocationInfo {
-            addr: addr,
-            spoke_data_addr: data,
-            report_addr: report,
-            send_command_addr: send,
-        }
-    }
-}
-
-impl Display for RadarLocationInfo {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Radar ")?;
-        write!(f, "[Garmin] at {}", &self.addr)?;
-        write!(
-            f,
-            " multicast addr {}/{}/{}",
-            &self.spoke_data_addr, &self.report_addr, &self.send_command_addr
-        )
-    }
-}
 
 fn process_beacon(report: &[u8]) {
     if report.len() < 2 {
@@ -83,7 +54,7 @@ impl GarminLocator {
 
 #[async_trait]
 impl RadarLocator for GarminLocator {
-    async fn process_beacons(&mut self) -> io::Result<()> {
+    async fn process_beacons(&mut self, radars: Arc<RwLock<Radars>>) -> io::Result<()> {
         self.start().await.unwrap();
         loop {
             match &self.sock {
@@ -98,12 +69,17 @@ impl RadarLocator for GarminLocator {
 
                                 radar_send.set_port(GARMIN_SEND_PORT);
                                 let location_info: RadarLocationInfo = RadarLocationInfo::new(
+                                    "Garmin",
+                                    None,
+                                    None,
+                                    None,
                                     from,
                                     GARMIN_DATA_ADDRESS,
                                     GARMIN_REPORT_ADDRESS,
                                     radar_send,
                                 );
-                                info!("Located {}", &location_info);
+                                located(location_info, &radars);
+
                                 self.found = true;
                             }
                         }

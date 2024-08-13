@@ -12,19 +12,20 @@ mod navico;
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::{Arc, RwLock};
 
+use async_trait::async_trait;
+use log::info;
 use socket2::{Domain, Protocol, Type};
 use tokio::net::UdpSocket;
 use tokio_shutdown;
 use tokio_shutdown::Shutdown;
 
-use log::info;
-
-use async_trait::async_trait;
+use crate::radar::{RadarLocationInfo, Radars};
 
 #[async_trait]
 pub trait RadarLocator {
-    async fn process_beacons(&mut self) -> io::Result<()>;
+    async fn process_beacons(&mut self, detected_radars: Arc<RwLock<Radars>>) -> io::Result<()>;
 }
 
 // this will be common for all our sockets
@@ -97,13 +98,14 @@ pub async fn new(shutdown: Shutdown) -> io::Result<()> {
     let mut navico_locator = navico::create_locator();
     let mut navico_br24_locator = navico::create_br24_locator();
     let mut garmin_locator = garmin::create_locator();
+    let detected_radars = Radars::new();
 
     info!("Entering loop, listening for Navico and Garmin radars");
 
     tokio::select! {
-        _ = navico_locator.process_beacons() => {}
-        _ = navico_br24_locator.process_beacons() => {}
-        _ = garmin_locator.process_beacons() => {}
+        _ = navico_locator.process_beacons(detected_radars.clone()) => {}
+        _ = navico_br24_locator.process_beacons(detected_radars.clone()) => {}
+        _ = garmin_locator.process_beacons(detected_radars.clone()) => {}
         _ = shutdown_handle => {
             info!("terminating locator loop");
         }

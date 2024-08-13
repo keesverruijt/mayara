@@ -1,62 +1,18 @@
 use async_trait::async_trait;
 use bincode::deserialize;
-use log::{debug, error, info, log_enabled, trace};
+use log::{debug, error, log_enabled, trace};
 use serde::Deserialize;
-use std::fmt;
-use std::fmt::Display;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::time::sleep;
 
 use super::{join_multicast, RadarLocator};
+use crate::radar::{located, RadarLocationInfo, Radars};
 use crate::util::c_string;
 use crate::util::PrintableSlice;
-
-pub struct RadarLocationInfo {
-    serial_no: String,             // Serial # for this radar
-    which: Option<String>,         // "A", "B" or None
-    addr: SocketAddr,              // The assigned IP address of the radar
-    spoke_data_addr: SocketAddr,   // Where the radar will send data spokes
-    report_addr: SocketAddr,       // Where the radar will send reports
-    send_command_addr: SocketAddr, // Where displays will send commands to the radar
-}
-
-impl RadarLocationInfo {
-    fn new(
-        serial_no: &str,
-        which: Option<&str>,
-        addr: SocketAddrV4,
-        data: SocketAddrV4,
-        report: SocketAddrV4,
-        send: SocketAddrV4,
-    ) -> Self {
-        RadarLocationInfo {
-            serial_no: serial_no.to_owned(),
-            which: which.map(String::from),
-            addr: addr.into(),
-            spoke_data_addr: data.into(),
-            report_addr: report.into(),
-            send_command_addr: send.into(),
-        }
-    }
-}
-
-impl Display for RadarLocationInfo {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Radar ")?;
-        if let Some(which) = &self.which {
-            write!(f, "{} ", which)?;
-        }
-        write!(f, "[{}] at {}", &self.serial_no, &self.addr)?;
-        write!(
-            f,
-            " multicast addr {}/{}/{}",
-            &self.spoke_data_addr, &self.report_addr, &self.send_command_addr
-        )
-    }
-}
 
 const NAVICO_BEACON_ADDRESS: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(236, 6, 7, 5)), 6878);
@@ -231,7 +187,7 @@ const NAVICO_BEACON_SINGLE_SIZE: usize = size_of::<NavicoBeaconSingle>();
 const NAVICO_BEACON_DUAL_SIZE: usize = size_of::<NavicoBeaconDual>();
 const NAVICO_BEACON_BR24_SIZE: usize = size_of::<BR24Beacon>();
 
-fn process_beacon(report: &[u8], from: SocketAddr) {
+fn process_beacon(report: &[u8], from: SocketAddr, radars: &Arc<RwLock<Radars>>) {
     if report.len() < 2 {
         return;
     }
@@ -269,27 +225,31 @@ fn process_beacon(report: &[u8], from: SocketAddr) {
                         let radar_report: SocketAddrV4 = data.a.report.into();
                         let radar_send: SocketAddrV4 = data.a.send.into();
                         let location_info: RadarLocationInfo = RadarLocationInfo::new(
-                            serial_no,
+                            "Navico",
+                            None,
+                            Some(serial_no),
                             Some("A"),
-                            radar_addr,
-                            radar_data,
-                            radar_report,
-                            radar_send,
+                            radar_addr.into(),
+                            radar_data.into(),
+                            radar_report.into(),
+                            radar_send.into(),
                         );
-                        info!("Located {}", &location_info);
+                        located(location_info, radars);
 
                         let radar_data: SocketAddrV4 = data.b.data.into();
                         let radar_report: SocketAddrV4 = data.b.report.into();
                         let radar_send: SocketAddrV4 = data.b.send.into();
                         let location_info: RadarLocationInfo = RadarLocationInfo::new(
-                            serial_no,
+                            "Navico",
+                            None,
+                            Some(serial_no),
                             Some("B"),
-                            radar_addr,
-                            radar_data,
-                            radar_report,
-                            radar_send,
+                            radar_addr.into(),
+                            radar_data.into(),
+                            radar_report.into(),
+                            radar_send.into(),
                         );
-                        info!("Located {}", &location_info);
+                        located(location_info, radars);
                     }
                 }
                 Err(e) => {
@@ -309,14 +269,16 @@ fn process_beacon(report: &[u8], from: SocketAddr) {
                         let radar_report: SocketAddrV4 = data.a.report.into();
                         let radar_send: SocketAddrV4 = data.a.send.into();
                         let location_info: RadarLocationInfo = RadarLocationInfo::new(
-                            serial_no,
+                            "Navico",
                             None,
-                            radar_addr,
-                            radar_data,
-                            radar_report,
-                            radar_send,
+                            Some(serial_no),
+                            None,
+                            radar_addr.into(),
+                            radar_data.into(),
+                            radar_report.into(),
+                            radar_send.into(),
                         );
-                        info!("Located {}", &location_info);
+                        located(location_info, radars);
                     }
                 }
                 Err(e) => {
@@ -336,14 +298,16 @@ fn process_beacon(report: &[u8], from: SocketAddr) {
                         let radar_report: SocketAddrV4 = data.report.into();
                         let radar_send: SocketAddrV4 = data.send.into();
                         let location_info: RadarLocationInfo = RadarLocationInfo::new(
-                            serial_no,
+                            "Navico",
+                            Some("BR24"),
+                            Some(serial_no),
                             None,
-                            radar_addr,
-                            radar_data,
-                            radar_report,
-                            radar_send,
+                            radar_addr.into(),
+                            radar_data.into(),
+                            radar_report.into(),
+                            radar_send.into(),
                         );
-                        debug!("Received beacon from {}", &location_info);
+                        located(location_info, radars);
                     }
                 }
                 Err(e) => {
@@ -379,7 +343,7 @@ impl NavicoLocator {
 
 #[async_trait]
 impl RadarLocator for NavicoLocator {
-    async fn process_beacons(&mut self) -> io::Result<()> {
+    async fn process_beacons(&mut self, radars: Arc<RwLock<Radars>>) -> io::Result<()> {
         self.start().await.unwrap();
         loop {
             match &self.sock {
@@ -387,7 +351,7 @@ impl RadarLocator for NavicoLocator {
                     self.buf.clear();
                     match sock.recv_buf_from(&mut self.buf).await {
                         Ok((_len, from)) => {
-                            process_beacon(&self.buf, from);
+                            process_beacon(&self.buf, from, &radars);
                         }
                         Err(e) => {
                             debug!("Beacon read failed: {}", e);
@@ -439,7 +403,7 @@ impl NavicoBR24Locator {
 
 #[async_trait]
 impl RadarLocator for NavicoBR24Locator {
-    async fn process_beacons(&mut self) -> io::Result<()> {
+    async fn process_beacons(&mut self, radars: Arc<RwLock<Radars>>) -> io::Result<()> {
         self.start().await.unwrap();
         loop {
             match &self.sock {
@@ -447,7 +411,7 @@ impl RadarLocator for NavicoBR24Locator {
                     self.buf.clear();
                     match sock.recv_buf_from(&mut self.buf).await {
                         Ok((_len, from)) => {
-                            process_beacon(&self.buf, from);
+                            process_beacon(&self.buf, from, &radars);
                         }
                         Err(e) => {
                             debug!("Beacon read failed: {}", e);
