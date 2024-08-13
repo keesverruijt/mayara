@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use log::{debug, trace};
+use log::{debug, info};
 use std::fmt;
 use std::fmt::Display;
 use std::io;
@@ -47,12 +47,11 @@ impl Display for RadarLocationInfo {
     }
 }
 
-fn process_beacon(report: &[u8], from: SocketAddr) {
+fn process_beacon(report: &[u8]) {
     if report.len() < 2 {
         return;
     }
 
-    trace!("{}: Garmin beacon: {:?}", from, report);
     report::process(report);
 }
 
@@ -93,7 +92,7 @@ impl RadarLocator for GarminLocator {
                     match sock.recv_buf_from(&mut self.buf).await {
                         Ok((_len, from)) => {
                             if self.found {
-                                process_beacon(&self.buf, from);
+                                process_beacon(&self.buf);
                             } else {
                                 let mut radar_send = from.clone();
 
@@ -104,7 +103,7 @@ impl RadarLocator for GarminLocator {
                                     GARMIN_REPORT_ADDRESS,
                                     radar_send,
                                 );
-                                debug!("Received beacon from {}", &location_info);
+                                info!("Located {}", &location_info);
                                 self.found = true;
                             }
                         }

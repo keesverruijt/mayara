@@ -1,6 +1,6 @@
-use log::{debug, trace, warn};
+use log::{debug, log_enabled, trace, warn};
 
-use crate::util::c_string;
+use crate::util::{c_string, PrintableSlice};
 
 pub fn process(report: &[u8]) {
     if report.len() < size_of::<u32>() * 2 + size_of::<u8>() {
@@ -11,13 +11,6 @@ pub fn process(report: &[u8]) {
     let (len, data) = data.split_at(std::mem::size_of::<u32>());
     let packet_type = u32::from_le_bytes(packet_type.try_into().unwrap());
     let len = u32::from_le_bytes(len.try_into().unwrap());
-
-    trace!(
-        "Garmin message type {} len {} data {:?}",
-        packet_type,
-        len,
-        data
-    );
 
     if data.len() != len as usize {
         warn!(
@@ -117,6 +110,28 @@ pub fn process(report: &[u8]) {
             debug!("Scanner message \"{}\"", info);
         }
 
-        _ => {}
+        _ => {
+            if log_enabled!(log::Level::Trace) {
+                if len == 4 {
+                    trace!(
+                        "0x{:04X}: value 0x{:X} / {} / angle {:.1}",
+                        packet_type,
+                        value,
+                        value,
+                        value as i32 as f32 / 32.0
+                    );
+                } else if len == 1 || len == 2 {
+                    trace!("0x{:04X}: value 0x{:X} / {}", packet_type, value, value);
+                } else {
+                    trace!(
+                        "0x{:04X}: Unknown report: {:02X?} len {}",
+                        packet_type,
+                        data,
+                        len
+                    );
+                    trace!("                        {}", PrintableSlice::new(data));
+                }
+            }
+        }
     }
 }

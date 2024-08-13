@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use bincode::deserialize;
-use log::{debug, error, trace};
+use log::{debug, error, info, log_enabled, trace};
 use serde::Deserialize;
 use std::fmt;
 use std::fmt::Display;
@@ -12,6 +12,7 @@ use tokio::time::sleep;
 
 use super::{join_multicast, RadarLocator};
 use crate::util::c_string;
+use crate::util::PrintableSlice;
 
 pub struct RadarLocationInfo {
     serial_no: String,             // Serial # for this radar
@@ -235,13 +236,16 @@ fn process_beacon(report: &[u8], from: SocketAddr) {
         return;
     }
 
-    trace!("{}: Navico beacon: {:?} len {}", from, report, report.len());
-    trace!(
-        "Known lengths: BR24={} Single={} Dual={}",
-        NAVICO_BEACON_BR24_SIZE,
-        NAVICO_BEACON_SINGLE_SIZE,
-        NAVICO_BEACON_DUAL_SIZE
-    );
+    if log_enabled!(log::Level::Trace) {
+        trace!(
+            "{}: Navico beacon: {:02X?} len {}",
+            from,
+            report,
+            report.len()
+        );
+        trace!("{}: printable:     {}", from, PrintableSlice::new(report));
+    }
+
     if report[0] == 0x01 && report[1] == 0xB1 {
         // Wake radar
         debug!("Wake radar request from {}", from);
@@ -272,7 +276,7 @@ fn process_beacon(report: &[u8], from: SocketAddr) {
                             radar_report,
                             radar_send,
                         );
-                        debug!("Received beacon from {}", &location_info);
+                        info!("Located {}", &location_info);
 
                         let radar_data: SocketAddrV4 = data.b.data.into();
                         let radar_report: SocketAddrV4 = data.b.report.into();
@@ -285,7 +289,7 @@ fn process_beacon(report: &[u8], from: SocketAddr) {
                             radar_report,
                             radar_send,
                         );
-                        debug!("Received beacon from {}", &location_info);
+                        info!("Located {}", &location_info);
                     }
                 }
                 Err(e) => {
@@ -312,7 +316,7 @@ fn process_beacon(report: &[u8], from: SocketAddr) {
                             radar_report,
                             radar_send,
                         );
-                        debug!("Received beacon from {}", &location_info);
+                        info!("Located {}", &location_info);
                     }
                 }
                 Err(e) => {
