@@ -7,9 +7,10 @@ use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::time::sleep;
 
-use crate::radar::{located, Radars};
+use crate::radar::{located, RadarLocationInfo, Radars};
 
-use super::{join_multicast, RadarLocationInfo, RadarLocator};
+use crate::locator::{join_multicast, RadarLocator};
+
 mod report;
 
 const GARMIN_REPORT_ADDRESS: SocketAddr =

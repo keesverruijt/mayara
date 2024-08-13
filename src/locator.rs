@@ -7,9 +7,6 @@
 // Still, we use this location method for all radars so the process is uniform.
 //
 
-mod garmin;
-mod navico;
-
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, RwLock};
@@ -21,7 +18,8 @@ use tokio::net::UdpSocket;
 use tokio_shutdown;
 use tokio_shutdown::Shutdown;
 
-use crate::radar::{RadarLocationInfo, Radars};
+use crate::radar::Radars;
+use crate::{garmin, navico};
 
 #[async_trait]
 pub trait RadarLocator {

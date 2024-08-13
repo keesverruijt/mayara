@@ -4,7 +4,9 @@ use clap::Parser;
 use env_logger::Env;
 use log::info;
 
+mod garmin;
 mod locator;
+mod navico;
 mod radar;
 mod util;
 

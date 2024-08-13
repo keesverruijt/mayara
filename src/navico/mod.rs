@@ -9,7 +9,7 @@ use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::time::sleep;
 
-use super::{join_multicast, RadarLocator};
+use crate::locator::{join_multicast, RadarLocator};
 use crate::radar::{located, RadarLocationInfo, Radars};
 use crate::util::c_string;
 use crate::util::PrintableSlice;
