@@ -35,5 +35,5 @@ At the moment I intend to support the following radars:
 
 ## Status
 
-See [TODO.md]
+See (TODO.md)
 
