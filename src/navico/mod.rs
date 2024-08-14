@@ -14,6 +14,8 @@ use crate::radar::{located, RadarLocationInfo, Radars};
 use crate::util::c_string;
 use crate::util::PrintableSlice;
 
+mod receive;
+
 const NAVICO_BEACON_ADDRESS: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(236, 6, 7, 5)), 6878);
 
