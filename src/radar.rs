@@ -1,7 +1,9 @@
+use async_trait::async_trait;
 use log::info;
 use std::{
     collections::HashMap,
     fmt::{self, Display, Write},
+    io,
     net::SocketAddr,
     sync::{Arc, RwLock},
 };
@@ -79,10 +81,21 @@ impl Radars {
     }
 }
 
-// A radar has been found
-pub fn located(new_info: RadarLocationInfo, radars: &Arc<RwLock<Radars>>) {
-    let key = get_key(&new_info);
+pub struct Statistics {
+    broken_packets: usize,
+}
 
+#[async_trait]
+pub trait RadarProcessor {
+    async fn process(&mut self, info: RadarLocationInfo) -> io::Result<()>;
+}
+
+// A radar has been found
+pub fn located(
+    new_info: RadarLocationInfo,
+    radars: &Arc<RwLock<Radars>>,
+) -> Option<RadarLocationInfo> {
+    let key = get_key(&new_info);
     let mut radars = radars.write().unwrap();
     let count = radars.info.len();
     let entry = radars.info.entry(key).or_insert(new_info);
@@ -91,6 +104,9 @@ pub fn located(new_info: RadarLocationInfo, radars: &Arc<RwLock<Radars>>) {
         entry.id = count + 1;
 
         info!("Located a new radar: {}", &entry);
+        Some(entry.clone())
+    } else {
+        None
     }
 }
 

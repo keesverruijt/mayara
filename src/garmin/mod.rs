@@ -6,10 +6,11 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::time::sleep;
+use tokio_shutdown::Shutdown;
 
+use crate::locator::RadarLocator;
 use crate::radar::{located, RadarLocationInfo, Radars};
-
-use crate::locator::{join_multicast, RadarLocator};
+use crate::util::join_multicast;
 
 mod report;
 
@@ -35,7 +36,7 @@ struct GarminLocator {
 
 impl GarminLocator {
     async fn start(&mut self) -> io::Result<()> {
-        match join_multicast(GARMIN_REPORT_ADDRESS).await {
+        match join_multicast(&GARMIN_REPORT_ADDRESS).await {
             Ok(sock) => {
                 self.sock = Some(sock);
                 debug!(
@@ -53,9 +54,29 @@ impl GarminLocator {
     }
 }
 
+async fn found(
+    info: RadarLocationInfo,
+    radars: &Arc<RwLock<Radars>>,
+    shutdown: &Shutdown,
+) -> io::Result<()> {
+    if let Some(info) = located(info, radars) {
+        // It's new, start the RadarProcessor thread
+        // let shutdown = shutdown.clone();
+        //tokio::spawn(async move {
+        //   receive::Receive::run(info, shutdown).await.unwrap();
+        //});
+        // TODO do something with the join handle
+    }
+    Ok(())
+}
+
 #[async_trait]
 impl RadarLocator for GarminLocator {
-    async fn process_beacons(&mut self, radars: Arc<RwLock<Radars>>) -> io::Result<()> {
+    async fn process_beacons(
+        &mut self,
+        radars: Arc<RwLock<Radars>>,
+        shutdown: Shutdown,
+    ) -> io::Result<()> {
         self.start().await.unwrap();
         loop {
             match &self.sock {
@@ -79,7 +100,7 @@ impl RadarLocator for GarminLocator {
                                     GARMIN_REPORT_ADDRESS,
                                     radar_send,
                                 );
-                                located(location_info, &radars);
+                                found(location_info, &radars, &shutdown).await.unwrap();
 
                                 self.found = true;
                             }

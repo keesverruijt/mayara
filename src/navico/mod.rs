@@ -8,11 +8,12 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::time::sleep;
+use tokio_shutdown::Shutdown;
 
-use crate::locator::{join_multicast, RadarLocator};
+use crate::locator::RadarLocator;
 use crate::radar::{located, RadarLocationInfo, Radars};
-use crate::util::c_string;
 use crate::util::PrintableSlice;
+use crate::util::{c_string, join_multicast};
 
 mod receive;
 
@@ -189,9 +190,31 @@ const NAVICO_BEACON_SINGLE_SIZE: usize = size_of::<NavicoBeaconSingle>();
 const NAVICO_BEACON_DUAL_SIZE: usize = size_of::<NavicoBeaconDual>();
 const NAVICO_BEACON_BR24_SIZE: usize = size_of::<BR24Beacon>();
 
-fn process_beacon(report: &[u8], from: SocketAddr, radars: &Arc<RwLock<Radars>>) {
+async fn found(
+    info: RadarLocationInfo,
+    radars: &Arc<RwLock<Radars>>,
+    shutdown: &Shutdown,
+) -> io::Result<()> {
+    if let Some(info) = located(info, radars) {
+        // It's new, start the RadarProcessor thread
+        let shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            let mut receiver = receive::Receive::new(info);
+            receiver.run(shutdown).await.unwrap();
+        });
+        // TODO do something with the join handle
+    }
+    Ok(())
+}
+
+async fn process_beacon(
+    report: &[u8],
+    from: SocketAddr,
+    radars: &Arc<RwLock<Radars>>,
+    shutdown: &Shutdown,
+) -> io::Result<()> {
     if report.len() < 2 {
-        return;
+        return Ok(());
     }
 
     if log_enabled!(log::Level::Trace) {
@@ -207,14 +230,14 @@ fn process_beacon(report: &[u8], from: SocketAddr, radars: &Arc<RwLock<Radars>>)
     if report[0] == 0x01 && report[1] == 0xB1 {
         // Wake radar
         debug!("Wake radar request from {}", from);
-        return;
+        return Ok(());
     }
     if report[0] == 0x1 && report[1] == 0xB2 {
         // Common Navico message
 
         if report.len() < size_of::<BR24Beacon>() {
             debug!("Incomplete beacon from {}, length {}", from, report.len());
-            return;
+            return Ok(());
         }
 
         if report.len() >= NAVICO_BEACON_DUAL_SIZE {
@@ -236,7 +259,7 @@ fn process_beacon(report: &[u8], from: SocketAddr, radars: &Arc<RwLock<Radars>>)
                             radar_report.into(),
                             radar_send.into(),
                         );
-                        located(location_info, radars);
+                        found(location_info, radars, shutdown).await.unwrap();
 
                         let radar_data: SocketAddrV4 = data.b.data.into();
                         let radar_report: SocketAddrV4 = data.b.report.into();
@@ -251,17 +274,14 @@ fn process_beacon(report: &[u8], from: SocketAddr, radars: &Arc<RwLock<Radars>>)
                             radar_report.into(),
                             radar_send.into(),
                         );
-                        located(location_info, radars);
+                        found(location_info, radars, shutdown).await.unwrap();
                     }
                 }
                 Err(e) => {
                     error!("Failed to decode dual range data: {}", e);
                 }
             }
-            return;
-        }
-
-        if report.len() >= NAVICO_BEACON_SINGLE_SIZE {
+        } else if report.len() >= NAVICO_BEACON_SINGLE_SIZE {
             match deserialize::<NavicoBeaconSingle>(report) {
                 Ok(data) => {
                     if let Some(serial_no) = c_string(&data.header.serial_no) {
@@ -280,17 +300,14 @@ fn process_beacon(report: &[u8], from: SocketAddr, radars: &Arc<RwLock<Radars>>)
                             radar_report.into(),
                             radar_send.into(),
                         );
-                        located(location_info, radars);
+                        found(location_info, radars, shutdown).await.unwrap();
                     }
                 }
                 Err(e) => {
                     error!("Failed to decode dual range data: {}", e);
                 }
             }
-            return;
-        }
-
-        if report.len() == NAVICO_BEACON_BR24_SIZE {
+        } else if report.len() == NAVICO_BEACON_BR24_SIZE {
             match deserialize::<BR24Beacon>(report) {
                 Ok(data) => {
                     if let Some(serial_no) = c_string(&data.serial_no) {
@@ -309,16 +326,16 @@ fn process_beacon(report: &[u8], from: SocketAddr, radars: &Arc<RwLock<Radars>>)
                             radar_report.into(),
                             radar_send.into(),
                         );
-                        located(location_info, radars);
+                        found(location_info, radars, shutdown).await.unwrap();
                     }
                 }
                 Err(e) => {
                     error!("Failed to decode BR24 data: {}", e);
                 }
             }
-            return;
         }
     }
+    Ok(())
 }
 
 struct NavicoLocator {
@@ -328,7 +345,7 @@ struct NavicoLocator {
 
 impl NavicoLocator {
     async fn start(&mut self) -> io::Result<()> {
-        match join_multicast(NAVICO_BEACON_ADDRESS).await {
+        match join_multicast(&NAVICO_BEACON_ADDRESS).await {
             Ok(sock) => {
                 self.sock = Some(sock);
                 debug!("Listening on {} for Navico radars", NAVICO_BEACON_ADDRESS);
@@ -345,7 +362,11 @@ impl NavicoLocator {
 
 #[async_trait]
 impl RadarLocator for NavicoLocator {
-    async fn process_beacons(&mut self, radars: Arc<RwLock<Radars>>) -> io::Result<()> {
+    async fn process_beacons(
+        &mut self,
+        radars: Arc<RwLock<Radars>>,
+        shutdown: Shutdown,
+    ) -> io::Result<()> {
         self.start().await.unwrap();
         loop {
             match &self.sock {
@@ -353,7 +374,9 @@ impl RadarLocator for NavicoLocator {
                     self.buf.clear();
                     match sock.recv_buf_from(&mut self.buf).await {
                         Ok((_len, from)) => {
-                            process_beacon(&self.buf, from, &radars);
+                            process_beacon(&self.buf, from, &radars, &shutdown)
+                                .await
+                                .unwrap();
                         }
                         Err(e) => {
                             debug!("Beacon read failed: {}", e);
@@ -385,7 +408,7 @@ struct NavicoBR24Locator {
 
 impl NavicoBR24Locator {
     async fn start(&mut self) -> io::Result<()> {
-        match join_multicast(NAVICO_BR24_BEACON_ADDRESS).await {
+        match join_multicast(&NAVICO_BR24_BEACON_ADDRESS).await {
             Ok(sock) => {
                 self.sock = Some(sock);
                 debug!(
@@ -405,7 +428,11 @@ impl NavicoBR24Locator {
 
 #[async_trait]
 impl RadarLocator for NavicoBR24Locator {
-    async fn process_beacons(&mut self, radars: Arc<RwLock<Radars>>) -> io::Result<()> {
+    async fn process_beacons(
+        &mut self,
+        radars: Arc<RwLock<Radars>>,
+        shutdown: Shutdown,
+    ) -> io::Result<()> {
         self.start().await.unwrap();
         loop {
             match &self.sock {
@@ -413,7 +440,9 @@ impl RadarLocator for NavicoBR24Locator {
                     self.buf.clear();
                     match sock.recv_buf_from(&mut self.buf).await {
                         Ok((_len, from)) => {
-                            process_beacon(&self.buf, from, &radars);
+                            process_beacon(&self.buf, from, &radars, &shutdown)
+                                .await
+                                .unwrap();
                         }
                         Err(e) => {
                             debug!("Beacon read failed: {}", e);

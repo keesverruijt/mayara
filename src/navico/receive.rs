@@ -1,5 +1,15 @@
-use std::net::SocketAddr;
+use bincode::deserialize;
+use log::{debug, trace, warn};
+use serde::Deserialize;
+use std::io;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::time::Duration;
+use tokio::net::UdpSocket;
+use tokio::time::sleep;
+use tokio_shutdown::Shutdown;
 
+use crate::radar::RadarLocationInfo;
+use crate::util::join_multicast;
 
 // Size of a pixel in bits. Every pixel is 4 bits (one nibble.)
 const NAVICO_BITS_PER_PIXEL: usize = 4;
@@ -28,190 +38,386 @@ fn heading_value(x: u16) -> bool {
 
 // One MFD or OpenCPN shall send the radar timing and heading info
 // Without this the Doppler function doesn't work
-const HALO_INFO_ADDRESS : SocketAddr =
-    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(239, 238, 55, 73)), 7527); 
+const HALO_INFO_ADDRESS: SocketAddr =
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(239, 238, 55, 73)), 7527);
 
+#[derive(Deserialize, Debug, Clone, Copy)]
 #[repr(packed)]
 struct HaloHeadingPacket {
-  marker: [u8; 4],    // 4 bytes containing 'NKOE'
-_u00: [u8;4],    // 4 bytes containing '00 01 90 02'
-  counter: u16,  // 2 byte counter incrementing by 1 every transmission, in BigEndian
-  // 10
-  _u01: [u8; 26],  // 25 bytes of unknown stuff that doesn't seem to vary
-  // 36
-  _u02: [u8; 2],  // 2 bytes containing '12 f1'
-  _u03: [u8; 2],  // 2 bytes containing '01 00'
-  // 40
-  epoch: u128,  // 8 bytes containing millis since 1970
-  // 48
-  _u04: [u8; 2],  // 8 bytes containing 2
-  // 56
-  _u05a: [u8; 4],  // 4 bytes containing some fixed data, could be position?
-  // 60
-  _u05b: [u8; 4],  // 4 bytes containing some fixed data, could be position?
-  // 64
-  _u06: u8,  // 1 byte containing counter or 0xff
-  // 65
-  heading: u16,  // 2 bytes containing heading
-  // 67
-  u07: [u8;5],  // 5 bytes containing varying unknown data
-  // 72
+    marker: [u8; 4], // 4 bytes containing 'NKOE'
+    _u00: [u8; 4],   // 4 bytes containing '00 01 90 02'
+    counter: u16,    // 2 byte counter incrementing by 1 every transmission, in BigEndian
+    // 10
+    _u01: [u8; 26], // 25 bytes of unknown stuff that doesn't seem to vary
+    // 36
+    _u02: [u8; 2], // 2 bytes containing '12 f1'
+    _u03: [u8; 2], // 2 bytes containing '01 00'
+    // 40
+    epoch: u128, // 8 bytes containing millis since 1970
+    // 48
+    _u04: [u8; 2], // 8 bytes containing 2
+    // 56
+    _u05a: [u8; 4], // 4 bytes containing some fixed data, could be position?
+    // 60
+    _u05b: [u8; 4], // 4 bytes containing some fixed data, could be position?
+    // 64
+    _u06: u8, // 1 byte containing counter or 0xff
+    // 65
+    heading: u16, // 2 bytes containing heading
+    // 67
+    u07: [u8; 5], // 5 bytes containing varying unknown data
+                  // 72
 }
 
+#[derive(Deserialize, Debug, Clone, Copy)]
+#[repr(packed)]
 struct HaloMysteryPacket {
-  marker: [u8; 4],    // 4 bytes containing 'NKOE'
-_u00: [u8;4],    // 4 bytes containing '00 01 90 02'
-  counter: u16,  // 2 byte counter incrementing by 1 every transmission, in BigEndian
-  // 10
-  _u01: [u8;26],  // 26 bytes of unknown stuff that doesn't seem to vary
-  // 36
-  _u02: [u8;2],  // 2 bytes containing '02 f8'...
-  _u03: [u8;2],  // 2 bytes containing '01 00'
-  // 40
-  epoch: u128,  // 8 bytes containing millis since 1970
-  // 48
-  _u04: [u8;8],  // 8 bytes containing 2
-  // 56
-  _u05a: u32,  // 4 bytes containing some fixed data, could be position?
-  // 60
-  _u05b: u32,  // 4 bytes containing some fixed data, could be position?
-  // 64
-  _u06: u8,  // 1 byte containing counter or 0xff
-  // 65
-  _u07: u8,  // 1 byte containing 0xfc
-  // 66
-  _mystery1: u16,  // 2 bytes containing some varying field
-  // 68
-  _mystery2: u16,  // 2 bytes containing some varying field
-  // 70
-  _u08: [u8; 2],  // 2 bytes containg 0xff 0xff
-  // 72
+    marker: [u8; 4], // 4 bytes containing 'NKOE'
+    _u00: [u8; 4],   // 4 bytes containing '00 01 90 02'
+    counter: u16,    // 2 byte counter incrementing by 1 every transmission, in BigEndian
+    // 10
+    _u01: [u8; 26], // 26 bytes of unknown stuff that doesn't seem to vary
+    // 36
+    _u02: [u8; 2], // 2 bytes containing '02 f8'...
+    _u03: [u8; 2], // 2 bytes containing '01 00'
+    // 40
+    epoch: u128, // 8 bytes containing millis since 1970
+    // 48
+    _u04: [u8; 8], // 8 bytes containing 2
+    // 56
+    _u05a: u32, // 4 bytes containing some fixed data, could be position?
+    // 60
+    _u05b: u32, // 4 bytes containing some fixed data, could be position?
+    // 64
+    _u06: u8, // 1 byte containing counter or 0xff
+    // 65
+    _u07: u8, // 1 byte containing 0xfc
+    // 66
+    _mystery1: u16, // 2 bytes containing some varying field
+    // 68
+    _mystery2: u16, // 2 bytes containing some varying field
+    // 70
+    _u08: [u8; 2], // 2 bytes containg 0xff 0xff
+                   // 72
 }
 
-struct CommonHeader {
-  header_len: u8,    // 1 bytes
-  status: u8,       // 1 bytes
-  scan_number: [u8; 2],  // 1 byte (HALO and newer), 2 bytes (4G and older)
-  mark: [u8; 2],       // 2 bytes, on BR24 this is always 0x00, 0x44, 0x0d, 0x0e (flowing into
-                       // large_range next field
-  large_range: [u8; 2],   // 2 bytes, on 4G and up
-  angle: [u8; 2],     // 2 bytes
-  heading: [u8; 2],   // 2 bytes heading with RI-10/11. See bitmask explanation above.
-}
-
+#[derive(Deserialize, Debug, Clone, Copy)]
+#[repr(packed)]
 struct Br24Header {
-  common: CommonHeader,
-  range: [u8;4],        // 4 bytes
-  _u01[u8;2],          // 2 bytes blank
-  _u02[u8;2],          // 2 bytes
-  _u03[u8;4],          // 4 bytes blank
-}                         /* total size = 24 */
+    header_len: u8,       // 1 bytes
+    status: u8,           // 1 bytes
+    scan_number: [u8; 2], // 1 byte (HALO and newer), 2 bytes (4G and older)
+    mark: [u8; 4],        // 4 bytes, on BR24 this is always 0x00, 0x44, 0x0d, 0x0e
+    angle: [u8; 2],       // 2 bytes
+    heading: [u8; 2],     // 2 bytes heading with RI-10/11. See bitmask explanation above.
+    range: [u8; 4],       // 4 bytes
+    _u01: [u8; 2],        // 2 bytes blank
+    _u02: [u8; 2],        // 2 bytes
+    _u03: [u8; 4],        // 4 bytes blank
+} /* total size = 24 */
 
+#[derive(Deserialize, Debug, Clone, Copy)]
+#[repr(packed)]
 struct Br4gHeader {
-  common: CommonHeader,
-  small_range: [u8;2],        // 2 bytes or -1
-  rotation: [u8;2],        // 2 bytes or -1
-  _u01[u8;4],          // 4 bytes signed integer, always -1
-  _u02[u8;4],          // 4 bytes signed integer, mostly -1 (0x80 in last byte) or 0xa0 in last byte
-}                         /* total size = 24 */
+    header_len: u8,       // 1 bytes
+    status: u8,           // 1 bytes
+    scan_number: [u8; 2], // 1 byte (HALO and newer), 2 bytes (4G and older)
+    _mark: [u8; 2],       // 2 bytes
+    large_range: [u8; 2], // 2 bytes, on 4G and up
+    angle: [u8; 2],       // 2 bytes
+    heading: [u8; 2],     // 2 bytes heading with RI-10/11. See bitmask explanation above.
+    small_range: [u8; 2], // 2 bytes or -1
+    rotation: [u8; 2],    // 2 bytes or -1
+    _u01: [u8; 4],        // 4 bytes signed integer, always -1
+    _u02: [u8; 4], // 4 bytes signed integer, mostly -1 (0x80 in last byte) or 0xa0 in last byte
+} /* total size = 24 */
 
+#[derive(Debug, Clone, Copy)]
+#[repr(packed)]
 struct RadarLine {
-  header: Br4gHeader;
-  data: [u8; NAVICO_SPOKE_LEN / 2];
+    header: Br4gHeader, // or Br24Header
+    data: [u8; NAVICO_SPOKE_LEN / 2],
 }
 
-/* Normally the packets are have 32 spokes, or scan lines, but we assume nothing
- * so we take up to 120 spokes. This is the nearest round figure without going over
- * 64kB.
- */
+#[repr(packed)]
+struct FrameHeader {
+    _frame_hdr: [u8; 8],
+}
 
+#[repr(packed)]
 struct RadarFramePkt {
-  frame_hdr: [u8; 8];
-  line: [RadarLine; 64];  //  scan lines, or spokes
+    _header: FrameHeader,
+    _line: [RadarLine; 32], //  scan lines, or spokes
 }
+
+const FRAME_HEADER_LENGTH: usize = size_of::<FrameHeader>();
+const RADAR_LINE_DATA_LENGTH: usize = NAVICO_SPOKE_LEN / 2;
+const RADAR_LINE_HEADER_LENGTH: usize = size_of::<Br4gHeader>();
+const RADAR_LINE_LENGTH: usize = size_of::<RadarLine>();
 
 enum LookupSpokeEnum {
-  LookupSpokeLowNormal = 0,
-  LookupSpokeLowBoth = 1,
-  LookupSpokeLowApproaching =2,
-  LookupSpokeHighNormal = 3,
-  LookupSpokeHighBoth =4 ,
-  LookupSpokeHighApproaching = 5
+    LookupSpokeLowNormal = 0,
+    LookupSpokeLowBoth = 1,
+    LookupSpokeLowApproaching = 2,
+    LookupSpokeHighNormal = 3,
+    LookupSpokeHighBoth = 4,
+    LookupSpokeHighApproaching = 5,
 }
 
 // Make space for BLOB_HISTORY_COLORS
 const LOOKUP_NIBBLE_TO_BYTE: [u8; 16] = [
-    0,     // 0
-    0x32,  // 1
-    0x40,  // 2
-    0x4e,  // 3
-    0x5c,  // 4
-    0x6a,  // 5
-    0x78,  // 6
-    0x86,  // 7
-    0x94,  // 8
-    0xa2,  // 9
-    0xb0,  // a
-    0xbe,  // b
-    0xcc,  // c
-    0xda,  // d
-    0xe8,  // e
-    0xf4,  // f
+    0,    // 0
+    0x32, // 1
+    0x40, // 2
+    0x4e, // 3
+    0x5c, // 4
+    0x6a, // 5
+    0x78, // 6
+    0x86, // 7
+    0x94, // 8
+    0xa2, // 9
+    0xb0, // a
+    0xbe, // b
+    0xcc, // c
+    0xda, // d
+    0xe8, // e
+    0xf4, // f
 ];
 
-struct LookupData {
-    lookup: [[u8; 256]; 6]
+const LOOKUP_PIXEL_VALUE: [[u8; 256]; 6] = {
+    let mut lookup: [[u8; 256]; 6] = [[0; 256]; 6];
+    // Cannot use for() in const expr, so use while instead
+    let mut j: usize = 0;
+    while j < 256 {
+        let low: u8 = LOOKUP_NIBBLE_TO_BYTE[j & 0x0f];
+        let high: u8 = LOOKUP_NIBBLE_TO_BYTE[(j >> 4) & 0x0f];
+
+        lookup[LookupSpokeEnum::LookupSpokeLowNormal as usize][j] = low;
+        lookup[LookupSpokeEnum::LookupSpokeLowBoth as usize][j] = match low {
+            0xf4 => 0xff,
+            0xe8 => 0xfe,
+            _ => low,
+        };
+        lookup[LookupSpokeEnum::LookupSpokeLowApproaching as usize][j] = match low {
+            0xf4 => 0xff,
+            _ => low,
+        };
+        lookup[LookupSpokeEnum::LookupSpokeHighNormal as usize][j] = high;
+        lookup[LookupSpokeEnum::LookupSpokeHighBoth as usize][j] = match low {
+            0xf4 => 0xff,
+            0xe8 => 0xfe,
+            _ => high,
+        };
+        lookup[LookupSpokeEnum::LookupSpokeHighApproaching as usize][j] = match low {
+            0xf4 => 0xff,
+            _ => high,
+        };
+        j += 1;
+    }
+    lookup
+};
+
+pub struct Statistics {
+    broken_packets: usize,
 }
 
-fn compute_lookup_data(lookupData: &mut LookupData) {
-  let lookup = &lookupData.lookup;
-  if (lookup[LookupSpokeEnum::LookupSpokeHighApproaching as usize][255] == 0) {
-    
-    for j in 0..=255 {
-      let low: u8 = LOOKUP_NIBBLE_TO_BYTE[j & 0x0f];
-      let high: u8 = LOOKUP_NIBBLE_TO_BYTE[(j >> 4) & 0x0f];
+pub struct Receive {
+    statistics: Statistics,
+    info: RadarLocationInfo,
+    buf: Vec<u8>,
+    sock: Option<UdpSocket>,
+}
 
-      lookup[LookupSpokeEnum::LookupSpokeLowNormal as usize][j] = low;
-      lookup[LookupSpokeEnum::LookupSpokeHighNormal as usize][j] = high;
-
-      switch low {
-        case 0xf4:
-          lookup[LOOKUP_SPOKE_LOW_BOTH][j] = 0xff;
-          lookup[LOOKUP_SPOKE_LOW_APPROACHING][j] = 0xff;
-          break;
-
-        case 0xe8:
-          lookup[LOOKUP_SPOKE_LOW_BOTH][j] = 0xfe;
-          lookup[LOOKUP_SPOKE_LOW_APPROACHING][j] = (uint8_t)low;
-          break;
-
-        default:
-          lookup[LOOKUP_SPOKE_LOW_BOTH][j] = (uint8_t)low;
-          lookup[LOOKUP_SPOKE_LOW_APPROACHING][j] = (uint8_t)low;
-      }
-
-      switch (high) {
-        case 0xf4:
-          lookup[LOOKUP_SPOKE_HIGH_BOTH][j] = 0xff;
-          lookup[LOOKUP_SPOKE_HIGH_APPROACHING][j] = 0xff;
-          break;
-
-        case 0xe8:
-          lookup[LOOKUP_SPOKE_HIGH_BOTH][j] = 0xfe;
-          lookup[LOOKUP_SPOKE_HIGH_APPROACHING][j] = (uint8_t)high;
-          break;
-
-        default:
-          lookup[LOOKUP_SPOKE_HIGH_BOTH][j] = (uint8_t)high;
-          lookup[LOOKUP_SPOKE_HIGH_APPROACHING][j] = (uint8_t)high;
-      }
+impl Receive {
+    pub fn new(info: RadarLocationInfo) -> Self {
+        Receive {
+            statistics: Statistics { broken_packets: 0 },
+            info: info,
+            buf: Vec::with_capacity(size_of::<RadarFramePkt>()),
+            sock: None,
+        }
     }
-      
-  }
+
+    async fn start_socket(&mut self) -> io::Result<()> {
+        match join_multicast(&self.info.spoke_data_addr).await {
+            Ok(sock) => {
+                self.sock = Some(sock);
+                debug!("Listening on {} for Navico spokes", &self.info.report_addr);
+                Ok(())
+            }
+            Err(e) => {
+                sleep(Duration::from_millis(1000)).await;
+                debug!("Beacon multicast failed: {}", e);
+                Ok(())
+            }
+        }
+    }
+
+    async fn socket_loop(&mut self, shutdown: &Shutdown) -> io::Result<()> {
+        loop {
+            let shutdown_handle = shutdown.handle();
+            tokio::select! {
+              _ = self.sock.as_ref().unwrap().recv_buf_from(&mut self.buf)  => {
+                  self.process_frame();
+                  self.buf.clear();
+              },
+              _ = shutdown_handle => {
+                break;
+              }
+            };
+        }
+        Ok(())
+    }
+
+    pub async fn run(&mut self, shutdown: Shutdown) -> io::Result<()> {
+        debug!("Started receive thread");
+        self.start_socket().await.unwrap();
+        loop {
+            if self.sock.is_some() {
+                self.socket_loop(&shutdown).await.unwrap();
+                self.sock = None;
+            } else {
+                sleep(Duration::from_millis(1000)).await;
+                self.start_socket().await.unwrap();
+            }
+        }
+    }
+
+    fn process_frame(&mut self) {
+        let data = &self.buf;
+
+        if data.len() < FRAME_HEADER_LENGTH + RADAR_LINE_LENGTH {
+            warn!(
+                "UDP data frame with even less than one spoke, len {} dropped",
+                data.len()
+            );
+            return;
+        }
+
+        let mut scanlines_in_packet = (data.len() - FRAME_HEADER_LENGTH) / RADAR_LINE_LENGTH;
+        if scanlines_in_packet != 32 {
+            self.statistics.broken_packets += 1;
+            if scanlines_in_packet > 32 {
+                scanlines_in_packet = 32;
+            }
+        }
+        debug!("Received UDP frame with {} spokes", &scanlines_in_packet);
+
+        let mut offset: usize = FRAME_HEADER_LENGTH;
+        for scanline in 0..scanlines_in_packet {
+            let header_slice = &data[offset..offset + RADAR_LINE_HEADER_LENGTH];
+            let spoke_slice = &data[offset + RADAR_LINE_HEADER_LENGTH
+                ..offset + RADAR_LINE_HEADER_LENGTH + RADAR_LINE_DATA_LENGTH];
+
+            match deserialize::<Br4gHeader>(&header_slice) {
+                Ok(header) => {
+                    trace!(
+                        "Received {} header {:?} spoke {:?}",
+                        scanline,
+                        header,
+                        spoke_slice
+                    );
+                }
+                Err(e) => {
+                    warn!("Illegible spoke: {} header {:02X?}", e, &header_slice);
+                }
+            };
+            offset += RADAR_LINE_LENGTH;
+        }
+    }
 }
 
 /*
- 
+    radar_line *line = &packet->line[scanline];
+
+    // Validate the spoke
+    uint8_t scan = line->common.scan_number;
+    m_ri->m_statistics.spokes++;
+    if (line->common.headerLen != 0x18) {
+      LOG_RECEIVE(wxT("%s strange header length %d"), m_ri->m_name.c_str(), line->common.headerLen);
+      // Do not draw something with this...
+      m_ri->m_statistics.broken_spokes++;
+      m_next_scan = scan + 1;  // We use automatic rollover of uint8_t here
+      continue;
+    }
+    if (line->common.status != 0x02 && line->common.status != 0x12) {
+      LOG_RECEIVE(wxT("%s strange status %02x"), m_ri->m_name.c_str(), line->common.status);
+      m_ri->m_statistics.broken_spokes++;
+    }
+
+    LOG_RECEIVE(wxT("%s scan=%d m_next_scan=%d"), m_ri->m_name.c_str(), scan, m_next_scan);
+    if (m_next_scan >= 0 && scan != m_next_scan) {
+      if (scan > m_next_scan) {
+        m_ri->m_statistics.missing_spokes += scan - m_next_scan;
+      } else {
+        m_ri->m_statistics.missing_spokes += SCAN_MAX + scan - m_next_scan;
+      }
+    }
+    m_next_scan = scan + 1;  // We use automatic rollover of uint8_t here
+
+    int range_raw = 0;
+    int angle_raw = 0;
+    short int heading_raw = 0;
+    int range_meters = 0;
+
+    heading_raw = (line->common.heading[1] << 8) | line->common.heading[0];
+
+    switch (m_ri->m_radar_type) {
+      case RT_BR24: {
+        range_raw = ((line->br24.range[2] & 0xff) << 16 | (line->br24.range[1] & 0xff) << 8 | (line->br24.range[0] & 0xff));
+        angle_raw = (line->br24.angle[1] << 8) | line->br24.angle[0];
+        range_meters = (int)((double)range_raw * 10.0 / sqrt(2.0));
+        break;
+      }
+
+      case RT_3G:
+      case RT_4GA:
+      case RT_4GB: {
+        short int large_range = (line->br4g.largerange[1] << 8) | line->br4g.largerange[0];
+        short int small_range = (line->br4g.smallrange[1] << 8) | line->br4g.smallrange[0];
+        angle_raw = (line->br4g.angle[1] << 8) | line->br4g.angle[0];
+        if (large_range == 0x80) {
+          if (small_range == -1) {
+            range_meters = 0;  // Invalid range received
+          } else {
+            range_meters = small_range / 4;
+          }
+        } else {
+          range_meters = large_range * 64;
+        }
+        break;
+      }
+
+      case RT_HaloA:
+      case RT_HaloB: {
+        uint16_t large_range = (line->br4g.largerange[1] << 8) | line->br4g.largerange[0];
+        uint16_t small_range = (line->br4g.smallrange[1] << 8) | line->br4g.smallrange[0];
+        angle_raw = (line->br4g.angle[1] << 8) | line->br4g.angle[0];
+        if (large_range == 0x80) {
+          if (small_range == 0xffff) {
+            range_meters = 0;  // Invalid range received
+          } else {
+            range_meters = small_range / 4;
+          }
+        } else {
+          range_meters = large_range * small_range / 512;
+        }
+        break;
+      }
+
+      default:
+        return;
+    }
+*/
+
+/*
+    LOG_BINARY_RECEIVE(wxString::Format(wxT("display=%d range=%d, angle=%d hdg=%d"), m_ri->GetDisplayRange(), range_meters,
+                                        angle_raw, heading_raw),
+                       (uint8_t *)&line->br24, sizeof(line->br24));
+*/
+
+/*
+
 // ProcessFrame
 // ------------
 // Process one radar frame packet, which can contain up to 32 'spokes' or lines extending outwards
