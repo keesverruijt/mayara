@@ -320,16 +320,52 @@ impl Receive {
                         PrintableSpoke::new(spoke_slice),
                     );
                     trace!("Received {:04} header {:?}", scanline, header);
+
+                    if let Some((range, angle, heading)) = Receive::validate_header(&header) {
+                        debug!("range {} angle {} heading {}", range, angle, heading);
+                    } else {
+                        warn!("Invalid spoke: header {:02X?}", &header_slice);
+                        self.statistics.broken_packets += 1;
+                    }
                 }
                 Err(e) => {
                     warn!("Illegible spoke: {} header {:02X?}", e, &header_slice);
+                    self.statistics.broken_packets += 1;
                 }
             };
             offset += RADAR_LINE_LENGTH;
         }
     }
-}
 
+    fn validate_header(header: &Br4gHeader) -> Option<(u32, i16, i16)> {
+        if header.header_len != RADAR_LINE_HEADER_LENGTH as u8 {
+            warn!(
+                "Spoke with illegal header length ({}) ignored",
+                header.header_len
+            );
+            return None;
+        }
+        if header.status != 0x02 && header.status != 0x12 {
+            warn!("Spoke with illegal status (0x{:x}) ignored", header.status);
+            return None;
+        }
+
+        let heading = i16::from_le_bytes(header.heading);
+        let angle = i16::from_le_bytes(header.angle);
+        let large_range = u16::from_le_bytes(header.large_range);
+        let small_range = u16::from_le_bytes(header.small_range);
+        let range = if large_range == 0x80 {
+            if small_range == 0xffff {
+                0
+            } else {
+                small_range as u32 / 4
+            }
+        } else {
+            large_range as u32 * small_range as u32 / 512
+        };
+        Some((range, heading, angle))
+    }
+}
 /*
     radar_line *line = &packet->line[scanline];
 
