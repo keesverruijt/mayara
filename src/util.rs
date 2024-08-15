@@ -9,12 +9,14 @@ pub fn c_string(bytes: &[u8]) -> Option<&str> {
     std::str::from_utf8(bytes_without_null).ok()
 }
 
+use log::debug;
+use network_interface::NetworkInterface;
+use network_interface::NetworkInterfaceConfig;
+use socket2::{Domain, Protocol, Type};
 use std::{
     fmt, io,
     net::{IpAddr, Ipv4Addr, SocketAddr},
 };
-
-use socket2::{Domain, Protocol, Type};
 use tokio::net::UdpSocket;
 
 pub struct PrintableSlice<'a>(&'a [u8]);
@@ -142,17 +144,27 @@ fn bind_multicast(socket: &socket2::Socket, addr: &SocketAddr) -> io::Result<()>
 pub async fn join_multicast(addr: &SocketAddr) -> io::Result<UdpSocket> {
     let socket: socket2::Socket = new_socket(addr)?;
 
-    // depending on the IP protocol we have slightly different work
-    match addr.ip() {
-        IpAddr::V4(ref mdns_v4) => {
-            // join to the multicast address, with all interfaces
-            socket.join_multicast_v4(mdns_v4, &Ipv4Addr::new(0, 0, 0, 0))?;
+    let network_interfaces = NetworkInterface::show().unwrap();
+
+    // Join all the network cards
+    for itf in network_interfaces.iter() {
+        for nic_addr in itf.addr.iter() {
+            if let IpAddr::V4(nic_addr) = nic_addr.ip() {
+                if !nic_addr.is_link_local() {
+                    match addr.ip() {
+                        IpAddr::V4(ref mdns_v4) => {
+                            // join to the multicast address, with all interfaces
+                            socket.join_multicast_v4(mdns_v4, &nic_addr)?;
+                        }
+                        IpAddr::V6(ref mdns_v6) => {
+                            // join to the multicast address, with all interfaces (ipv6 uses indexes not addresses)
+                            socket.join_multicast_v6(mdns_v6, 0)?;
+                        }
+                    };
+                }
+            }
         }
-        IpAddr::V6(ref mdns_v6) => {
-            // join to the multicast address, with all interfaces (ipv6 uses indexes not addresses)
-            socket.join_multicast_v6(mdns_v6, 0)?;
-        }
-    };
+    }
 
     // let addr = SocketAddr::new(Ipv4Addr::new(10, 211, 55, 2).into(), 6878);
 
