@@ -19,6 +19,8 @@ mod receive;
 
 const NAVICO_BEACON_ADDRESS: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(236, 6, 7, 5)), 6878);
+const NAVICO_COMMON_REPORT_ADDRESS: SocketAddr =
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(236, 6, 7, 9)), 6679);
 
 #[derive(Deserialize, Debug, Copy, Clone)]
 struct NetworkSocketAddrV4 {
@@ -186,6 +188,21 @@ struct BR24Beacon {
     report: NetworkSocketAddrV4,
 }
 
+// We _also_ listen on the 4G report address, as 4G older radars don't
+// send the beacon message with the addresses often enough.
+
+struct RadarReport03c4_129 {
+    _what: u8,
+    _command: u8,
+    radar_type: u8,     // 00=Halo 01=4G + modern 3G 08=3G 0F=BR24
+    _filler1: [u8; 31], // Lots of unknown stuff
+    hours: u32,         // Hours of operation
+    _filler2: [u8; 20], // More unknown
+    firmware_date: [u8; 16],
+    firmware_time: [u8; 16],
+    _filler3: [u8; 7],
+}
+
 const NAVICO_BEACON_SINGLE_SIZE: usize = size_of::<NavicoBeaconSingle>();
 const NAVICO_BEACON_DUAL_SIZE: usize = size_of::<NavicoBeaconDual>();
 const NAVICO_BEACON_BR24_SIZE: usize = size_of::<BR24Beacon>();
@@ -207,7 +224,7 @@ async fn found(
     Ok(())
 }
 
-async fn process_beacon(
+async fn process_report(
     report: &[u8],
     from: SocketAddr,
     radars: &Arc<RwLock<Radars>>,
@@ -219,7 +236,7 @@ async fn process_beacon(
 
     if log_enabled!(log::Level::Trace) {
         trace!(
-            "{}: Navico beacon: {:02X?} len {}",
+            "{}: Navico report: {:02X?} len {}",
             from,
             report,
             report.len()
@@ -235,103 +252,113 @@ async fn process_beacon(
     if report[0] == 0x1 && report[1] == 0xB2 {
         // Common Navico message
 
-        if report.len() < size_of::<BR24Beacon>() {
-            debug!("Incomplete beacon from {}, length {}", from, report.len());
-            return Ok(());
+        return process_beacon_report(report, from, radars, shutdown).await;
+    }
+    Ok(())
+}
+
+async fn process_beacon_report(
+    report: &[u8],
+    from: SocketAddr,
+    radars: &Arc<RwLock<Radars>>,
+    shutdown: &Shutdown,
+) -> Result<(), io::Error> {
+    if report.len() < size_of::<BR24Beacon>() {
+        debug!("Incomplete beacon from {}, length {}", from, report.len());
+        return Ok(());
+    }
+
+    if report.len() >= NAVICO_BEACON_DUAL_SIZE {
+        match deserialize::<NavicoBeaconDual>(report) {
+            Ok(data) => {
+                if let Some(serial_no) = c_string(&data.header.serial_no) {
+                    let radar_addr: SocketAddrV4 = data.header.radar_addr.into();
+
+                    let radar_data: SocketAddrV4 = data.a.data.into();
+                    let radar_report: SocketAddrV4 = data.a.report.into();
+                    let radar_send: SocketAddrV4 = data.a.send.into();
+                    let location_info: RadarLocationInfo = RadarLocationInfo::new(
+                        "Navico",
+                        None,
+                        Some(serial_no),
+                        Some("A"),
+                        radar_addr.into(),
+                        radar_data.into(),
+                        radar_report.into(),
+                        radar_send.into(),
+                    );
+                    found(location_info, radars, shutdown).await.unwrap();
+
+                    let radar_data: SocketAddrV4 = data.b.data.into();
+                    let radar_report: SocketAddrV4 = data.b.report.into();
+                    let radar_send: SocketAddrV4 = data.b.send.into();
+                    let location_info: RadarLocationInfo = RadarLocationInfo::new(
+                        "Navico",
+                        None,
+                        Some(serial_no),
+                        Some("B"),
+                        radar_addr.into(),
+                        radar_data.into(),
+                        radar_report.into(),
+                        radar_send.into(),
+                    );
+                    found(location_info, radars, shutdown).await.unwrap();
+                }
+            }
+            Err(e) => {
+                error!("Failed to decode dual range data: {}", e);
+            }
         }
+    } else if report.len() >= NAVICO_BEACON_SINGLE_SIZE {
+        match deserialize::<NavicoBeaconSingle>(report) {
+            Ok(data) => {
+                if let Some(serial_no) = c_string(&data.header.serial_no) {
+                    let radar_addr: SocketAddrV4 = data.header.radar_addr.into();
 
-        if report.len() >= NAVICO_BEACON_DUAL_SIZE {
-            match deserialize::<NavicoBeaconDual>(report) {
-                Ok(data) => {
-                    if let Some(serial_no) = c_string(&data.header.serial_no) {
-                        let radar_addr: SocketAddrV4 = data.header.radar_addr.into();
-
-                        let radar_data: SocketAddrV4 = data.a.data.into();
-                        let radar_report: SocketAddrV4 = data.a.report.into();
-                        let radar_send: SocketAddrV4 = data.a.send.into();
-                        let location_info: RadarLocationInfo = RadarLocationInfo::new(
-                            "Navico",
-                            None,
-                            Some(serial_no),
-                            Some("A"),
-                            radar_addr.into(),
-                            radar_data.into(),
-                            radar_report.into(),
-                            radar_send.into(),
-                        );
-                        found(location_info, radars, shutdown).await.unwrap();
-
-                        let radar_data: SocketAddrV4 = data.b.data.into();
-                        let radar_report: SocketAddrV4 = data.b.report.into();
-                        let radar_send: SocketAddrV4 = data.b.send.into();
-                        let location_info: RadarLocationInfo = RadarLocationInfo::new(
-                            "Navico",
-                            None,
-                            Some(serial_no),
-                            Some("B"),
-                            radar_addr.into(),
-                            radar_data.into(),
-                            radar_report.into(),
-                            radar_send.into(),
-                        );
-                        found(location_info, radars, shutdown).await.unwrap();
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to decode dual range data: {}", e);
+                    let radar_data: SocketAddrV4 = data.a.data.into();
+                    let radar_report: SocketAddrV4 = data.a.report.into();
+                    let radar_send: SocketAddrV4 = data.a.send.into();
+                    let location_info: RadarLocationInfo = RadarLocationInfo::new(
+                        "Navico",
+                        None,
+                        Some(serial_no),
+                        None,
+                        radar_addr.into(),
+                        radar_data.into(),
+                        radar_report.into(),
+                        radar_send.into(),
+                    );
+                    found(location_info, radars, shutdown).await.unwrap();
                 }
             }
-        } else if report.len() >= NAVICO_BEACON_SINGLE_SIZE {
-            match deserialize::<NavicoBeaconSingle>(report) {
-                Ok(data) => {
-                    if let Some(serial_no) = c_string(&data.header.serial_no) {
-                        let radar_addr: SocketAddrV4 = data.header.radar_addr.into();
+            Err(e) => {
+                error!("Failed to decode dual range data: {}", e);
+            }
+        }
+    } else if report.len() == NAVICO_BEACON_BR24_SIZE {
+        match deserialize::<BR24Beacon>(report) {
+            Ok(data) => {
+                if let Some(serial_no) = c_string(&data.serial_no) {
+                    let radar_addr: SocketAddrV4 = data.radar_addr.into();
 
-                        let radar_data: SocketAddrV4 = data.a.data.into();
-                        let radar_report: SocketAddrV4 = data.a.report.into();
-                        let radar_send: SocketAddrV4 = data.a.send.into();
-                        let location_info: RadarLocationInfo = RadarLocationInfo::new(
-                            "Navico",
-                            None,
-                            Some(serial_no),
-                            None,
-                            radar_addr.into(),
-                            radar_data.into(),
-                            radar_report.into(),
-                            radar_send.into(),
-                        );
-                        found(location_info, radars, shutdown).await.unwrap();
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to decode dual range data: {}", e);
+                    let radar_data: SocketAddrV4 = data.data.into();
+                    let radar_report: SocketAddrV4 = data.report.into();
+                    let radar_send: SocketAddrV4 = data.send.into();
+                    let location_info: RadarLocationInfo = RadarLocationInfo::new(
+                        "Navico",
+                        Some("BR24"),
+                        Some(serial_no),
+                        None,
+                        radar_addr.into(),
+                        radar_data.into(),
+                        radar_report.into(),
+                        radar_send.into(),
+                    );
+                    found(location_info, radars, shutdown).await.unwrap();
                 }
             }
-        } else if report.len() == NAVICO_BEACON_BR24_SIZE {
-            match deserialize::<BR24Beacon>(report) {
-                Ok(data) => {
-                    if let Some(serial_no) = c_string(&data.serial_no) {
-                        let radar_addr: SocketAddrV4 = data.radar_addr.into();
-
-                        let radar_data: SocketAddrV4 = data.data.into();
-                        let radar_report: SocketAddrV4 = data.report.into();
-                        let radar_send: SocketAddrV4 = data.send.into();
-                        let location_info: RadarLocationInfo = RadarLocationInfo::new(
-                            "Navico",
-                            Some("BR24"),
-                            Some(serial_no),
-                            None,
-                            radar_addr.into(),
-                            radar_data.into(),
-                            radar_report.into(),
-                            radar_send.into(),
-                        );
-                        found(location_info, radars, shutdown).await.unwrap();
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to decode BR24 data: {}", e);
-                }
+            Err(e) => {
+                error!("Failed to decode BR24 data: {}", e);
             }
         }
     }
@@ -340,7 +367,9 @@ async fn process_beacon(
 
 struct NavicoLocator {
     buf: Vec<u8>,
+    buf_report: Vec<u8>,
     sock: Option<UdpSocket>,
+    sock_report: Option<UdpSocket>,
 }
 
 impl NavicoLocator {
@@ -348,15 +377,32 @@ impl NavicoLocator {
         match join_multicast(&NAVICO_BEACON_ADDRESS).await {
             Ok(sock) => {
                 self.sock = Some(sock);
-                debug!("Listening on {} for Navico radars", NAVICO_BEACON_ADDRESS);
-                Ok(())
+                debug!(
+                    "Listening on {} for all Navico radars",
+                    NAVICO_BEACON_ADDRESS
+                );
             }
             Err(e) => {
                 sleep(Duration::from_millis(1000)).await;
                 debug!("Beacon multicast failed: {}", e);
-                Ok(())
+                return Err(e);
+            }
+        };
+        match join_multicast(&NAVICO_COMMON_REPORT_ADDRESS).await {
+            Ok(sock) => {
+                self.sock_report = Some(sock);
+                debug!(
+                    "Listening on {} for BR24..4G Navico radars",
+                    NAVICO_COMMON_REPORT_ADDRESS
+                );
+            }
+            Err(e) => {
+                sleep(Duration::from_millis(1000)).await;
+                debug!("Report multicast failed: {}", e);
+                return Err(e);
             }
         }
+        Ok(())
     }
 }
 
@@ -367,26 +413,53 @@ impl RadarLocator for NavicoLocator {
         radars: Arc<RwLock<Radars>>,
         shutdown: Shutdown,
     ) -> io::Result<()> {
-        self.start().await.unwrap();
         loop {
-            match &self.sock {
-                Some(sock) => {
-                    self.buf.clear();
-                    match sock.recv_buf_from(&mut self.buf).await {
-                        Ok((_len, from)) => {
-                            process_beacon(&self.buf, from, &radars, &shutdown)
-                                .await
-                                .unwrap();
+            if !self.sock.is_some() || !self.sock_report.is_some() {
+                if let Err(_) = self.start().await {
+                    continue;
+                }
+            }
+
+            self.buf.clear();
+            self.buf_report.clear();
+            match (&self.sock, &self.sock_report) {
+                (Some(sock), Some(sock_report)) => {
+                    tokio::select! {
+                        _ = shutdown.handle() => {
+                            return Ok(());
                         }
-                        Err(e) => {
-                            debug!("Beacon read failed: {}", e);
-                            self.sock = None;
-                        }
+                        result = sock.recv_buf_from(&mut self.buf) => {
+                            match result {
+                                            Ok((_len, from)) => {
+                                                debug!("{} UDP recv {}: {:02X?}", from, self.buf.len(), &self.buf);
+                                                process_report(&self.buf, from, &radars, &shutdown)
+                                                    .await
+                                                    .unwrap();
+                                            }
+                                            Err(e) => {
+                                                debug!("Beacon read failed: {}", e);
+                                                self.sock = None;
+                                            }
+                                        }
+                        },
+                        result = sock_report.recv_buf_from(&mut self.buf_report) => {
+                            match result {
+                                            Ok((_len, from)) => {
+                                                debug!("{} UDP recv {}: {:02X?}", from, self.buf_report.len(), &self.buf_report);
+                                                process_report(&self.buf_report, from, &radars, &shutdown)
+                                                    .await
+                                                    .unwrap();
+                                            }
+                                            Err(e) => {
+                                                debug!("Beacon read failed: {}", e);
+                                                self.sock = None;
+                                            }
+                                        }
+                        },
                     }
                 }
-                None => {
-                    sleep(Duration::from_millis(1000)).await;
-                    self.start().await.unwrap();
+                _ => {
+                    // Nothing to do
                 }
             }
         }
@@ -397,6 +470,8 @@ pub fn create_locator() -> Box<dyn RadarLocator + Send> {
     let locator = NavicoLocator {
         buf: Vec::with_capacity(2048),
         sock: None,
+        buf_report: Vec::with_capacity(2048),
+        sock_report: None,
     };
     Box::new(locator)
 }
@@ -440,7 +515,7 @@ impl RadarLocator for NavicoBR24Locator {
                     self.buf.clear();
                     match sock.recv_buf_from(&mut self.buf).await {
                         Ok((_len, from)) => {
-                            process_beacon(&self.buf, from, &radars, &shutdown)
+                            process_report(&self.buf, from, &radars, &shutdown)
                                 .await
                                 .unwrap();
                         }

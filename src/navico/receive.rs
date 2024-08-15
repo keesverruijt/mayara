@@ -314,15 +314,15 @@ impl Receive {
 
             match deserialize::<Br4gHeader>(&header_slice) {
                 Ok(header) => {
-                    debug!(
-                        "Received {:04} spoke {}",
-                        scanline,
-                        PrintableSpoke::new(spoke_slice),
-                    );
                     trace!("Received {:04} header {:?}", scanline, header);
 
                     if let Some((range, angle, heading)) = Receive::validate_header(&header) {
                         debug!("range {} angle {} heading {}", range, angle, heading);
+                        debug!(
+                            "Received {:04} spoke {}",
+                            scanline,
+                            PrintableSpoke::new(spoke_slice),
+                        );
                     } else {
                         warn!("Invalid spoke: header {:02X?}", &header_slice);
                         self.statistics.broken_packets += 1;
