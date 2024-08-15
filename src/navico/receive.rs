@@ -9,7 +9,7 @@ use tokio::time::sleep;
 use tokio_shutdown::Shutdown;
 
 use crate::radar::RadarLocationInfo;
-use crate::util::join_multicast;
+use crate::util::{join_multicast, PrintableSpoke};
 
 // Size of a pixel in bits. Every pixel is 4 bits (one nibble.)
 const NAVICO_BITS_PER_PIXEL: usize = 4;
@@ -242,7 +242,10 @@ impl Receive {
         match join_multicast(&self.info.spoke_data_addr).await {
             Ok(sock) => {
                 self.sock = Some(sock);
-                debug!("Listening on {} for Navico spokes", &self.info.report_addr);
+                debug!(
+                    "Listening on {} for Navico spokes",
+                    &self.info.spoke_data_addr
+                );
                 Ok(())
             }
             Err(e) => {
@@ -311,12 +314,12 @@ impl Receive {
 
             match deserialize::<Br4gHeader>(&header_slice) {
                 Ok(header) => {
-                    trace!(
-                        "Received {} header {:?} spoke {:?}",
+                    debug!(
+                        "Received {:04} spoke {}",
                         scanline,
-                        header,
-                        spoke_slice
+                        PrintableSpoke::new(spoke_slice),
                     );
+                    trace!("Received {:04} header {:?}", scanline, header);
                 }
                 Err(e) => {
                     warn!("Illegible spoke: {} header {:02X?}", e, &header_slice);

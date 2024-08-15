@@ -29,9 +29,10 @@ impl<'a> PrintableSlice<'a> {
 }
 
 // You can choose to implement multiple traits, like Lower and UpperPrintable
+
 impl fmt::Display for PrintableSlice<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut sep = "[";
+        let mut sep: &str = "[";
 
         for byte in self.0 {
             if *byte >= 32 && *byte < 127 {
@@ -40,6 +41,56 @@ impl fmt::Display for PrintableSlice<'_> {
                 write!(f, "{} .", sep)?;
             }
             sep = "  ";
+        }
+        write!(f, "]")?;
+        Ok(())
+    }
+}
+
+pub struct PrintableSpoke<'a>(&'a [u8]);
+
+impl<'a> PrintableSpoke<'a> {
+    pub fn new<T>(data: &'a T) -> PrintableSpoke<'a>
+    where
+        T: ?Sized + AsRef<[u8]> + 'a,
+    {
+        PrintableSpoke(data.as_ref())
+    }
+}
+impl fmt::Display for PrintableSpoke<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut sum: u32 = 0;
+        let mut count: u32 = 0;
+
+        write!(f, "[")?;
+        for byte in self.0 {
+            sum += *byte as u32;
+            count += 1;
+
+            if count == 8 {
+                write!(
+                    f,
+                    "{}",
+                    match sum {
+                        0..8 => ' ',
+                        8..512 => '.',
+                        _ => '*',
+                    }
+                )?;
+                count = 0;
+                sum = 0;
+            }
+        }
+        if count > 4 {
+            write!(
+                f,
+                "{}",
+                match sum {
+                    0..8 => ' ',
+                    8..512 => '.',
+                    _ => '*',
+                }
+            )?;
         }
         write!(f, "]")?;
         Ok(())
