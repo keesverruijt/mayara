@@ -115,26 +115,66 @@ pub fn new_socket() -> io::Result<socket2::Socket> {
 ///
 /// see https://msdn.microsoft.com/en-us/library/windows/desktop/ms737550(v=vs.85).aspx
 #[cfg(windows)]
-fn bind_to_multicast(socket: &socket2::Socket, addr: &SocketAddrV4) -> io::Result<()> {
+fn bind_to_multicast(
+    socket: &socket2::Socket,
+    addr: &SocketAddrV4,
+    nic_addr: &Ipv4Addr,
+) -> io::Result<()> {
+    socket.join_multicast_v4(addr.ip(), nic_addr)?;
+
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), addr.port());
     socket.bind(&socket2::SockAddr::from(addr))?;
     Ok(())
 }
 
 /// On unixes we bind to the multicast address, which causes multicast packets to be filtered
-#[cfg(unix)]
-fn bind_to_multicast(socket: &socket2::Socket, addr: &SocketAddrV4) -> io::Result<()> {
-    let addr = SocketAddr::new(IpAddr::V4(*addr.ip()), addr.port());
-    socket.bind(&socket2::SockAddr::from(addr))?;
-    Ok(())
-}
+#[cfg(target_os = "linux")]
+fn bind_to_multicast(
+    socket: &socket2::Socket,
+    addr: &SocketAddrV4,
+    nic_addr: &Ipv4Addr,
+) -> io::Result<()> {
+    use std::{io, mem, os::unix::io::AsRawFd};
 
-pub async fn create_multicast(addr: &SocketAddrV4, nic_addr: &Ipv4Addr) -> io::Result<UdpSocket> {
-    let socket: socket2::Socket = new_socket()?;
+    unsafe {
+        let optval: libc::c_int = 0;
+        let ret = libc::setsockopt(
+            socket.as_raw_fd(),
+            libc::SOL_IP,
+            libc::IP_MULTICAST_ALL,
+            &optval as *const _ as *const libc::c_void,
+            mem::size_of_val(&optval) as libc::socklen_t,
+        );
+        if ret != 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
 
     socket.join_multicast_v4(addr.ip(), nic_addr)?;
 
-    bind_to_multicast(&socket, addr)?;
+    let socketaddr = SocketAddr::new(IpAddr::V4(*addr.ip()), addr.port());
+    socket.bind(&socket2::SockAddr::from(socketaddr))?;
+    Ok(())
+}
+
+/// On unixes we bind to the multicast address, which causes multicast packets to be filtered
+#[cfg(target_os = "macos")]
+fn bind_to_multicast(
+    socket: &socket2::Socket,
+    addr: &SocketAddrV4,
+    nic_addr: &Ipv4Addr,
+) -> io::Result<()> {
+    socket.join_multicast_v4(addr.ip(), nic_addr)?;
+
+    let socketaddr = SocketAddr::new(IpAddr::V4(*addr.ip()), addr.port());
+    socket.bind(&socket2::SockAddr::from(socketaddr))?;
+    Ok(())
+}
+
+pub fn create_multicast(addr: &SocketAddrV4, nic_addr: &Ipv4Addr) -> io::Result<UdpSocket> {
+    let socket: socket2::Socket = new_socket()?;
+
+    bind_to_multicast(&socket, addr, nic_addr)?;
 
     let socket = UdpSocket::from_std(socket.into())?;
     Ok(socket)

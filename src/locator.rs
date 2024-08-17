@@ -95,15 +95,7 @@ pub async fn new(shutdown: Shutdown) -> io::Result<()> {
         let mut set = JoinSet::new();
         if let Ok(sockets) = sockets {
             for socket in sockets {
-                set.spawn(async move {
-                    let mut buf: Vec<u8> = Vec::with_capacity(2048);
-                    let res = socket.sock.recv_buf_from(&mut buf).await;
-
-                    match res {
-                        Ok((_, addr)) => Ok((socket, addr, buf)),
-                        Err(e) => Err(e),
-                    }
-                });
+                spawn_receive(&mut set, socket);
             }
             set.spawn(async move {
                 shutdown_handle.await;
@@ -112,22 +104,27 @@ pub async fn new(shutdown: Shutdown) -> io::Result<()> {
 
             while let Some(join_result) = set.join_next().await {
                 match join_result {
-                    Ok(join_result) => match join_result {
-                        Ok((socket, addr, buf)) => {
-                            debug!(
-                                "Received on {} from {}: {:?}",
-                                &socket.nic_addr, &addr, &buf
-                            );
-                        }
-                        Err(e) => {
-                            if e.kind() == ErrorKind::WriteZero {
-                                // Shutdown!
-                                info!("Locator shutdown");
-                                return Ok(());
+                    Ok(join_result) => {
+                        match join_result {
+                            Ok((socket, addr, buf)) => {
+                                debug!(
+                                    "Received on {} from {}: {:?}",
+                                    &socket.nic_addr, &addr, &buf
+                                );
+
+                                // Respawn this task
+                                spawn_receive(&mut set, socket);
                             }
-                            debug!("receive error: {}", e);
+                            Err(e) => {
+                                if e.kind() == ErrorKind::WriteZero {
+                                    // Shutdown!
+                                    info!("Locator shutdown");
+                                    return Ok(());
+                                }
+                                debug!("receive error: {}", e);
+                            }
                         }
-                    },
+                    }
                     Err(e) => {
                         debug!("JoinError: {}", e);
                     }
@@ -168,6 +165,21 @@ pub async fn new(shutdown: Shutdown) -> io::Result<()> {
     Ok(())
 }
 
+fn spawn_receive(
+    set: &mut JoinSet<Result<(ListenSockets, SocketAddr, Vec<u8>), io::Error>>,
+    socket: ListenSockets,
+) {
+    set.spawn(async move {
+        let mut buf: Vec<u8> = Vec::with_capacity(2048);
+        let res = socket.sock.recv_buf_from(&mut buf).await;
+
+        match res {
+            Ok((_, addr)) => Ok((socket, addr, buf)),
+            Err(e) => Err(e),
+        }
+    });
+}
+
 fn create_multicast_sockets(
     listen_addresses: &Vec<RadioListenAddress>,
 ) -> io::Result<Vec<ListenSockets>> {
@@ -178,27 +190,30 @@ fn create_multicast_sockets(
                 for nic_addr in itf.addr {
                     if let IpAddr::V4(nic_addr) = nic_addr.ip() {
                         if !nic_addr.is_loopback() {
-                            let socket: socket2::Socket = util::new_socket()?;
-
                             for listen_addr in listen_addresses {
                                 if let SocketAddr::V4(listen_addr) = listen_addr.address {
-                                    socket.join_multicast_v4(&listen_addr.ip(), &nic_addr)?;
+                                    let socket = util::create_multicast(&listen_addr, &nic_addr);
+                                    match socket {
+                                        Ok(socket) => {
+                                            sockets.push(ListenSockets {
+                                                sock: socket,
+                                                nic_addr: nic_addr.clone(),
+                                            });
+                                            debug!(
+                                                "Listening on {} address {} for multicast address {}",
+                                                itf.name, nic_addr, listen_addr,
+                                            );
+                                        }
+                                        Err(e) => {
+                                            warn!(
+                                                "Cannot listen on {} address {} for multicast address {}: {}",
+                                                itf.name, nic_addr, listen_addr, e
+                                            );
+                                        }
+                                    }
                                 } else {
                                     warn!("Ignoring IPv6 address {:?}", &listen_addr.address);
                                 }
-                            }
-
-                            if let Ok(socket) = UdpSocket::from_std(socket.into()) {
-                                sockets.push(ListenSockets {
-                                    sock: socket,
-                                    nic_addr: nic_addr.clone(),
-                                });
-                                debug!(
-                                    "Listening on {} address {} for mcast ...",
-                                    itf.name, nic_addr
-                                );
-                            } else {
-                                error!("Unable to listen on {} to mcast ...", nic_addr);
                             }
                         }
                     }

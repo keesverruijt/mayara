@@ -240,7 +240,7 @@ impl Receive {
 
     async fn start_socket(&mut self) -> io::Result<()> {
         let nic_addr: &Ipv4Addr = self.info.addr.ip(); // TODO: Add NIC addr to RadarLocationInfo
-        match create_multicast(&self.info.spoke_data_addr, &nic_addr).await {
+        match create_multicast(&self.info.spoke_data_addr, &nic_addr) {
             Ok(sock) => {
                 self.sock = Some(sock);
                 debug!(
