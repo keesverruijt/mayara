@@ -4,7 +4,7 @@ use std::{
     collections::HashMap,
     fmt::{self, Display, Write},
     io,
-    net::SocketAddr,
+    net::SocketAddrV4,
     sync::{Arc, RwLock},
 };
 
@@ -13,12 +13,12 @@ pub struct RadarLocationInfo {
     id: usize,
     pub brand: String,
     pub model: Option<String>,
-    pub serial_no: Option<String>,     // Serial # for this radar
-    pub which: Option<String>,         // "A", "B" or None
-    pub addr: SocketAddr,              // The assigned IP address of the radar
-    pub spoke_data_addr: SocketAddr,   // Where the radar will send data spokes
-    pub report_addr: SocketAddr,       // Where the radar will send reports
-    pub send_command_addr: SocketAddr, // Where displays will send commands to the radar
+    pub serial_no: Option<String>,       // Serial # for this radar
+    pub which: Option<String>,           // "A", "B" or None
+    pub addr: SocketAddrV4,              // The assigned IP address of the radar
+    pub spoke_data_addr: SocketAddrV4,   // Where the radar will send data spokes
+    pub report_addr: SocketAddrV4,       // Where the radar will send reports
+    pub send_command_addr: SocketAddrV4, // Where displays will send commands to the radar
 }
 
 impl RadarLocationInfo {
@@ -27,10 +27,10 @@ impl RadarLocationInfo {
         model: Option<&str>,
         serial_no: Option<&str>,
         which: Option<&str>,
-        addr: SocketAddr,
-        data: SocketAddr,
-        report: SocketAddr,
-        send: SocketAddr,
+        addr: SocketAddrV4,
+        spoke_data_addr: SocketAddrV4,
+        report_addr: SocketAddrV4,
+        send_command_addr: SocketAddrV4,
     ) -> Self {
         RadarLocationInfo {
             id: 0,
@@ -38,10 +38,10 @@ impl RadarLocationInfo {
             model: model.map(String::from),
             serial_no: serial_no.map(String::from),
             which: which.map(String::from),
-            addr: addr,
-            spoke_data_addr: data,
-            report_addr: report,
-            send_command_addr: send,
+            addr,
+            spoke_data_addr,
+            report_addr,
+            send_command_addr,
         }
     }
 }

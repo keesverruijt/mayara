@@ -2,9 +2,9 @@ extern crate tokio;
 
 use clap::Parser;
 use env_logger::Env;
-use log::info;
+use log::{debug, info};
 
-mod garmin;
+// mod garmin;
 mod locator;
 mod navico;
 mod radar;
@@ -36,7 +36,7 @@ async fn main() -> Result<(), ()> {
     });
 
     join_handle.await.unwrap();
-    println!("waiting for threads done");
+    debug!("waited for threads done");
 
     Ok(())
 }

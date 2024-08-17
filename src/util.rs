@@ -13,6 +13,7 @@ use log::debug;
 use network_interface::NetworkInterface;
 use network_interface::NetworkInterfaceConfig;
 use socket2::{Domain, Protocol, Type};
+use std::net::SocketAddrV4;
 use std::{
     fmt, io,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -100,14 +101,8 @@ impl fmt::Display for PrintableSpoke<'_> {
 }
 
 // this will be common for all our sockets
-fn new_socket(addr: &SocketAddr) -> io::Result<socket2::Socket> {
-    let domain = if addr.is_ipv4() {
-        Domain::IPV4
-    } else {
-        Domain::IPV4
-    };
-
-    let socket = socket2::Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
+pub fn new_socket() -> io::Result<socket2::Socket> {
+    let socket = socket2::Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
 
     // we're going to use read timeouts so that we don't hang waiting for packets
     socket.set_nonblocking(true)?;
@@ -120,55 +115,26 @@ fn new_socket(addr: &SocketAddr) -> io::Result<socket2::Socket> {
 ///
 /// see https://msdn.microsoft.com/en-us/library/windows/desktop/ms737550(v=vs.85).aspx
 #[cfg(windows)]
-pub fn bind_multicast(socket: &socket2::Socket, addr: SocketAddr) -> io::Result<()> {
-    use core::net::Ipv6Addr;
-
-    let addr = match addr {
-        SocketAddr::V4(addr) => SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), addr.port()),
-        SocketAddr::V6(addr) => {
-            SocketAddr::new(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0).into(), addr.port())
-        }
-    };
-
+fn bind_to_multicast(socket: &socket2::Socket, addr: &SocketAddrV4) -> io::Result<()> {
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), addr.port());
     socket.bind(&socket2::SockAddr::from(addr))?;
     Ok(())
 }
 
 /// On unixes we bind to the multicast address, which causes multicast packets to be filtered
 #[cfg(unix)]
-fn bind_multicast(socket: &socket2::Socket, addr: &SocketAddr) -> io::Result<()> {
-    socket.bind(&socket2::SockAddr::from(addr.clone()))?;
+fn bind_to_multicast(socket: &socket2::Socket, addr: &SocketAddrV4) -> io::Result<()> {
+    let addr = SocketAddr::new(IpAddr::V4(*addr.ip()), addr.port());
+    socket.bind(&socket2::SockAddr::from(addr))?;
     Ok(())
 }
 
-pub async fn join_multicast(addr: &SocketAddr) -> io::Result<UdpSocket> {
-    let socket: socket2::Socket = new_socket(addr)?;
+pub async fn create_multicast(addr: &SocketAddrV4, nic_addr: &Ipv4Addr) -> io::Result<UdpSocket> {
+    let socket: socket2::Socket = new_socket()?;
 
-    let network_interfaces = NetworkInterface::show().unwrap();
+    socket.join_multicast_v4(addr.ip(), nic_addr)?;
 
-    // Join all the network cards
-    for itf in network_interfaces.iter() {
-        for nic_addr in itf.addr.iter() {
-            if let IpAddr::V4(nic_addr) = nic_addr.ip() {
-                if !nic_addr.is_link_local() {
-                    match addr.ip() {
-                        IpAddr::V4(ref mdns_v4) => {
-                            // join to the multicast address, with all interfaces
-                            socket.join_multicast_v4(mdns_v4, &nic_addr)?;
-                        }
-                        IpAddr::V6(ref mdns_v6) => {
-                            // join to the multicast address, with all interfaces (ipv6 uses indexes not addresses)
-                            socket.join_multicast_v6(mdns_v6, 0)?;
-                        }
-                    };
-                }
-            }
-        }
-    }
-
-    // let addr = SocketAddr::new(Ipv4Addr::new(10, 211, 55, 2).into(), 6878);
-
-    bind_multicast(&socket, addr)?;
+    bind_to_multicast(&socket, addr)?;
 
     let socket = UdpSocket::from_std(socket.into())?;
     Ok(socket)

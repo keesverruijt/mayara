@@ -9,7 +9,7 @@ use tokio::time::sleep;
 use tokio_shutdown::Shutdown;
 
 use crate::radar::RadarLocationInfo;
-use crate::util::{join_multicast, PrintableSpoke};
+use crate::util::{create_multicast, PrintableSpoke};
 
 // Size of a pixel in bits. Every pixel is 4 bits (one nibble.)
 const NAVICO_BITS_PER_PIXEL: usize = 4;
@@ -239,7 +239,8 @@ impl Receive {
     }
 
     async fn start_socket(&mut self) -> io::Result<()> {
-        match join_multicast(&self.info.spoke_data_addr).await {
+        let nic_addr: &Ipv4Addr = self.info.addr.ip(); // TODO: Add NIC addr to RadarLocationInfo
+        match create_multicast(&self.info.spoke_data_addr, &nic_addr).await {
             Ok(sock) => {
                 self.sock = Some(sock);
                 debug!(

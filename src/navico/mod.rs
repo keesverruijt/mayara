@@ -5,15 +5,13 @@ use serde::Deserialize;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
 use tokio::net::UdpSocket;
-use tokio::time::sleep;
 use tokio_shutdown::Shutdown;
 
-use crate::locator::RadarLocator;
+use crate::locator::{RadarLocator, RadioListenAddress};
 use crate::radar::{located, RadarLocationInfo, Radars};
+use crate::util::c_string;
 use crate::util::PrintableSlice;
-use crate::util::{c_string, join_multicast};
 
 mod receive;
 
@@ -207,11 +205,7 @@ const NAVICO_BEACON_SINGLE_SIZE: usize = size_of::<NavicoBeaconSingle>();
 const NAVICO_BEACON_DUAL_SIZE: usize = size_of::<NavicoBeaconDual>();
 const NAVICO_BEACON_BR24_SIZE: usize = size_of::<BR24Beacon>();
 
-async fn found(
-    info: RadarLocationInfo,
-    radars: &Arc<RwLock<Radars>>,
-    shutdown: &Shutdown,
-) -> io::Result<()> {
+fn found(info: RadarLocationInfo, radars: &Arc<RwLock<Radars>>, shutdown: &Shutdown) {
     if let Some(info) = located(info, radars) {
         // It's new, start the RadarProcessor thread
         let shutdown = shutdown.clone();
@@ -221,12 +215,11 @@ async fn found(
         });
         // TODO do something with the join handle
     }
-    Ok(())
 }
 
-async fn process_report(
+fn process_report(
     report: &[u8],
-    from: SocketAddr,
+    from: &SocketAddr,
     radars: &Arc<RwLock<Radars>>,
     shutdown: &Shutdown,
 ) -> io::Result<()> {
@@ -252,14 +245,14 @@ async fn process_report(
     if report[0] == 0x1 && report[1] == 0xB2 {
         // Common Navico message
 
-        return process_beacon_report(report, from, radars, shutdown).await;
+        return process_beacon_report(report, from, radars, shutdown);
     }
     Ok(())
 }
 
-async fn process_beacon_report(
+fn process_beacon_report(
     report: &[u8],
-    from: SocketAddr,
+    from: &SocketAddr,
     radars: &Arc<RwLock<Radars>>,
     shutdown: &Shutdown,
 ) -> Result<(), io::Error> {
@@ -287,7 +280,7 @@ async fn process_beacon_report(
                         radar_report.into(),
                         radar_send.into(),
                     );
-                    found(location_info, radars, shutdown).await.unwrap();
+                    found(location_info, radars, shutdown);
 
                     let radar_data: SocketAddrV4 = data.b.data.into();
                     let radar_report: SocketAddrV4 = data.b.report.into();
@@ -302,7 +295,7 @@ async fn process_beacon_report(
                         radar_report.into(),
                         radar_send.into(),
                     );
-                    found(location_info, radars, shutdown).await.unwrap();
+                    found(location_info, radars, shutdown);
                 }
             }
             Err(e) => {
@@ -328,7 +321,7 @@ async fn process_beacon_report(
                         radar_report.into(),
                         radar_send.into(),
                     );
-                    found(location_info, radars, shutdown).await.unwrap();
+                    found(location_info, radars, shutdown);
                 }
             }
             Err(e) => {
@@ -354,7 +347,7 @@ async fn process_beacon_report(
                         radar_report.into(),
                         radar_send.into(),
                     );
-                    found(location_info, radars, shutdown).await.unwrap();
+                    found(location_info, radars, shutdown);
                 }
             }
             Err(e) => {
@@ -372,96 +365,36 @@ struct NavicoLocator {
     sock_report: Option<UdpSocket>,
 }
 
-impl NavicoLocator {
-    async fn start(&mut self) -> io::Result<()> {
-        match join_multicast(&NAVICO_BEACON_ADDRESS).await {
-            Ok(sock) => {
-                self.sock = Some(sock);
-                debug!(
-                    "Listening on {} for all Navico radars",
-                    NAVICO_BEACON_ADDRESS
-                );
-            }
-            Err(e) => {
-                sleep(Duration::from_millis(1000)).await;
-                debug!("Beacon multicast failed: {}", e);
-                return Err(e);
-            }
-        };
-        match join_multicast(&NAVICO_COMMON_REPORT_ADDRESS).await {
-            Ok(sock) => {
-                self.sock_report = Some(sock);
-                debug!(
-                    "Listening on {} for BR24..4G Navico radars",
-                    NAVICO_COMMON_REPORT_ADDRESS
-                );
-            }
-            Err(e) => {
-                sleep(Duration::from_millis(1000)).await;
-                debug!("Report multicast failed: {}", e);
-                return Err(e);
-            }
-        }
-        Ok(())
-    }
+fn process(
+    data: &[u8],
+    from: &SocketAddr,
+    nic_addr: &Ipv4Addr,
+    id: u32,
+    radars: Arc<RwLock<Radars>>,
+    shutdown: Shutdown,
+) -> io::Result<()> {
+    debug!("{} UDP recv {}: {:02X?}", from, data.len(), &data);
+    return process_report(&data, from, &radars, &shutdown);
 }
 
 #[async_trait]
 impl RadarLocator for NavicoLocator {
-    async fn process_beacons(
-        &mut self,
-        radars: Arc<RwLock<Radars>>,
-        shutdown: Shutdown,
-    ) -> io::Result<()> {
-        loop {
-            if !self.sock.is_some() || !self.sock_report.is_some() {
-                if let Err(_) = self.start().await {
-                    continue;
-                }
-            }
-
-            self.buf.clear();
-            self.buf_report.clear();
-            match (&self.sock, &self.sock_report) {
-                (Some(sock), Some(sock_report)) => {
-                    tokio::select! {
-                        _ = shutdown.handle() => {
-                            return Ok(());
-                        }
-                        result = sock.recv_buf_from(&mut self.buf) => {
-                            match result {
-                                            Ok((_len, from)) => {
-                                                debug!("{} UDP recv {}: {:02X?}", from, self.buf.len(), &self.buf);
-                                                process_report(&self.buf, from, &radars, &shutdown)
-                                                    .await
-                                                    .unwrap();
-                                            }
-                                            Err(e) => {
-                                                debug!("Beacon read failed: {}", e);
-                                                self.sock = None;
-                                            }
-                                        }
-                        },
-                        result = sock_report.recv_buf_from(&mut self.buf_report) => {
-                            match result {
-                                            Ok((_len, from)) => {
-                                                debug!("{} UDP recv {}: {:02X?}", from, self.buf_report.len(), &self.buf_report);
-                                                process_report(&self.buf_report, from, &radars, &shutdown)
-                                                    .await
-                                                    .unwrap();
-                                            }
-                                            Err(e) => {
-                                                debug!("Beacon read failed: {}", e);
-                                                self.sock = None;
-                                            }
-                                        }
-                        },
-                    }
-                }
-                _ => {
-                    // Nothing to do
-                }
-            }
+    fn update_listen_addresses(&self, addresses: &mut Vec<RadioListenAddress>) {
+        if !addresses.iter().any(|i| i.brand == "Navico Beacon") {
+            addresses.push(RadioListenAddress::new(
+                0,
+                &NAVICO_BEACON_ADDRESS,
+                "Navico Beacon",
+                &process,
+            ));
+        }
+        if !addresses.iter().any(|i| i.brand == "Navico Beacon") {
+            addresses.push(RadioListenAddress::new(
+                1,
+                &NAVICO_COMMON_REPORT_ADDRESS,
+                "Navico Common Report",
+                &process,
+            ));
         }
     }
 }
@@ -476,6 +409,7 @@ pub fn create_locator() -> Box<dyn RadarLocator + Send> {
     Box::new(locator)
 }
 
+/*
 struct NavicoBR24Locator {
     buf: Vec<u8>,
     sock: Option<UdpSocket>,
@@ -541,3 +475,5 @@ pub fn create_br24_locator() -> Box<dyn RadarLocator + Send> {
     };
     Box::new(locator)
 }
+
+*/
