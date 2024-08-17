@@ -128,42 +128,33 @@ fn bind_to_multicast(
 }
 
 /// On unixes we bind to the multicast address, which causes multicast packets to be filtered
-#[cfg(target_os = "linux")]
+#[cfg(all(unix, not(target_os = "linux")))]
 fn bind_to_multicast(
     socket: &socket2::Socket,
     addr: &SocketAddrV4,
     nic_addr: &Ipv4Addr,
 ) -> io::Result<()> {
-    use std::{io, mem, os::unix::io::AsRawFd};
+    // Linux is special, if we don't disable IP_MULTICAST_ALL the kernel forgets on
+    // which device the multicast packet arrived and sends it to all sockets.
+    #[cfg(target_os = "linux")]
+    {
+        use std::{io, mem, os::unix::io::AsRawFd};
 
-    unsafe {
-        let optval: libc::c_int = 0;
-        let ret = libc::setsockopt(
-            socket.as_raw_fd(),
-            libc::SOL_IP,
-            libc::IP_MULTICAST_ALL,
-            &optval as *const _ as *const libc::c_void,
-            mem::size_of_val(&optval) as libc::socklen_t,
-        );
-        if ret != 0 {
-            return Err(io::Error::last_os_error());
+        unsafe {
+            let optval: libc::c_int = 0;
+            let ret = libc::setsockopt(
+                socket.as_raw_fd(),
+                libc::SOL_IP,
+                libc::IP_MULTICAST_ALL,
+                &optval as *const _ as *const libc::c_void,
+                mem::size_of_val(&optval) as libc::socklen_t,
+            );
+            if ret != 0 {
+                return Err(io::Error::last_os_error());
+            }
         }
     }
 
-    socket.join_multicast_v4(addr.ip(), nic_addr)?;
-
-    let socketaddr = SocketAddr::new(IpAddr::V4(*addr.ip()), addr.port());
-    socket.bind(&socket2::SockAddr::from(socketaddr))?;
-    Ok(())
-}
-
-/// On unixes we bind to the multicast address, which causes multicast packets to be filtered
-#[cfg(target_os = "macos")]
-fn bind_to_multicast(
-    socket: &socket2::Socket,
-    addr: &SocketAddrV4,
-    nic_addr: &Ipv4Addr,
-) -> io::Result<()> {
     socket.join_multicast_v4(addr.ip(), nic_addr)?;
 
     let socketaddr = SocketAddr::new(IpAddr::V4(*addr.ip()), addr.port());
