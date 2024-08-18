@@ -8,7 +8,7 @@ use std::sync::{Arc, RwLock};
 use tokio::net::UdpSocket;
 use tokio_shutdown::Shutdown;
 
-use crate::locator::{RadarLocator, RadioListenAddress};
+use crate::locator::{RadarListenAddress, RadarLocator};
 use crate::radar::{located, RadarLocationInfo, Radars};
 use crate::util::c_string;
 use crate::util::PrintableSlice;
@@ -384,9 +384,9 @@ struct NavicoLocator {
 
 #[async_trait]
 impl RadarLocator for NavicoLocator {
-    fn update_listen_addresses(&self, addresses: &mut Vec<RadioListenAddress>) {
+    fn update_listen_addresses(&self, addresses: &mut Vec<RadarListenAddress>) {
         if !addresses.iter().any(|i| i.brand == "Navico Beacon") {
-            addresses.push(RadioListenAddress::new(
+            addresses.push(RadarListenAddress::new(
                 0,
                 &NAVICO_BEACON_ADDRESS,
                 "Navico Beacon",

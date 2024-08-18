@@ -25,7 +25,7 @@ use crate::radar::Radars;
 use crate::{navico, util};
 
 #[derive(Clone)]
-pub struct RadioListenAddress {
+pub struct RadarListenAddress {
     pub id: u32,
     pub address: SocketAddr,
     pub brand: String,
@@ -41,9 +41,9 @@ pub struct RadioListenAddress {
 
 // The only part of RadioListenAddress that isn't Send is process, but since this is static it really
 // is safe to send.
-unsafe impl Send for RadioListenAddress {}
+unsafe impl Send for RadarListenAddress {}
 
-impl RadioListenAddress {
+impl RadarListenAddress {
     pub fn new(
         id: u32,
         address: &SocketAddr,
@@ -56,8 +56,8 @@ impl RadioListenAddress {
             &Arc<RwLock<Radars>>,
             &Shutdown,
         ) -> io::Result<()>,
-    ) -> RadioListenAddress {
-        RadioListenAddress {
+    ) -> RadarListenAddress {
+        RadarListenAddress {
             id,
             address: address.clone(),
             brand: brand.into(),
@@ -86,7 +86,7 @@ unsafe impl Send for ListenSockets {}
 
 #[async_trait]
 pub trait RadarLocator {
-    fn update_listen_addresses(&self, addresses: &mut Vec<RadioListenAddress>);
+    fn update_listen_addresses(&self, addresses: &mut Vec<RadarListenAddress>);
 }
 
 pub async fn new(shutdown: Shutdown) -> io::Result<()> {
@@ -95,7 +95,7 @@ pub async fn new(shutdown: Shutdown) -> io::Result<()> {
     //let mut garmin_locator = garmin::create_locator();
     let detected_radars = Radars::new();
 
-    let mut listen_addresses: Vec<RadioListenAddress> = Vec::new();
+    let mut listen_addresses: Vec<RadarListenAddress> = Vec::new();
     navico_locator.update_listen_addresses(&mut listen_addresses);
     // navico_br24_locator.update_listen_addresses(&listen_addresses);
     // garmin_locator.update_listen_addresses(&listen_addresses);
@@ -230,7 +230,7 @@ fn send_multicast_packet(addr: &SocketAddr, msg: &[u8]) {
 }
 
 fn create_multicast_sockets(
-    listen_addresses: &Vec<RadioListenAddress>,
+    listen_addresses: &Vec<RadarListenAddress>,
 ) -> io::Result<Vec<ListenSockets>> {
     match NetworkInterface::show() {
         Ok(interfaces) => {
