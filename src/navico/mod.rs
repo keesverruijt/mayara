@@ -17,8 +17,6 @@ mod receive;
 
 const NAVICO_BEACON_ADDRESS: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(236, 6, 7, 5)), 6878);
-const NAVICO_COMMON_REPORT_ADDRESS: SocketAddr =
-    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(236, 6, 7, 9)), 6679);
 
 #[derive(Deserialize, Debug, Copy, Clone)]
 struct NetworkSocketAddrV4 {
@@ -82,6 +80,9 @@ EC 06 07 0C 1A 04 11 00 00 00
 EC 06 07 0D 1A 05 12 00 00 00
 EC 06 07 0E 1A 06
 */
+
+const NAVICO_WAKE_RADAR_PACKET: [u8; 2] = [0x01, 0xB1];
+
 #[derive(Deserialize, Debug, Copy, Clone)]
 #[repr(packed)]
 struct NavicoBeaconHeader {
@@ -220,6 +221,7 @@ fn found(info: RadarLocationInfo, radars: &Arc<RwLock<Radars>>, shutdown: &Shutd
 fn process_report(
     report: &[u8],
     from: &SocketAddr,
+    via: &Ipv4Addr,
     radars: &Arc<RwLock<Radars>>,
     shutdown: &Shutdown,
 ) -> io::Result<()> {
@@ -237,15 +239,14 @@ fn process_report(
         trace!("{}: printable:     {}", from, PrintableSlice::new(report));
     }
 
-    if report[0] == 0x01 && report[1] == 0xB1 {
-        // Wake radar
+    if report == NAVICO_WAKE_RADAR_PACKET {
         debug!("Wake radar request from {}", from);
         return Ok(());
     }
     if report[0] == 0x1 && report[1] == 0xB2 {
         // Common Navico message
 
-        return process_beacon_report(report, from, radars, shutdown);
+        return process_beacon_report(report, from, via, radars, shutdown);
     }
     Ok(())
 }
@@ -253,11 +254,17 @@ fn process_report(
 fn process_beacon_report(
     report: &[u8],
     from: &SocketAddr,
+    via: &Ipv4Addr,
     radars: &Arc<RwLock<Radars>>,
     shutdown: &Shutdown,
 ) -> Result<(), io::Error> {
     if report.len() < size_of::<BR24Beacon>() {
-        debug!("Incomplete beacon from {}, length {}", from, report.len());
+        debug!(
+            "{} via {}: Incomplete beacon, length {}",
+            from,
+            via,
+            report.len()
+        );
         return Ok(());
     }
 
@@ -276,6 +283,7 @@ fn process_beacon_report(
                         Some(serial_no),
                         Some("A"),
                         radar_addr.into(),
+                        via.clone(),
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
@@ -291,6 +299,7 @@ fn process_beacon_report(
                         Some(serial_no),
                         Some("B"),
                         radar_addr.into(),
+                        via.clone(),
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
@@ -299,7 +308,10 @@ fn process_beacon_report(
                 }
             }
             Err(e) => {
-                error!("Failed to decode dual range data: {}", e);
+                error!(
+                    "{} via {}: Failed to decode dual range data: {}",
+                    from, via, e
+                );
             }
         }
     } else if report.len() >= NAVICO_BEACON_SINGLE_SIZE {
@@ -317,6 +329,7 @@ fn process_beacon_report(
                         Some(serial_no),
                         None,
                         radar_addr.into(),
+                        via.clone(),
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
@@ -325,7 +338,10 @@ fn process_beacon_report(
                 }
             }
             Err(e) => {
-                error!("Failed to decode dual range data: {}", e);
+                error!(
+                    "{} via {}: Failed to decode single range data: {}",
+                    from, via, e
+                );
             }
         }
     } else if report.len() == NAVICO_BEACON_BR24_SIZE {
@@ -343,6 +359,7 @@ fn process_beacon_report(
                         Some(serial_no),
                         None,
                         radar_addr.into(),
+                        via.clone(),
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
@@ -351,7 +368,7 @@ fn process_beacon_report(
                 }
             }
             Err(e) => {
-                error!("Failed to decode BR24 data: {}", e);
+                error!("{} via {}: Failed to decode BR24 data: {}", from, via, e);
             }
         }
     }
@@ -365,18 +382,6 @@ struct NavicoLocator {
     sock_report: Option<UdpSocket>,
 }
 
-fn process(
-    data: &[u8],
-    from: &SocketAddr,
-    nic_addr: &Ipv4Addr,
-    id: u32,
-    radars: Arc<RwLock<Radars>>,
-    shutdown: Shutdown,
-) -> io::Result<()> {
-    debug!("{} UDP recv {}: {:02X?}", from, data.len(), &data);
-    return process_report(&data, from, &radars, &shutdown);
-}
-
 #[async_trait]
 impl RadarLocator for NavicoLocator {
     fn update_listen_addresses(&self, addresses: &mut Vec<RadioListenAddress>) {
@@ -385,15 +390,8 @@ impl RadarLocator for NavicoLocator {
                 0,
                 &NAVICO_BEACON_ADDRESS,
                 "Navico Beacon",
-                &process,
-            ));
-        }
-        if !addresses.iter().any(|i| i.brand == "Navico Beacon") {
-            addresses.push(RadioListenAddress::new(
-                1,
-                &NAVICO_COMMON_REPORT_ADDRESS,
-                "Navico Common Report",
-                &process,
+                Some(&NAVICO_WAKE_RADAR_PACKET),
+                &process_report,
             ));
         }
     }

@@ -239,19 +239,21 @@ impl Receive {
     }
 
     async fn start_socket(&mut self) -> io::Result<()> {
-        let nic_addr: &Ipv4Addr = self.info.addr.ip(); // TODO: Add NIC addr to RadarLocationInfo
-        match create_multicast(&self.info.spoke_data_addr, &nic_addr) {
+        match create_multicast(&self.info.spoke_data_addr, &self.info.nic_addr) {
             Ok(sock) => {
                 self.sock = Some(sock);
                 debug!(
-                    "Listening on {} for Navico spokes",
-                    &self.info.spoke_data_addr
+                    "{} via {}: listening for spoke data",
+                    &self.info.spoke_data_addr, &self.info.nic_addr
                 );
                 Ok(())
             }
             Err(e) => {
                 sleep(Duration::from_millis(1000)).await;
-                debug!("Beacon multicast failed: {}", e);
+                debug!(
+                    "{} via {}: create multicast failed: {}",
+                    &self.info.spoke_data_addr, &self.info.nic_addr, e
+                );
                 Ok(())
             }
         }

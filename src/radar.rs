@@ -4,7 +4,7 @@ use std::{
     collections::HashMap,
     fmt::{self, Display, Write},
     io,
-    net::SocketAddrV4,
+    net::{Ipv4Addr, SocketAddrV4},
     sync::{Arc, RwLock},
 };
 
@@ -16,6 +16,7 @@ pub struct RadarLocationInfo {
     pub serial_no: Option<String>,       // Serial # for this radar
     pub which: Option<String>,           // "A", "B" or None
     pub addr: SocketAddrV4,              // The assigned IP address of the radar
+    pub nic_addr: Ipv4Addr,              // IPv4 address of NIC via which radar can be reached
     pub spoke_data_addr: SocketAddrV4,   // Where the radar will send data spokes
     pub report_addr: SocketAddrV4,       // Where the radar will send reports
     pub send_command_addr: SocketAddrV4, // Where displays will send commands to the radar
@@ -28,6 +29,7 @@ impl RadarLocationInfo {
         serial_no: Option<&str>,
         which: Option<&str>,
         addr: SocketAddrV4,
+        nic_addr: Ipv4Addr,
         spoke_data_addr: SocketAddrV4,
         report_addr: SocketAddrV4,
         send_command_addr: SocketAddrV4,
@@ -39,6 +41,7 @@ impl RadarLocationInfo {
             serial_no: serial_no.map(String::from),
             which: which.map(String::from),
             addr,
+            nic_addr,
             spoke_data_addr,
             report_addr,
             send_command_addr,
@@ -60,8 +63,9 @@ impl Display for RadarLocationInfo {
         }
         write!(
             f,
-            " at {} data {} report {} send {}",
+            " at {} via {} data {} report {} send {}",
             &self.addr.ip(),
+            &self.nic_addr,
             &self.spoke_data_addr,
             &self.report_addr,
             &self.send_command_addr
@@ -83,11 +87,6 @@ impl Radars {
 
 pub struct Statistics {
     broken_packets: usize,
-}
-
-#[async_trait]
-pub trait RadarProcessor {
-    async fn process(&mut self, info: RadarLocationInfo) -> io::Result<()>;
 }
 
 // A radar has been found
