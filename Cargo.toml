@@ -2,6 +2,7 @@
 name = "mayara"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.80.1"
 
 [dependencies]
 async-trait = "0.1.81"
