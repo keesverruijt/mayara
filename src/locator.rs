@@ -24,9 +24,15 @@ use tokio_shutdown::Shutdown;
 use crate::radar::Radars;
 use crate::{navico, util};
 
+#[derive(PartialEq, Eq, Copy, Clone)]
+pub enum LocatorId {
+    NavicoNew,
+    NavicoBR24,
+}
+
 #[derive(Clone)]
 pub struct RadarListenAddress {
-    pub id: u32,
+    pub id: LocatorId,
     pub address: SocketAddr,
     pub brand: String,
     pub ping: Option<&'static [u8]>, // Optional ping message to send to wake radar
@@ -45,7 +51,7 @@ unsafe impl Send for RadarListenAddress {}
 
 impl RadarListenAddress {
     pub fn new(
-        id: u32,
+        id: LocatorId,
         address: &SocketAddr,
         brand: &str,
         ping: Option<&'static [u8]>,
@@ -67,10 +73,10 @@ impl RadarListenAddress {
     }
 }
 
-struct ListenSockets {
+struct LocatorInfo {
     sock: UdpSocket,
     nic_addr: Ipv4Addr,
-    id: u32,
+    id: LocatorId,
     process: &'static dyn Fn(
         &[u8],       // message
         &SocketAddr, // from
@@ -80,9 +86,9 @@ struct ListenSockets {
     ) -> io::Result<()>,
 }
 
-// The only part of ListenSockets that isn't Send is process, but since this is static it really
+// The only part of LocatorInfo that isn't Send is process, but since this is static it really
 // is safe to send.
-unsafe impl Send for ListenSockets {}
+unsafe impl Send for LocatorInfo {}
 
 #[async_trait]
 pub trait RadarLocator {
@@ -90,14 +96,14 @@ pub trait RadarLocator {
 }
 
 pub async fn new(shutdown: Shutdown) -> io::Result<()> {
-    let mut navico_locator = navico::create_locator();
-    //let mut navico_br24_locator = navico::create_br24_locator();
+    let navico_locator = navico::create_locator();
+    let navico_br24_locator = navico::create_br24_locator();
     //let mut garmin_locator = garmin::create_locator();
     let detected_radars = Radars::new();
 
     let mut listen_addresses: Vec<RadarListenAddress> = Vec::new();
     navico_locator.update_listen_addresses(&mut listen_addresses);
-    // navico_br24_locator.update_listen_addresses(&listen_addresses);
+    navico_br24_locator.update_listen_addresses(&mut listen_addresses);
     // garmin_locator.update_listen_addresses(&listen_addresses);
 
     info!("Entering loop, listening for radars");
@@ -188,8 +194,8 @@ pub async fn new(shutdown: Shutdown) -> io::Result<()> {
 }
 
 fn spawn_receive(
-    set: &mut JoinSet<Result<(ListenSockets, SocketAddr, Vec<u8>), io::Error>>,
-    socket: ListenSockets,
+    set: &mut JoinSet<Result<(LocatorInfo, SocketAddr, Vec<u8>), io::Error>>,
+    socket: LocatorInfo,
 ) {
     set.spawn(async move {
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
@@ -231,7 +237,7 @@ fn send_multicast_packet(addr: &SocketAddr, msg: &[u8]) {
 
 fn create_multicast_sockets(
     listen_addresses: &Vec<RadarListenAddress>,
-) -> io::Result<Vec<ListenSockets>> {
+) -> io::Result<Vec<LocatorInfo>> {
     match NetworkInterface::show() {
         Ok(interfaces) => {
             let mut sockets = Vec::new();
@@ -244,7 +250,7 @@ fn create_multicast_sockets(
                                     let socket = util::create_multicast(&listen_addr, &nic_addr);
                                     match socket {
                                         Ok(socket) => {
-                                            sockets.push(ListenSockets {
+                                            sockets.push(LocatorInfo {
                                                 sock: socket,
                                                 nic_addr: nic_addr.clone(),
                                                 id: radar_listen_address.id,

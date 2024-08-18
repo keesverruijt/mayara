@@ -9,9 +9,6 @@ pub fn c_string(bytes: &[u8]) -> Option<&str> {
     std::str::from_utf8(bytes_without_null).ok()
 }
 
-use log::debug;
-use network_interface::NetworkInterface;
-use network_interface::NetworkInterfaceConfig;
 use socket2::{Domain, Protocol, Type};
 use std::net::SocketAddrV4;
 use std::{

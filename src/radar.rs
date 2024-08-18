@@ -1,9 +1,7 @@
-use async_trait::async_trait;
 use log::info;
 use std::{
     collections::HashMap,
     fmt::{self, Display, Write},
-    io,
     net::{Ipv4Addr, SocketAddrV4},
     sync::{Arc, RwLock},
 };

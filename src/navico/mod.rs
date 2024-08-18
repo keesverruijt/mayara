@@ -5,10 +5,9 @@ use serde::Deserialize;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::{Arc, RwLock};
-use tokio::net::UdpSocket;
 use tokio_shutdown::Shutdown;
 
-use crate::locator::{RadarListenAddress, RadarLocator};
+use crate::locator::{LocatorId, RadarListenAddress, RadarLocator};
 use crate::radar::{located, RadarLocationInfo, Radars};
 use crate::util::c_string;
 use crate::util::PrintableSlice;
@@ -218,7 +217,7 @@ fn found(info: RadarLocationInfo, radars: &Arc<RwLock<Radars>>, shutdown: &Shutd
     }
 }
 
-fn process_report(
+fn process_locator_report(
     report: &[u8],
     from: &SocketAddr,
     via: &Ipv4Addr,
@@ -375,103 +374,51 @@ fn process_beacon_report(
     Ok(())
 }
 
-struct NavicoLocator {
-    buf: Vec<u8>,
-    buf_report: Vec<u8>,
-    sock: Option<UdpSocket>,
-    sock_report: Option<UdpSocket>,
-}
+struct NavicoLocator {}
 
 #[async_trait]
 impl RadarLocator for NavicoLocator {
     fn update_listen_addresses(&self, addresses: &mut Vec<RadarListenAddress>) {
-        if !addresses.iter().any(|i| i.brand == "Navico Beacon") {
+        if !addresses
+            .iter()
+            .any(|i| i.id == LocatorId::NavicoNew && i.brand == "Navico Beacon")
+        {
             addresses.push(RadarListenAddress::new(
-                0,
+                LocatorId::NavicoNew,
                 &NAVICO_BEACON_ADDRESS,
                 "Navico Beacon",
                 Some(&NAVICO_WAKE_RADAR_PACKET),
-                &process_report,
+                &process_locator_report,
             ));
         }
     }
 }
 
 pub fn create_locator() -> Box<dyn RadarLocator + Send> {
-    let locator = NavicoLocator {
-        buf: Vec::with_capacity(2048),
-        sock: None,
-        buf_report: Vec::with_capacity(2048),
-        sock_report: None,
-    };
+    let locator = NavicoLocator {};
     Box::new(locator)
 }
 
-/*
-struct NavicoBR24Locator {
-    buf: Vec<u8>,
-    sock: Option<UdpSocket>,
-}
+struct NavicoBR24Locator {}
 
-impl NavicoBR24Locator {
-    async fn start(&mut self) -> io::Result<()> {
-        match join_multicast(&NAVICO_BR24_BEACON_ADDRESS).await {
-            Ok(sock) => {
-                self.sock = Some(sock);
-                debug!(
-                    "Listening on {} for Navico BR24",
-                    NAVICO_BR24_BEACON_ADDRESS
-                );
-                Ok(())
-            }
-            Err(e) => {
-                sleep(Duration::from_millis(1000)).await;
-                debug!("Beacon multicast failed: {}", e);
-                Ok(())
-            }
-        }
-    }
-}
-
-#[async_trait]
 impl RadarLocator for NavicoBR24Locator {
-    async fn process_beacons(
-        &mut self,
-        radars: Arc<RwLock<Radars>>,
-        shutdown: Shutdown,
-    ) -> io::Result<()> {
-        self.start().await.unwrap();
-        loop {
-            match &self.sock {
-                Some(sock) => {
-                    self.buf.clear();
-                    match sock.recv_buf_from(&mut self.buf).await {
-                        Ok((_len, from)) => {
-                            process_report(&self.buf, from, &radars, &shutdown)
-                                .await
-                                .unwrap();
-                        }
-                        Err(e) => {
-                            debug!("Beacon read failed: {}", e);
-                            self.sock = None;
-                        }
-                    }
-                }
-                None => {
-                    sleep(Duration::from_millis(1000)).await;
-                    self.start().await.unwrap();
-                }
-            }
+    fn update_listen_addresses(&self, addresses: &mut Vec<RadarListenAddress>) {
+        if !addresses
+            .iter()
+            .any(|i| i.id == LocatorId::NavicoBR24 && i.brand == "Navico BR24 Beacon")
+        {
+            addresses.push(RadarListenAddress::new(
+                LocatorId::NavicoBR24,
+                &NAVICO_BR24_BEACON_ADDRESS,
+                "Navico BR24 Beacon",
+                Some(&NAVICO_WAKE_RADAR_PACKET),
+                &process_locator_report,
+            ));
         }
     }
 }
 
 pub fn create_br24_locator() -> Box<dyn RadarLocator + Send> {
-    let locator = NavicoBR24Locator {
-        buf: Vec::with_capacity(2048),
-        sock: None,
-    };
+    let locator = NavicoBR24Locator {};
     Box::new(locator)
 }
-
-*/
