@@ -8,6 +8,7 @@ use tokio::net::UdpSocket;
 use tokio::time::sleep;
 use tokio_shutdown::Shutdown;
 
+use crate::locator::LocatorId;
 use crate::radar::RadarLocationInfo;
 use crate::util::{create_multicast, PrintableSpoke};
 
@@ -315,27 +316,57 @@ impl Receive {
             let spoke_slice = &data[offset + RADAR_LINE_HEADER_LENGTH
                 ..offset + RADAR_LINE_HEADER_LENGTH + RADAR_LINE_DATA_LENGTH];
 
-            match deserialize::<Br4gHeader>(&header_slice) {
-                Ok(header) => {
-                    trace!("Received {:04} header {:?}", scanline, header);
+            match self.info.locator_id {
+                LocatorId::NavicoNew => {
+                    match deserialize::<Br4gHeader>(&header_slice) {
+                        Ok(header) => {
+                            trace!("Received {:04} header {:?}", scanline, header);
 
-                    if let Some((range, angle, heading)) = Receive::validate_header(&header) {
-                        debug!("range {} angle {} heading {}", range, angle, heading);
-                        debug!(
-                            "Received {:04} spoke {}",
-                            scanline,
-                            PrintableSpoke::new(spoke_slice),
-                        );
-                    } else {
-                        warn!("Invalid spoke: header {:02X?}", &header_slice);
-                        self.statistics.broken_packets += 1;
-                    }
+                            if let Some((range, angle, heading)) = Receive::validate_header(&header)
+                            {
+                                debug!("range {} angle {} heading {}", range, angle, heading);
+                                debug!(
+                                    "Received {:04} spoke {}",
+                                    scanline,
+                                    PrintableSpoke::new(spoke_slice),
+                                );
+                            } else {
+                                warn!("Invalid spoke: header {:02X?}", &header_slice);
+                                self.statistics.broken_packets += 1;
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Illegible spoke: {} header {:02X?}", e, &header_slice);
+                            self.statistics.broken_packets += 1;
+                        }
+                    };
                 }
-                Err(e) => {
-                    warn!("Illegible spoke: {} header {:02X?}", e, &header_slice);
-                    self.statistics.broken_packets += 1;
+                LocatorId::NavicoBR24 => {
+                    match deserialize::<Br24Header>(&header_slice) {
+                        Ok(header) => {
+                            trace!("Received {:04} header {:?}", scanline, header);
+
+                            if let Some((range, angle, heading)) =
+                                Receive::validate_br24_header(&header)
+                            {
+                                debug!("range {} angle {} heading {}", range, angle, heading);
+                                debug!(
+                                    "Received {:04} spoke {}",
+                                    scanline,
+                                    PrintableSpoke::new(spoke_slice),
+                                );
+                            } else {
+                                warn!("Invalid spoke: header {:02X?}", &header_slice);
+                                self.statistics.broken_packets += 1;
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Illegible spoke: {} header {:02X?}", e, &header_slice);
+                            self.statistics.broken_packets += 1;
+                        }
+                    };
                 }
-            };
+            }
             offset += RADAR_LINE_LENGTH;
         }
     }
@@ -366,6 +397,25 @@ impl Receive {
         } else {
             large_range as u32 * small_range as u32 / 512
         };
+        Some((range, heading, angle))
+    }
+
+    fn validate_br24_header(header: &Br24Header) -> Option<(u32, i16, i16)> {
+        if header.header_len != RADAR_LINE_HEADER_LENGTH as u8 {
+            warn!(
+                "Spoke with illegal header length ({}) ignored",
+                header.header_len
+            );
+            return None;
+        }
+        if header.status != 0x02 && header.status != 0x12 {
+            warn!("Spoke with illegal status (0x{:x}) ignored", header.status);
+            return None;
+        }
+
+        let heading = i16::from_le_bytes(header.heading);
+        let angle = i16::from_le_bytes(header.angle);
+        let range = u32::from_le_bytes(header.range);
         Some((range, heading, angle))
     }
 }
