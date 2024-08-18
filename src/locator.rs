@@ -7,6 +7,7 @@
 // Still, we use this location method for all radars so the process is uniform.
 //
 
+use std::collections::HashMap;
 use std::io::{self, ErrorKind};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::panic::Location;
@@ -16,6 +17,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use log::{debug, error, info, trace, warn};
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
+use time::util::is_leap_year;
 use tokio::net::UdpSocket;
 use tokio::task::JoinSet;
 use tokio::time::sleep;
@@ -107,6 +109,13 @@ pub trait RadarLocator {
     fn update_listen_addresses(&self, addresses: &mut Vec<RadarListenAddress>);
 }
 
+struct InterfaceState {
+    active_nic_addresses: Vec<Ipv4Addr>,
+    inactive_nic_names: HashMap<String, u32>,
+    lost_nic_names: HashMap<String, u32>,
+    first_loop: bool,
+}
+
 pub async fn new(shutdown: Shutdown) -> io::Result<()> {
     let navico_locator = navico::create_locator();
     let navico_br24_locator = navico::create_br24_locator();
@@ -119,11 +128,17 @@ pub async fn new(shutdown: Shutdown) -> io::Result<()> {
     // garmin_locator.update_listen_addresses(&listen_addresses);
 
     info!("Entering loop, listening for radars");
+    let mut interface_state = InterfaceState {
+        active_nic_addresses: Vec::new(),
+        inactive_nic_names: HashMap::new(),
+        lost_nic_names: HashMap::new(),
+        first_loop: true,
+    };
 
     loop {
         // create a list of sockets for all listen addresses
         let shutdown_handle = shutdown.clone().handle();
-        let sockets = create_multicast_sockets(&listen_addresses);
+        let sockets = create_multicast_sockets(&listen_addresses, &mut interface_state);
         let mut set = JoinSet::new();
         if let Ok(sockets) = sockets {
             for socket in sockets {
@@ -249,34 +264,62 @@ fn send_multicast_packet(addr: &SocketAddr, msg: &[u8]) {
 
 fn create_multicast_sockets(
     listen_addresses: &Vec<RadarListenAddress>,
+    interface_state: &mut InterfaceState,
 ) -> io::Result<Vec<LocatorInfo>> {
     match NetworkInterface::show() {
         Ok(interfaces) => {
             let mut sockets = Vec::new();
             for itf in interfaces {
+                let mut active: bool = false;
                 for nic_addr in itf.addr {
-                    if let IpAddr::V4(nic_addr) = nic_addr.ip() {
-                        if !nic_addr.is_loopback() {
+                    if let IpAddr::V4(nic_ip) = nic_addr.ip() {
+                        if !nic_ip.is_loopback() {
+                            if interface_state.lost_nic_names.contains_key(&itf.name)
+                                || !interface_state.active_nic_addresses.contains(&nic_ip)
+                            {
+                                if interface_state
+                                    .inactive_nic_names
+                                    .remove(&itf.name)
+                                    .is_some()
+                                {
+                                    info!(
+                                        "Interface '{}' became active or gained an IPv4 address, now listening on IP address {}/{} for radars",
+                                        itf.name,
+                                        &nic_ip,
+                                        nic_addr.netmask().unwrap()
+                                    );
+                                } else {
+                                    info!(
+                                        "Interface '{}' now listening on IP address {}/{} for radars",
+                                        itf.name,
+                                        &nic_ip,
+                                        nic_addr.netmask().unwrap()
+                                    );
+                                }
+                                interface_state.active_nic_addresses.push(nic_ip.clone());
+                                interface_state.lost_nic_names.remove(&itf.name);
+                            }
+
                             for radar_listen_address in listen_addresses {
                                 if let SocketAddr::V4(listen_addr) = radar_listen_address.address {
-                                    let socket = util::create_multicast(&listen_addr, &nic_addr);
+                                    let socket = util::create_multicast(&listen_addr, &nic_ip);
                                     match socket {
                                         Ok(socket) => {
                                             sockets.push(LocatorInfo {
                                                 sock: socket,
-                                                nic_addr: nic_addr.clone(),
+                                                nic_addr: nic_ip.clone(),
                                                 id: radar_listen_address.id,
                                                 process: radar_listen_address.process,
                                             });
                                             debug!(
-                                                "Listening on {} address {} for multicast address {}",
-                                                itf.name, nic_addr, listen_addr,
+                                                "Listening on '{}' address {} for multicast address {}",
+                                                itf.name, nic_ip, listen_addr,
                                             );
                                         }
                                         Err(e) => {
                                             warn!(
-                                                "Cannot listen on {} address {} for multicast address {}: {}",
-                                                itf.name, nic_addr, listen_addr, e
+                                                "Cannot listen on '{}' address {} for multicast address {}: {}",
+                                                itf.name, nic_ip, listen_addr, e
                                             );
                                         }
                                     }
@@ -287,10 +330,29 @@ fn create_multicast_sockets(
                                     );
                                 }
                             }
+                            active = true;
+                        }
+                    }
+                }
+                if !active {
+                    if interface_state
+                        .inactive_nic_names
+                        .insert(itf.name.to_owned(), 0)
+                        .is_none()
+                    {
+                        if interface_state.first_loop {
+                            warn!("Interface '{}' does not have an IPv4 address", itf.name);
+                        } else {
+                            warn!(
+                                "Interface '{}' became inactive or lost its IPv4 address",
+                                itf.name
+                            );
+                            interface_state.lost_nic_names.insert(itf.name, 0);
                         }
                     }
                 }
             }
+            interface_state.first_loop = false;
             Ok(sockets)
         }
         Err(e) => {
