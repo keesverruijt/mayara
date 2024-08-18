@@ -125,7 +125,7 @@ fn bind_to_multicast(
 }
 
 /// On unixes we bind to the multicast address, which causes multicast packets to be filtered
-#[cfg(all(unix, not(target_os = "linux")))]
+#[cfg(unix)]
 fn bind_to_multicast(
     socket: &socket2::Socket,
     addr: &SocketAddrV4,
