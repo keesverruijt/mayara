@@ -15,15 +15,25 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Build
-      run: cargo build --verbose
+      run: cargo build --release
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test --release --verbose
+    - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mayara Linux x86_64
+          path: target/release/mayara
 
   windows:
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@v4
     - name: Build
-      run: cargo build --verbose
+      run: cargo build --release
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test --release --verbose
+    - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mayara Windows x86_64
+          path: target/release/mayara.exe
