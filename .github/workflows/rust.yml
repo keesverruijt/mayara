@@ -19,7 +19,7 @@ jobs:
     - name: Run tests
       run: cargo test --release --verbose
     - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: Mayara Linux x86_64
           path: target/release/mayara
@@ -33,7 +33,7 @@ jobs:
     - name: Run tests
       run: cargo test --release --verbose
     - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: Mayara Windows x86_64
           path: target/release/mayara.exe
