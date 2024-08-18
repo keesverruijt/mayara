@@ -6,9 +6,12 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use crate::locator::LocatorId;
+
 #[derive(Clone)]
 pub struct RadarLocationInfo {
     id: usize,
+    pub locator_id: LocatorId,
     pub brand: String,
     pub model: Option<String>,
     pub serial_no: Option<String>,       // Serial # for this radar
@@ -22,6 +25,7 @@ pub struct RadarLocationInfo {
 
 impl RadarLocationInfo {
     pub fn new(
+        locator_id: LocatorId,
         brand: &str,
         model: Option<&str>,
         serial_no: Option<&str>,
@@ -34,6 +38,7 @@ impl RadarLocationInfo {
     ) -> Self {
         RadarLocationInfo {
             id: 0,
+            locator_id,
             brand: brand.to_owned(),
             model: model.map(String::from),
             serial_no: serial_no.map(String::from),
@@ -49,7 +54,13 @@ impl RadarLocationInfo {
 
 impl Display for RadarLocationInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Radar {}", &self.brand)?;
+        write!(
+            f,
+            "Radar {} locator {} brand {}",
+            &self.id,
+            &self.locator_id.as_str(),
+            &self.brand
+        )?;
         if let Some(model) = &self.model {
             write!(f, " {}", model)?;
         }

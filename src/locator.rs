@@ -9,6 +9,7 @@
 
 use std::io::{self, ErrorKind};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::panic::Location;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -28,6 +29,17 @@ use crate::{navico, util};
 pub enum LocatorId {
     NavicoNew,
     NavicoBR24,
+}
+
+impl LocatorId {
+    pub(crate) fn as_str(&self) -> &'static str {
+        use LocatorId::*;
+        // tidy-alphabetical-start
+        match *self {
+            NavicoNew => "Navico 3G, 4G, HALO",
+            NavicoBR24 => "Navico BR24",
+        }
+    }
 }
 
 #[derive(Clone)]

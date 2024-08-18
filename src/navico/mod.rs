@@ -179,26 +179,11 @@ struct BR24Beacon {
     _filler3: [u8; 4],
     _addr3: NetworkSocketAddrV4,
     _filler4: [u8; 10],
-    data: NetworkSocketAddrV4, // Note different order from newer radars
+    report: NetworkSocketAddrV4,
     _filler5: [u8; 4],
     send: NetworkSocketAddrV4,
     _filler6: [u8; 4],
-    report: NetworkSocketAddrV4,
-}
-
-// We _also_ listen on the 4G report address, as 4G older radars don't
-// send the beacon message with the addresses often enough.
-
-struct RadarReport03c4_129 {
-    _what: u8,
-    _command: u8,
-    radar_type: u8,     // 00=Halo 01=4G + modern 3G 08=3G 0F=BR24
-    _filler1: [u8; 31], // Lots of unknown stuff
-    hours: u32,         // Hours of operation
-    _filler2: [u8; 20], // More unknown
-    firmware_date: [u8; 16],
-    firmware_time: [u8; 16],
-    _filler3: [u8; 7],
+    data: NetworkSocketAddrV4, // Note different order from newer radars
 }
 
 const NAVICO_BEACON_SINGLE_SIZE: usize = size_of::<NavicoBeaconSingle>();
@@ -277,6 +262,7 @@ fn process_beacon_report(
                     let radar_report: SocketAddrV4 = data.a.report.into();
                     let radar_send: SocketAddrV4 = data.a.send.into();
                     let location_info: RadarLocationInfo = RadarLocationInfo::new(
+                        LocatorId::NavicoNew,
                         "Navico",
                         None,
                         Some(serial_no),
@@ -293,6 +279,7 @@ fn process_beacon_report(
                     let radar_report: SocketAddrV4 = data.b.report.into();
                     let radar_send: SocketAddrV4 = data.b.send.into();
                     let location_info: RadarLocationInfo = RadarLocationInfo::new(
+                        LocatorId::NavicoNew,
                         "Navico",
                         None,
                         Some(serial_no),
@@ -323,6 +310,7 @@ fn process_beacon_report(
                     let radar_report: SocketAddrV4 = data.a.report.into();
                     let radar_send: SocketAddrV4 = data.a.send.into();
                     let location_info: RadarLocationInfo = RadarLocationInfo::new(
+                        LocatorId::NavicoNew,
                         "Navico",
                         None,
                         Some(serial_no),
@@ -353,6 +341,7 @@ fn process_beacon_report(
                     let radar_report: SocketAddrV4 = data.report.into();
                     let radar_send: SocketAddrV4 = data.send.into();
                     let location_info: RadarLocationInfo = RadarLocationInfo::new(
+                        LocatorId::NavicoBR24,
                         "Navico",
                         Some("BR24"),
                         Some(serial_no),
