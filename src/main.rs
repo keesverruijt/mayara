@@ -3,6 +3,7 @@ extern crate tokio;
 use clap::Parser;
 use env_logger::Env;
 use log::{debug, info};
+use radar::Radars;
 use tokio::task::JoinHandle;
 
 // mod garmin;
@@ -37,11 +38,16 @@ async fn main() -> Result<(), ()> {
     let shutdown_clone1 = shutdown.clone();
     let mut join_handles: Vec<JoinHandle<()>> = Vec::new();
 
+    let radars = Radars::new();
+    let radars_clone1 = radars.clone();
+
     join_handles.push(tokio::spawn(async move {
-        locator::new(shutdown.clone()).await.unwrap();
+        locator::new(&radars, shutdown).await.unwrap();
     }));
     join_handles.push(tokio::spawn(async move {
-        web::new(args.port, shutdown_clone1).await.unwrap();
+        web::new(args.port, radars_clone1, shutdown_clone1)
+            .await
+            .unwrap();
     }));
 
     for join_handle in join_handles {

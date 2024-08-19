@@ -16,6 +16,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use log::{debug, error, info, trace, warn};
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
+use serde::Serialize;
 use tokio::net::UdpSocket;
 use tokio::task::JoinSet;
 use tokio::time::sleep;
@@ -25,7 +26,7 @@ use tokio_shutdown::Shutdown;
 use crate::radar::Radars;
 use crate::{navico, util};
 
-#[derive(PartialEq, Eq, Copy, Clone)]
+#[derive(PartialEq, Eq, Copy, Clone, Serialize)]
 pub enum LocatorId {
     NavicoNew,
     NavicoBR24,
@@ -36,7 +37,7 @@ impl LocatorId {
         use LocatorId::*;
         // tidy-alphabetical-start
         match *self {
-            NavicoNew => "Navico 3G, 4G, HALO",
+            NavicoNew => "Navico 3G/4G/HALO",
             NavicoBR24 => "Navico BR24",
         }
     }
@@ -114,11 +115,10 @@ struct InterfaceState {
     first_loop: bool,
 }
 
-pub async fn new(shutdown: Shutdown) -> io::Result<()> {
+pub async fn new(radars: &Arc<RwLock<Radars>>, shutdown: Shutdown) -> io::Result<()> {
     let navico_locator = navico::create_locator();
     let navico_br24_locator = navico::create_br24_locator();
     //let mut garmin_locator = garmin::create_locator();
-    let detected_radars = Radars::new();
 
     let mut listen_addresses: Vec<RadarListenAddress> = Vec::new();
     navico_locator.update_listen_addresses(&mut listen_addresses);
@@ -171,7 +171,7 @@ pub async fn new(shutdown: Shutdown) -> io::Result<()> {
                                     &buf,
                                     &addr,
                                     &socket.nic_addr,
-                                    &detected_radars,
+                                    radars,
                                     &shutdown,
                                 );
                                 // Respawn this task
@@ -200,21 +200,6 @@ pub async fn new(shutdown: Shutdown) -> io::Result<()> {
             debug!("No NIC addresses found");
             sleep(Duration::from_millis(5000)).await;
         }
-
-        /*
-        loop {
-            let detected_addr = &mut listen_addresses[0];
-            let data: [u8; 3] = [0, 1, 2];
-            (detected_addr.process)(
-                &data,
-                &detected_addr.address,
-                0,
-                detected_radars.clone(),
-                shutdown.clone(),
-            );
-            break;
-        }
-        */
     }
 }
 

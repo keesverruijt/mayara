@@ -1,4 +1,5 @@
 use log::info;
+use serde::Serialize;
 use std::{
     collections::HashMap,
     fmt::{self, Display, Write},
@@ -8,18 +9,20 @@ use std::{
 
 use crate::locator::LocatorId;
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub struct RadarLocationInfo {
-    id: usize,
+    pub id: usize,
     pub locator_id: LocatorId,
     pub brand: String,
     pub model: Option<String>,
-    pub serial_no: Option<String>,       // Serial # for this radar
-    pub which: Option<String>,           // "A", "B" or None
-    pub addr: SocketAddrV4,              // The assigned IP address of the radar
-    pub nic_addr: Ipv4Addr,              // IPv4 address of NIC via which radar can be reached
-    pub spoke_data_addr: SocketAddrV4,   // Where the radar will send data spokes
-    pub report_addr: SocketAddrV4,       // Where the radar will send reports
+    pub serial_no: Option<String>, // Serial # for this radar
+    pub which: Option<String>,     // "A", "B" or None
+    pub spokes: u16,
+    pub max_spoke_len: u16,
+    pub addr: SocketAddrV4,            // The assigned IP address of the radar
+    pub nic_addr: Ipv4Addr,            // IPv4 address of NIC via which radar can be reached
+    pub spoke_data_addr: SocketAddrV4, // Where the radar will send data spokes
+    pub report_addr: SocketAddrV4,     // Where the radar will send reports
     pub send_command_addr: SocketAddrV4, // Where displays will send commands to the radar
 }
 
@@ -30,6 +33,8 @@ impl RadarLocationInfo {
         model: Option<&str>,
         serial_no: Option<&str>,
         which: Option<&str>,
+        spokes: u16,
+        max_spoke_len: u16,
         addr: SocketAddrV4,
         nic_addr: Ipv4Addr,
         spoke_data_addr: SocketAddrV4,
@@ -43,6 +48,8 @@ impl RadarLocationInfo {
             model: model.map(String::from),
             serial_no: serial_no.map(String::from),
             which: which.map(String::from),
+            spokes,
+            max_spoke_len,
             addr,
             nic_addr,
             spoke_data_addr,
@@ -82,8 +89,10 @@ impl Display for RadarLocationInfo {
     }
 }
 
+#[derive(Clone, Serialize)]
+
 pub struct Radars {
-    info: HashMap<String, RadarLocationInfo>,
+    pub info: HashMap<String, RadarLocationInfo>,
 }
 
 impl Radars {
