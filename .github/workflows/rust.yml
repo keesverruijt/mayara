@@ -10,8 +10,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  unix:
-    runs-on: [ubuntu-latest, macos-12]
+  linux_x86_64:
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
     - name: Build
@@ -21,7 +21,35 @@ jobs:
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: Mayara UNIX
+        name: Mayara Linux x86_64
+        path: target/release/mayara
+
+  macos:
+    runs-on: macos-12
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build
+      run: cargo build --release
+    - name: Run tests
+      run: cargo test --release --verbose
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: Mayara macOS Intel
+        path: target/release/mayara
+
+  macos_arm64:
+    runs-on: macos-14
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build
+      run: cargo build --release
+    - name: Run tests
+      run: cargo test --release --verbose
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: Mayara macOS Apple Silicon
         path: target/release/mayara
 
   windows:
