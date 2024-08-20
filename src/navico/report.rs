@@ -1,4 +1,5 @@
 use anyhow::{bail, Error};
+use enum_primitive_derive::Primitive;
 use log::{debug, info, trace};
 use std::io;
 use std::mem::transmute;
@@ -12,7 +13,7 @@ use crate::radar::RadarLocationInfo;
 use crate::util::{c_wide_string, create_multicast};
 
 use super::command::{self, Command};
-use super::NavicoSettings;
+use super::{NavicoSettings, NavicoType};
 
 pub struct Receive {
     info: RadarLocationInfo,
@@ -22,11 +23,24 @@ pub struct Receive {
     command_sender: Command,
 }
 
+#[derive(Primitive)]
 enum RawSubtype {
-    Report_BR24 = 0x0f,
-    Report_3G = 0x08,
-    Report_4G = 0x01,
-    Report_HALO = 0x00,
+    ReportBr24 = 0x0f,
+    Report3g = 0x08,
+    Report4G = 0x01,
+    ReportHalo = 0x00,
+}
+
+impl From<Option<RawSubtype>> for NavicoType {
+    fn from(v: Option<RawSubtype>) -> Self {
+        match v {
+            None => NavicoType::Unknown,
+            Some(RawSubtype::ReportBr24) => NavicoType::BR24,
+            Some(RawSubtype::Report3g) => NavicoType::Navico3g,
+            Some(RawSubtype::Report4G) => NavicoType::Navico4g,
+            Some(RawSubtype::ReportHalo) => NavicoType::HALO,
+        }
+    }
 }
 
 #[repr(packed)]
@@ -38,7 +52,7 @@ struct RadarReport3_129 {
     hours: [u8; 4],          // Hours of operation
     _u01: [u8; 20],          // Lots of unknown
     firmware_date: [u8; 32], // Wide chars, assumed UTF16
-    firmware_time: [u8; 32],
+    firmware_time: [u8; 32], // Wide chars, assumed UTF16
     _u02: [u8; 7],
 }
 
@@ -164,6 +178,14 @@ impl Receive {
                     "subtype={} hours={} firmware: {:?} {:?}",
                     subtype, hours, firmware_date, firmware_time
                 );
+
+                let raw_subtype: Result<RawSubtype, _> = subtype.try_into();
+
+                let subtype = raw_subtype.ok().into();
+                if self.settings.subtype.load() != subtype {
+                    info!("Radar is type {}", subtype);
+                    self.settings.subtype.store(subtype);
+                }
             }
             _ => {
                 bail!(

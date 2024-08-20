@@ -3,9 +3,9 @@ use bincode::deserialize;
 use crossbeam::atomic::AtomicCell;
 use log::{debug, error, log_enabled, trace};
 use serde::Deserialize;
-use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::{Arc, RwLock};
+use std::{fmt, io};
 use tokio_shutdown::Shutdown;
 
 use crate::locator::{LocatorId, RadarListenAddress, RadarLocator};
@@ -189,6 +189,7 @@ struct BR24Beacon {
     data: NetworkSocketAddrV4, // Note different order from newer radars
 }
 
+#[derive(Copy, Clone, PartialEq)]
 enum NavicoType {
     Unknown,
     BR24,
@@ -197,6 +198,19 @@ enum NavicoType {
     HALO,
 }
 
+impl fmt::Display for NavicoType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let s = match self {
+            NavicoType::Unknown => "",
+            NavicoType::BR24 => "BR24",
+            NavicoType::Navico3g => "3G",
+            NavicoType::Navico4g => "4G",
+            NavicoType::HALO => "HALO",
+        };
+        write!(f, "{}", s);
+        Ok(())
+    }
+}
 pub struct NavicoSettings {
     doppler: AtomicCell<DopplerMode>,
     subtype: AtomicCell<NavicoType>,
