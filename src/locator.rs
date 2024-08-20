@@ -48,7 +48,7 @@ pub struct RadarListenAddress {
     pub id: LocatorId,
     pub address: SocketAddr,
     pub brand: String,
-    pub ping: Option<&'static [u8]>, // Optional ping message to send to wake radar
+    pub adress_request_packet: Option<&'static [u8]>, // Optional message to send to ask radar for address
     pub process: &'static dyn Fn(
         &[u8],       // message
         &SocketAddr, // from
@@ -80,7 +80,7 @@ impl RadarListenAddress {
             id,
             address: address.clone(),
             brand: brand.into(),
-            ping,
+            adress_request_packet: ping,
             process,
         }
     }
@@ -154,7 +154,7 @@ pub async fn new(radars: &Arc<RwLock<Radars>>, shutdown: Shutdown) -> io::Result
             // Now that we're listening to the radars, send any ping (wake) packets
             {
                 for x in &listen_addresses {
-                    if let Some(ping) = x.ping {
+                    if let Some(ping) = x.adress_request_packet {
                         send_multicast_packet(&x.address, ping);
                     }
                 }

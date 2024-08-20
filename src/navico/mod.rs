@@ -80,7 +80,7 @@ EC 06 07 0D 1A 05 12 00 00 00
 EC 06 07 0E 1A 06
 */
 
-const NAVICO_WAKE_RADAR_PACKET: [u8; 2] = [0x01, 0xB1];
+const NAVICO_ADDRESS_REQUEST_PACKET: [u8; 2] = [0x01, 0xB1];
 
 #[derive(Deserialize, Debug, Copy, Clone)]
 #[repr(packed)]
@@ -223,8 +223,8 @@ fn process_locator_report(
         trace!("{}: printable:     {}", from, PrintableSlice::new(report));
     }
 
-    if report == NAVICO_WAKE_RADAR_PACKET {
-        debug!("Wake radar request from {}", from);
+    if report == NAVICO_ADDRESS_REQUEST_PACKET {
+        debug!("Radar address request packet from {}", from);
         return Ok(());
     }
     if report[0] == 0x1 && report[1] == 0xB2 {
@@ -384,7 +384,7 @@ impl RadarLocator for NavicoLocator {
                 LocatorId::NavicoNew,
                 &NAVICO_BEACON_ADDRESS,
                 "Navico Beacon",
-                Some(&NAVICO_WAKE_RADAR_PACKET),
+                Some(&NAVICO_ADDRESS_REQUEST_PACKET),
                 &process_locator_report,
             ));
         }
@@ -408,7 +408,7 @@ impl RadarLocator for NavicoBR24Locator {
                 LocatorId::NavicoBR24,
                 &NAVICO_BR24_BEACON_ADDRESS,
                 "Navico BR24 Beacon",
-                Some(&NAVICO_WAKE_RADAR_PACKET),
+                Some(&NAVICO_ADDRESS_REQUEST_PACKET),
                 &process_locator_report,
             ));
         }
