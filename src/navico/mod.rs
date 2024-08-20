@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use bincode::deserialize;
+use crossbeam::atomic::AtomicCell;
 use log::{debug, error, log_enabled, trace};
 use serde::Deserialize;
 use std::io;
@@ -8,11 +9,13 @@ use std::sync::{Arc, RwLock};
 use tokio_shutdown::Shutdown;
 
 use crate::locator::{LocatorId, RadarListenAddress, RadarLocator};
-use crate::radar::{located, RadarLocationInfo, Radars};
+use crate::radar::{located, DopplerMode, RadarLocationInfo, Radars};
 use crate::util::c_string;
 use crate::util::PrintableSlice;
 
-mod receive;
+mod command;
+mod data;
+mod report;
 
 const NAVICO_BEACON_ADDRESS: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(236, 6, 7, 5)), 6878);
@@ -186,6 +189,19 @@ struct BR24Beacon {
     data: NetworkSocketAddrV4, // Note different order from newer radars
 }
 
+enum NavicoType {
+    Unknown,
+    BR24,
+    Navico3g,
+    Navico4g,
+    HALO,
+}
+
+pub struct NavicoSettings {
+    doppler: AtomicCell<DopplerMode>,
+    subtype: AtomicCell<NavicoType>,
+}
+
 const NAVICO_BEACON_SINGLE_SIZE: usize = size_of::<NavicoBeaconSingle>();
 const NAVICO_BEACON_DUAL_SIZE: usize = size_of::<NavicoBeaconDual>();
 const NAVICO_BEACON_BR24_SIZE: usize = size_of::<BR24Beacon>();
@@ -194,9 +210,27 @@ fn found(info: RadarLocationInfo, radars: &Arc<RwLock<Radars>>, shutdown: &Shutd
     if let Some(info) = located(info, radars) {
         // It's new, start the RadarProcessor thread
         let shutdown = shutdown.clone();
+        let navico_settings = Arc::new(NavicoSettings {
+            doppler: AtomicCell::new(DopplerMode::None),
+            subtype: AtomicCell::new(NavicoType::Unknown),
+        });
+
+        let command_sender = command::Command::new(info.clone(), navico_settings.clone());
+        let command_sender_clone = command::Command::new(info.clone(), navico_settings.clone());
+
+        // Clone everything moved into future twice or more
+        let info_clone = info.clone();
+        let navico_settings_clone = navico_settings.clone();
+        let shutdown_clone = shutdown.clone();
+
         tokio::spawn(async move {
-            let mut receiver = receive::Receive::new(info);
-            receiver.run(shutdown).await.unwrap();
+            let mut data_receiver = data::Receive::new(info, navico_settings, command_sender);
+            data_receiver.run(shutdown).await.unwrap();
+        });
+        tokio::spawn(async move {
+            let mut report_receiver =
+                report::Receive::new(info_clone, navico_settings_clone, command_sender_clone);
+            report_receiver.run(shutdown_clone).await.unwrap();
         });
         // TODO do something with the join handle
     }

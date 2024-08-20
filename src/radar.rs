@@ -107,6 +107,13 @@ pub struct Statistics {
     broken_packets: usize,
 }
 
+#[derive(Copy, Clone)]
+pub enum DopplerMode {
+    None = 0,
+    Both,
+    Approaching,
+}
+
 // A radar has been found
 pub fn located(
     new_info: RadarLocationInfo,

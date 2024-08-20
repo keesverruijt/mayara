@@ -8,6 +8,21 @@ pub fn c_string(bytes: &[u8]) -> Option<&str> {
 
     std::str::from_utf8(bytes_without_null).ok()
 }
+pub fn c_wide_string(bytes: &[u8]) -> String {
+    let mut res = String::new();
+
+    let mut i = bytes.iter();
+    while let (Some(lo), Some(hi)) = (i.next(), i.next()) {
+        let c = *lo as u32 + ((*hi as u32) << 8);
+        if c == 0 {
+            break;
+        }
+        if let Some(c) = std::char::from_u32(c) {
+            res.push(c);
+        }
+    }
+    res
+}
 
 use socket2::{Domain, Protocol, Type};
 use std::net::SocketAddrV4;
@@ -163,6 +178,18 @@ pub fn create_multicast(addr: &SocketAddrV4, nic_addr: &Ipv4Addr) -> io::Result<
     let socket: socket2::Socket = new_socket()?;
 
     bind_to_multicast(&socket, addr, nic_addr)?;
+
+    let socket = UdpSocket::from_std(socket.into())?;
+    Ok(socket)
+}
+
+pub fn create_multicast_send(addr: &SocketAddrV4, nic_addr: &Ipv4Addr) -> io::Result<UdpSocket> {
+    let socket: socket2::Socket = new_socket()?;
+
+    let socketaddr = SocketAddr::new(IpAddr::V4(*addr.ip()), addr.port());
+    let socketaddr_nic = SocketAddr::new(IpAddr::V4(*nic_addr), addr.port());
+    socket.bind(&socket2::SockAddr::from(socketaddr_nic))?;
+    socket.connect(&socket2::SockAddr::from(socketaddr))?;
 
     let socket = UdpSocket::from_std(socket.into())?;
     Ok(socket)
