@@ -17,10 +17,13 @@ use super::{NavicoSettings, NavicoType};
 
 pub struct Receive {
     info: RadarLocationInfo,
+    key: String,
     buf: Vec<u8>,
     sock: Option<UdpSocket>,
     settings: Arc<NavicoSettings>,
     command_sender: Command,
+    subtype_timeout: Instant,
+    subtype_repeat: Duration,
 }
 
 #[derive(Primitive)]
@@ -75,12 +78,16 @@ impl Receive {
         settings: Arc<NavicoSettings>,
         command_sender: Command,
     ) -> Receive {
+        let key = info.key();
         Receive {
+            key: key,
             info: info,
             buf: Vec::with_capacity(1024),
             sock: None,
             settings,
             command_sender,
+            subtype_timeout: Instant::now(),
+            subtype_repeat: Duration::from_millis(5000),
         }
     }
 
@@ -106,17 +113,15 @@ impl Receive {
     }
 
     async fn socket_loop(&mut self, shutdown: &Shutdown) -> io::Result<()> {
-        let mut timeout = Instant::now();
-
         loop {
             let shutdown_handle = shutdown.handle();
             tokio::select! { biased;
               _ = shutdown_handle => {
                     break;
               },
-              _ = sleep_until(timeout) => {
+              _ = sleep_until(self.subtype_timeout) => {
                     self.send_report_requests().await?;
-                    timeout += Duration::from_millis(5000);
+                    self.subtype_timeout += self.subtype_repeat;
               },
               _ = self.sock.as_ref().unwrap().recv_buf_from(&mut self.buf)  => {
                   let _ = self.process_report();
@@ -180,11 +185,18 @@ impl Receive {
                 );
 
                 let raw_subtype: Result<RawSubtype, _> = subtype.try_into();
+                if raw_subtype.is_ok() {
+                    let subtype = raw_subtype.ok().into();
+                    if self.settings.subtype.load() != subtype {
+                        info!("Radar is type {}", subtype);
+                        self.settings.subtype.store(subtype);
 
-                let subtype = raw_subtype.ok().into();
-                if self.settings.subtype.load() != subtype {
-                    info!("Radar is type {}", subtype);
-                    self.settings.subtype.store(subtype);
+                        let mut radars = self.settings.radars.write().unwrap();
+                        if let Some(info) = radars.info.get_mut(&self.key) {
+                            info.model = Some(format!("{}", subtype));
+                        }
+                    }
+                    self.subtype_repeat = Duration::from_secs(600);
                 }
             }
             _ => {

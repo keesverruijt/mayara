@@ -207,11 +207,12 @@ impl fmt::Display for NavicoType {
             NavicoType::Navico4g => "4G",
             NavicoType::HALO => "HALO",
         };
-        write!(f, "{}", s);
+        write!(f, "{}", s)?;
         Ok(())
     }
 }
 pub struct NavicoSettings {
+    radars: Arc<RwLock<Radars>>,
     doppler: AtomicCell<DopplerMode>,
     subtype: AtomicCell<NavicoType>,
 }
@@ -225,6 +226,7 @@ fn found(info: RadarLocationInfo, radars: &Arc<RwLock<Radars>>, shutdown: &Shutd
         // It's new, start the RadarProcessor thread
         let shutdown = shutdown.clone();
         let navico_settings = Arc::new(NavicoSettings {
+            radars: radars.clone(),
             doppler: AtomicCell::new(DopplerMode::None),
             subtype: AtomicCell::new(NavicoType::Unknown),
         });

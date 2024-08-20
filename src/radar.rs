@@ -9,8 +9,9 @@ use std::{
 
 use crate::locator::LocatorId;
 
-#[derive(Clone, Serialize)]
+#[derive(Clone)]
 pub struct RadarLocationInfo {
+    key: String,
     pub id: usize,
     pub locator_id: LocatorId,
     pub brand: String,
@@ -42,6 +43,22 @@ impl RadarLocationInfo {
         send_command_addr: SocketAddrV4,
     ) -> Self {
         RadarLocationInfo {
+            key: {
+                let mut key = brand.to_string();
+
+                if let Some(serial_no) = serial_no {
+                    key.push_str("-");
+                    key.push_str(serial_no);
+                } else {
+                    write!(key, "-{}", &addr).unwrap();
+                }
+
+                if let Some(which) = which {
+                    key.push_str("-");
+                    key.push_str(which);
+                }
+                key
+            },
             id: 0,
             locator_id,
             brand: brand.to_owned(),
@@ -56,6 +73,10 @@ impl RadarLocationInfo {
             report_addr,
             send_command_addr,
         }
+    }
+
+    pub fn key(&self) -> String {
+        self.key.to_owned()
     }
 }
 
@@ -89,7 +110,7 @@ impl Display for RadarLocationInfo {
     }
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone)]
 
 pub struct Radars {
     pub info: HashMap<String, RadarLocationInfo>,
@@ -119,7 +140,7 @@ pub fn located(
     new_info: RadarLocationInfo,
     radars: &Arc<RwLock<Radars>>,
 ) -> Option<RadarLocationInfo> {
-    let key = get_key(&new_info);
+    let key = new_info.key.to_owned();
     let mut radars = radars.write().unwrap();
     let count = radars.info.len();
     let entry = radars.info.entry(key).or_insert(new_info);
@@ -132,22 +153,4 @@ pub fn located(
     } else {
         None
     }
-}
-
-fn get_key(info: &RadarLocationInfo) -> String {
-    let mut key = info.brand.clone();
-
-    if let Some(serial_no) = &info.serial_no {
-        key.push_str("-");
-        key.push_str(serial_no);
-    } else {
-        write!(key, "-{}", &info.addr).unwrap();
-    }
-
-    if let Some(which) = &info.which {
-        key.push_str("-");
-        key.push_str(which);
-    }
-
-    key
 }

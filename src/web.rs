@@ -85,12 +85,21 @@ async fn get_radars(State(state): State<WebState>, _request: Body) -> Response {
         Ok(radars) => {
             let x = &radars.info;
             let mut api: HashMap<String, RadarApi> = HashMap::new();
-            for (key, value) in x.iter() {
+            for (_key, value) in x.iter() {
                 let id = format!("radar-{}", value.id);
                 let url = format!("{}stream/{}", state.url, id);
+                let mut name = value.brand.to_owned();
+                if value.model.is_some() {
+                    name.push(' ');
+                    name.push_str(value.model.as_ref().unwrap());
+                }
+                if value.which.is_some() {
+                    name.push(' ');
+                    name.push_str(value.which.as_ref().unwrap());
+                }
                 api.insert(
                     id.to_owned(),
-                    RadarApi::new(id, key, value.spokes, value.max_spoke_len, url),
+                    RadarApi::new(id, &name, value.spokes, value.max_spoke_len, url),
                 );
             }
             Json(api).into_response()
