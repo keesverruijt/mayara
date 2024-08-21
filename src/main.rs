@@ -2,7 +2,7 @@ extern crate tokio;
 
 use clap::Parser;
 use env_logger::Env;
-use log::{debug, info};
+use log::{debug, error, info};
 use radar::Radars;
 use tokio::task::JoinHandle;
 
@@ -21,6 +21,8 @@ struct Cli {
     verbose: clap_verbosity_flag::Verbosity<clap_verbosity_flag::InfoLevel>,
     #[arg(short, long, default_value_t = 6502)]
     port: u16,
+    #[arg(short, long)]
+    interface: Option<String>,
 }
 
 #[tokio::main]
@@ -42,7 +44,9 @@ async fn main() -> Result<(), ()> {
     let radars_clone1 = radars.clone();
 
     join_handles.push(tokio::spawn(async move {
-        locator::new(&radars, shutdown).await.unwrap();
+        if let Err(e) = locator::new(&radars, args.interface, shutdown).await {
+            error!("Location of radar failed: {}", e);
+        }
     }));
     join_handles.push(tokio::spawn(async move {
         web::new(args.port, radars_clone1, shutdown_clone1)
@@ -51,7 +55,7 @@ async fn main() -> Result<(), ()> {
     }));
 
     for join_handle in join_handles {
-        join_handle.await.unwrap();
+        let _ = join_handle.await;
     }
     debug!("waited for threads done");
 

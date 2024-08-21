@@ -107,13 +107,18 @@ pub trait RadarLocator {
 }
 
 struct InterfaceState {
+    interface: Option<String>, // If set, listen only here (even if lo0 or lo)
     active_nic_addresses: Vec<Ipv4Addr>,
     inactive_nic_names: HashMap<String, u32>,
     lost_nic_names: HashMap<String, u32>,
     first_loop: bool,
 }
 
-pub async fn new(radars: &Arc<RwLock<Radars>>, shutdown: Shutdown) -> io::Result<()> {
+pub async fn new(
+    radars: &Arc<RwLock<Radars>>,
+    interface: Option<String>,
+    shutdown: Shutdown,
+) -> io::Result<()> {
     let navico_locator = navico::create_locator();
     let navico_br24_locator = navico::create_br24_locator();
     //let mut garmin_locator = garmin::create_locator();
@@ -125,6 +130,7 @@ pub async fn new(radars: &Arc<RwLock<Radars>>, shutdown: Shutdown) -> io::Result
 
     info!("Entering loop, listening for radars");
     let mut interface_state = InterfaceState {
+        interface,
         active_nic_addresses: Vec::new(),
         inactive_nic_names: HashMap::new(),
         lost_nic_names: HashMap::new(),
@@ -136,67 +142,66 @@ pub async fn new(radars: &Arc<RwLock<Radars>>, shutdown: Shutdown) -> io::Result
         let shutdown_handle = shutdown.clone().handle();
         let sockets = create_multicast_sockets(&listen_addresses, &mut interface_state);
         let mut set = JoinSet::new();
-        if let Ok(sockets) = sockets {
-            for socket in sockets {
-                spawn_receive(&mut set, socket);
+        if sockets.is_err() {
+            if interface_state.interface.is_some() {
+                return Err(sockets.err().unwrap());
             }
-            set.spawn(async move {
-                shutdown_handle.await;
-                Err(io::Error::new(ErrorKind::WriteZero, "shutdown"))
-            });
-            set.spawn(async move {
-                sleep(Duration::from_millis(30000)).await;
-                Err(io::Error::new(ErrorKind::Other, "timeout"))
-            });
-
-            // Now that we're listening to the radars, send any ping (wake) packets
-            {
-                for x in &listen_addresses {
-                    if let Some(ping) = x.adress_request_packet {
-                        send_multicast_packet(&x.address, ping);
-                    }
-                }
-            };
-
-            while let Some(join_result) = set.join_next().await {
-                match join_result {
-                    Ok(join_result) => {
-                        match join_result {
-                            Ok((socket, addr, buf)) => {
-                                trace!("{} via {} -> {:02X?}", &addr, &socket.nic_addr, &buf);
-
-                                let _ = (socket.process)(
-                                    &buf,
-                                    &addr,
-                                    &socket.nic_addr,
-                                    radars,
-                                    &shutdown,
-                                );
-                                // Respawn this task
-                                spawn_receive(&mut set, socket);
-                            }
-                            Err(e) => {
-                                if e.kind() == ErrorKind::WriteZero && e.to_string() == "shutdown" {
-                                    // Shutdown!
-                                    info!("Locator shutdown");
-                                    return Ok(());
-                                }
-                                if e.kind() == ErrorKind::Other && e.to_string() == "timeout" {
-                                    // Loop, reread everything
-                                    break;
-                                }
-                                debug!("receive error: {}", e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        debug!("JoinError: {}", e);
-                    }
-                };
-            }
-        } else {
             debug!("No NIC addresses found");
             sleep(Duration::from_millis(5000)).await;
+        }
+        let sockets = sockets.unwrap();
+
+        for socket in sockets {
+            spawn_receive(&mut set, socket);
+        }
+        set.spawn(async move {
+            shutdown_handle.await;
+            Err(io::Error::new(ErrorKind::WriteZero, "shutdown"))
+        });
+        set.spawn(async move {
+            sleep(Duration::from_millis(30000)).await;
+            Err(io::Error::new(ErrorKind::Other, "timeout"))
+        });
+
+        // Now that we're listening to the radars, send any ping (wake) packets
+        {
+            for x in &listen_addresses {
+                if let Some(ping) = x.adress_request_packet {
+                    send_multicast_packet(&x.address, ping);
+                }
+            }
+        };
+
+        while let Some(join_result) = set.join_next().await {
+            match join_result {
+                Ok(join_result) => {
+                    match join_result {
+                        Ok((socket, addr, buf)) => {
+                            trace!("{} via {} -> {:02X?}", &addr, &socket.nic_addr, &buf);
+
+                            let _ =
+                                (socket.process)(&buf, &addr, &socket.nic_addr, radars, &shutdown);
+                            // Respawn this task
+                            spawn_receive(&mut set, socket);
+                        }
+                        Err(e) => {
+                            if e.kind() == ErrorKind::WriteZero && e.to_string() == "shutdown" {
+                                // Shutdown!
+                                info!("Locator shutdown");
+                                return Ok(());
+                            }
+                            if e.kind() == ErrorKind::Other && e.to_string() == "timeout" {
+                                // Loop, reread everything
+                                break;
+                            }
+                            debug!("receive error: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    debug!("JoinError: {}", e);
+                }
+            };
         }
     }
 }
@@ -247,74 +252,81 @@ fn create_multicast_sockets(
     listen_addresses: &Vec<RadarListenAddress>,
     interface_state: &mut InterfaceState,
 ) -> io::Result<Vec<LocatorInfo>> {
+    let only_interface = &interface_state.interface;
+
     match NetworkInterface::show() {
         Ok(interfaces) => {
             let mut sockets = Vec::new();
             for itf in interfaces {
                 let mut active: bool = false;
-                for nic_addr in itf.addr {
-                    if let IpAddr::V4(nic_ip) = nic_addr.ip() {
-                        if !nic_ip.is_loopback() {
-                            if interface_state.lost_nic_names.contains_key(&itf.name)
-                                || !interface_state.active_nic_addresses.contains(&nic_ip)
-                            {
-                                if interface_state
-                                    .inactive_nic_names
-                                    .remove(&itf.name)
-                                    .is_some()
+
+                if only_interface.is_none() || only_interface.as_ref() == Some(&itf.name) {
+                    for nic_addr in itf.addr {
+                        if let IpAddr::V4(nic_ip) = nic_addr.ip() {
+                            if !nic_ip.is_loopback() || only_interface.is_some() {
+                                if interface_state.lost_nic_names.contains_key(&itf.name)
+                                    || !interface_state.active_nic_addresses.contains(&nic_ip)
                                 {
-                                    info!(
+                                    if interface_state
+                                        .inactive_nic_names
+                                        .remove(&itf.name)
+                                        .is_some()
+                                    {
+                                        info!(
                                         "Interface '{}' became active or gained an IPv4 address, now listening on IP address {}/{} for radars",
                                         itf.name,
                                         &nic_ip,
                                         nic_addr.netmask().unwrap()
                                     );
-                                } else {
-                                    info!(
+                                    } else {
+                                        info!(
                                         "Interface '{}' now listening on IP address {}/{} for radars",
                                         itf.name,
                                         &nic_ip,
                                         nic_addr.netmask().unwrap()
                                     );
+                                    }
+                                    interface_state.active_nic_addresses.push(nic_ip.clone());
+                                    interface_state.lost_nic_names.remove(&itf.name);
                                 }
-                                interface_state.active_nic_addresses.push(nic_ip.clone());
-                                interface_state.lost_nic_names.remove(&itf.name);
-                            }
 
-                            for radar_listen_address in listen_addresses {
-                                if let SocketAddr::V4(listen_addr) = radar_listen_address.address {
-                                    let socket = util::create_multicast(&listen_addr, &nic_ip);
-                                    match socket {
-                                        Ok(socket) => {
-                                            sockets.push(LocatorInfo {
-                                                sock: socket,
-                                                nic_addr: nic_ip.clone(),
-                                                process: radar_listen_address.process,
-                                            });
-                                            debug!(
+                                for radar_listen_address in listen_addresses {
+                                    if let SocketAddr::V4(listen_addr) =
+                                        radar_listen_address.address
+                                    {
+                                        let socket = util::create_multicast(&listen_addr, &nic_ip);
+                                        match socket {
+                                            Ok(socket) => {
+                                                sockets.push(LocatorInfo {
+                                                    sock: socket,
+                                                    nic_addr: nic_ip.clone(),
+                                                    process: radar_listen_address.process,
+                                                });
+                                                debug!(
                                                 "Listening on '{}' address {} for multicast address {}",
                                                 itf.name, nic_ip, listen_addr,
                                             );
-                                        }
-                                        Err(e) => {
-                                            warn!(
+                                            }
+                                            Err(e) => {
+                                                warn!(
                                                 "Cannot listen on '{}' address {} for multicast address {}: {}",
                                                 itf.name, nic_ip, listen_addr, e
                                             );
+                                            }
                                         }
+                                    } else {
+                                        warn!(
+                                            "Ignoring IPv6 address {:?}",
+                                            &radar_listen_address.address
+                                        );
                                     }
-                                } else {
-                                    warn!(
-                                        "Ignoring IPv6 address {:?}",
-                                        &radar_listen_address.address
-                                    );
                                 }
+                                active = true;
                             }
-                            active = true;
                         }
                     }
                 }
-                if !active {
+                if !active && only_interface.is_none() {
                     if interface_state
                         .inactive_nic_names
                         .insert(itf.name.to_owned(), 0)
@@ -333,6 +345,18 @@ fn create_multicast_sockets(
                 }
             }
             interface_state.first_loop = false;
+
+            if interface_state.interface.is_some()
+                && interface_state.active_nic_addresses.len() == 0
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!(
+                        "No interface '{}' with IPv4 address found",
+                        interface_state.interface.clone().unwrap()
+                    ),
+                ));
+            }
             Ok(sockets)
         }
         Err(e) => {
