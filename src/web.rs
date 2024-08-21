@@ -8,6 +8,7 @@ use axum::{
     Json, Router,
 };
 use log::info;
+use miette::Result;
 use serde::Serialize;
 use std::{
     collections::HashMap,
@@ -15,40 +16,68 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::{Arc, RwLock},
 };
+use thiserror::Error;
 use tokio::net::TcpListener;
-use tokio_shutdown::Shutdown;
+use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::radar::Radars;
 use crate::VERSION;
 
-#[derive(Clone)]
-struct WebState {
-    radars: Arc<RwLock<Radars>>,
-    url: String,
+#[derive(Error, Debug)]
+pub enum WebError {
+    #[error("Socket operation failed")]
+    Io(#[from] io::Error),
 }
 
-pub async fn new(port: u16, radars: Arc<RwLock<Radars>>, shutdown: Shutdown) -> io::Result<()> {
-    let listener = TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port))
+#[derive(Clone)]
+pub struct Web {
+    radars: Arc<RwLock<Radars>>,
+    url: Option<String>,
+    port: u16,
+}
+
+impl Web {
+    pub fn new(port: u16, radars: Arc<RwLock<Radars>>) -> Self {
+        Web {
+            radars,
+            port,
+            url: None,
+        }
+    }
+
+    pub async fn run(mut self, subsys: SubsystemHandle) -> Result<(), WebError> {
+        let listener = TcpListener::bind(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+            self.port,
+        ))
         .await
         .unwrap();
 
-    let state = WebState {
-        radars,
-        url: format!("http://{}/v1/api/", listener.local_addr().unwrap()),
-    };
+        let url = format!("http://{}/v1/api/", listener.local_addr().unwrap());
+        info!("HTTP server available on {}", &url);
+        self.url = Some(url);
 
-    info!("HTTP server available on {}", &state.url);
+        let app = Router::new()
+            .route("/", get(root))
+            .route("/v1/api/radars", get(get_radars).with_state(self));
 
-    let app = Router::new()
-        .route("/", get(root))
-        .route("/v1/api/radars", get(get_radars).with_state(state));
+        let (close_tx, close_rx) = tokio::sync::oneshot::channel();
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown.handle())
-        .await
-        .unwrap();
-
-    Ok(())
+        tokio::select! { biased;
+            _ = subsys.on_shutdown_requested() => {
+                let _ = close_tx.send(());
+            },
+            r = axum::serve(listener, app)
+                    .with_graceful_shutdown(
+                        async move {
+                            _ = close_rx.await;
+                        }
+                    ) => {
+                return r.map_err(|e| WebError::Io(e));
+            }
+        };
+        Ok(())
+    }
 }
 
 async fn root() -> String {
@@ -80,14 +109,14 @@ impl RadarApi {
 // Signal K radar API says this returns something like:
 //    {"radar-0":{"id":"radar-0","name":"Navico","spokes":2048,"maxSpokeLen":1024,"streamUrl":"http://localhost:3001/v1/api/stream/radar-0"}}
 //
-async fn get_radars(State(state): State<WebState>, _request: Body) -> Response {
+async fn get_radars(State(state): State<Web>, _request: Body) -> Response {
     match state.radars.read() {
         Ok(radars) => {
             let x = &radars.info;
             let mut api: HashMap<String, RadarApi> = HashMap::new();
             for (_key, value) in x.iter() {
                 let id = format!("radar-{}", value.id);
-                let url = format!("{}stream/{}", state.url, id);
+                let url = format!("{}stream/{}", state.url.as_ref().unwrap(), id);
                 let mut name = value.brand.to_owned();
                 if value.model.is_some() {
                     name.push(' ');

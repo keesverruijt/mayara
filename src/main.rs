@@ -2,9 +2,13 @@ extern crate tokio;
 
 use clap::Parser;
 use env_logger::Env;
-use log::{debug, error, info};
+use locator::Locator;
+use log::info;
+use miette::Result;
 use radar::Radars;
-use tokio::task::JoinHandle;
+use std::time::Duration;
+use tokio_graceful_shutdown::{SubsystemBuilder, Toplevel};
+use web::Web;
 
 // mod garmin;
 mod locator;
@@ -26,7 +30,7 @@ struct Cli {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), ()> {
+async fn main() -> Result<()> {
     let args = Cli::parse();
 
     let log_level = args.verbose.log_level_filter();
@@ -36,28 +40,18 @@ async fn main() -> Result<(), ()> {
 
     info!("Mayara {} loglevel {}", VERSION, log_level);
 
-    let shutdown = tokio_shutdown::Shutdown::new().expect("shutdown creation works on first call");
-    let shutdown_clone1 = shutdown.clone();
-    let mut join_handles: Vec<JoinHandle<()>> = Vec::new();
-
     let radars = Radars::new();
     let radars_clone1 = radars.clone();
 
-    join_handles.push(tokio::spawn(async move {
-        if let Err(e) = locator::new(&radars, args.interface, shutdown).await {
-            error!("Location of radar failed: {}", e);
-        }
-    }));
-    join_handles.push(tokio::spawn(async move {
-        web::new(args.port, radars_clone1, shutdown_clone1)
-            .await
-            .unwrap();
-    }));
+    let locator = Locator::new(radars, args.interface);
+    let web = Web::new(args.port, radars_clone1);
 
-    for join_handle in join_handles {
-        let _ = join_handle.await;
-    }
-    debug!("waited for threads done");
-
-    Ok(())
+    Toplevel::new(|s| async move {
+        s.start(SubsystemBuilder::new("Locator", |a| locator.run(a)));
+        s.start(SubsystemBuilder::new("Webserver", |a| web.run(a)));
+    })
+    .catch_signals()
+    .handle_shutdown_requests(Duration::from_millis(1000))
+    .await
+    .map_err(Into::into)
 }

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::time::sleep;
-use tokio_shutdown::Shutdown;
+use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::locator::LocatorId;
 use crate::radar::{DopplerMode, RadarLocationInfo, Statistics};
@@ -198,28 +198,33 @@ impl Receive {
         }
     }
 
-    async fn socket_loop(&mut self, shutdown: &Shutdown) -> io::Result<()> {
+    async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> io::Result<()> {
         loop {
-            let shutdown_handle = shutdown.handle();
-            tokio::select! {
-              _ = self.sock.as_ref().unwrap().recv_buf_from(&mut self.buf)  => {
-                  self.process_frame();
-                  self.buf.clear();
-              },
-              _ = shutdown_handle => {
+            tokio::select! { biased;
+              _ = subsys.on_shutdown_requested() => {
                 break;
-              }
+              },
+              r = self.sock.as_ref().unwrap().recv_buf_from(&mut self.buf)  => {
+                  match r {
+                    Ok(_) => {
+                    self.process_frame();
+
+                    },
+                    Err(e) => { return Err(e); }
+                  }
+              },
             };
+            self.buf.clear();
         }
         Ok(())
     }
 
-    pub async fn run(&mut self, shutdown: Shutdown) -> io::Result<()> {
+    pub async fn run(mut self, subsys: SubsystemHandle) -> Result<(), io::Error> {
         debug!("Started receive thread");
         self.start_socket().await.unwrap();
         loop {
             if self.sock.is_some() {
-                self.socket_loop(&shutdown).await.unwrap();
+                self.socket_loop(&subsys).await.unwrap();
                 self.sock = None;
             } else {
                 sleep(Duration::from_millis(1000)).await;

@@ -7,7 +7,7 @@ use serde::Deserialize;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::{Arc, RwLock};
 use std::{fmt, io};
-use tokio_shutdown::Shutdown;
+use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
 use crate::locator::{LocatorId, RadarListenAddress, RadarLocator};
 use crate::radar::{located, DopplerMode, RadarLocationInfo, Radars};
@@ -223,10 +223,9 @@ const NAVICO_BEACON_SINGLE_SIZE: usize = size_of::<NavicoBeaconSingle>();
 const NAVICO_BEACON_DUAL_SIZE: usize = size_of::<NavicoBeaconDual>();
 const NAVICO_BEACON_BR24_SIZE: usize = size_of::<BR24Beacon>();
 
-fn found(info: RadarLocationInfo, radars: &Arc<RwLock<Radars>>, shutdown: &Shutdown) {
+fn found(info: RadarLocationInfo, radars: &Arc<RwLock<Radars>>, subsys: &SubsystemHandle) {
     if let Some(info) = located(info, radars) {
         // It's new, start the RadarProcessor thread
-        let shutdown = shutdown.clone();
         let navico_settings = Arc::new(NavicoSettings {
             radars: radars.clone(),
             doppler: AtomicCell::new(DopplerMode::None),
@@ -238,18 +237,17 @@ fn found(info: RadarLocationInfo, radars: &Arc<RwLock<Radars>>, shutdown: &Shutd
         // Clone everything moved into future twice or more
         let info_clone = info.clone();
         let navico_settings_clone = navico_settings.clone();
-        let shutdown_clone = shutdown.clone();
 
-        tokio::spawn(async move {
-            let mut data_receiver = data::Receive::new(info, navico_settings);
-            data_receiver.run(shutdown).await.unwrap();
-        });
-        tokio::spawn(async move {
-            let mut report_receiver =
-                report::Receive::new(info_clone, navico_settings_clone, command_sender);
-            report_receiver.run(shutdown_clone).await.unwrap();
-        });
-        // TODO do something with the join handle
+        let data_receiver = data::Receive::new(info, navico_settings);
+        let report_receiver =
+            report::Receive::new(info_clone, navico_settings_clone, command_sender);
+
+        subsys.start(SubsystemBuilder::new("Navico Data Receiver", move |s| {
+            data_receiver.run(s)
+        }));
+        subsys.start(SubsystemBuilder::new("Navico Report Receiver", |s| {
+            report_receiver.run(s)
+        }));
     }
 }
 
@@ -258,7 +256,7 @@ fn process_locator_report(
     from: &SocketAddr,
     via: &Ipv4Addr,
     radars: &Arc<RwLock<Radars>>,
-    shutdown: &Shutdown,
+    subsys: &SubsystemHandle,
 ) -> io::Result<()> {
     if report.len() < 2 {
         return Ok(());
@@ -281,7 +279,7 @@ fn process_locator_report(
     if report[0] == 0x1 && report[1] == 0xB2 {
         // Common Navico message
 
-        return process_beacon_report(report, from, via, radars, shutdown);
+        return process_beacon_report(report, from, via, radars, subsys);
     }
     Ok(())
 }
@@ -291,7 +289,7 @@ fn process_beacon_report(
     from: &SocketAddr,
     via: &Ipv4Addr,
     radars: &Arc<RwLock<Radars>>,
-    shutdown: &Shutdown,
+    subsys: &SubsystemHandle,
 ) -> Result<(), io::Error> {
     if report.len() < size_of::<BR24Beacon>() {
         debug!(
@@ -326,7 +324,7 @@ fn process_beacon_report(
                         radar_report.into(),
                         radar_send.into(),
                     );
-                    found(location_info, radars, shutdown);
+                    found(location_info, radars, subsys);
 
                     let radar_data: SocketAddrV4 = data.b.data.into();
                     let radar_report: SocketAddrV4 = data.b.report.into();
@@ -345,7 +343,7 @@ fn process_beacon_report(
                         radar_report.into(),
                         radar_send.into(),
                     );
-                    found(location_info, radars, shutdown);
+                    found(location_info, radars, subsys);
                 }
             }
             Err(e) => {
@@ -378,7 +376,7 @@ fn process_beacon_report(
                         radar_report.into(),
                         radar_send.into(),
                     );
-                    found(location_info, radars, shutdown);
+                    found(location_info, radars, subsys);
                 }
             }
             Err(e) => {
@@ -411,7 +409,7 @@ fn process_beacon_report(
                         radar_report.into(),
                         radar_send.into(),
                     );
-                    found(location_info, radars, shutdown);
+                    found(location_info, radars, subsys);
                 }
             }
             Err(e) => {

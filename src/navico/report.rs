@@ -7,7 +7,7 @@ use std::time::Duration;
 use std::{fmt, io};
 use tokio::net::UdpSocket;
 use tokio::time::{sleep, sleep_until, Instant};
-use tokio_shutdown::Shutdown;
+use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::radar::{DopplerMode, RadarLocationInfo};
 use crate::util::{c_wide_string, create_multicast};
@@ -173,16 +173,15 @@ impl Receive {
                     "{} via {}: create multicast failed: {}",
                     &self.info.report_addr, &self.info.nic_addr, e
                 );
-                Ok(())
+                Err(e)
             }
         }
     }
 
-    async fn socket_loop(&mut self, shutdown: &Shutdown) -> io::Result<()> {
+    async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> io::Result<()> {
         loop {
-            let shutdown_handle = shutdown.handle();
             tokio::select! { biased;
-              _ = shutdown_handle => {
+              _ = subsys.on_shutdown_requested() => {
                     break;
               },
               _ = sleep_until(self.subtype_timeout) => {
@@ -208,15 +207,15 @@ impl Receive {
         Ok(())
     }
 
-    pub async fn run(&mut self, shutdown: Shutdown) -> io::Result<()> {
-        self.start_socket().await.unwrap();
+    pub async fn run(mut self, subsys: SubsystemHandle) -> io::Result<()> {
+        self.start_socket().await?;
         loop {
             if self.sock.is_some() {
-                self.socket_loop(&shutdown).await.unwrap();
+                let _ = self.socket_loop(&subsys).await; // Ignore the error, re-open socket
                 self.sock = None;
             } else {
                 sleep(Duration::from_millis(1000)).await;
-                self.start_socket().await.unwrap();
+                self.start_socket().await?;
             }
         }
     }
