@@ -8,10 +8,10 @@ use crate::util::create_multicast_send;
 
 use super::NavicoSettings;
 
-pub const REQUEST_03_REPORT: [u8; 2] = [0x04, 0xc2]; // This causes the radar to report Report_03C4
-pub const REQUEST_MANY2_COMMAND: [u8; 2] = [0x01, 0xc2]; // This causes the radar to report Report 02, 03, 04, 07 and 08
-pub const REQUEST_04_COMMAND: [u8; 2] = [0x02, 0xc2]; // This causes the radar to report Report_04C4
-pub const REQUEST_02_08_COMMAND: [u8; 2] = [0x03, 0xc2]; // This causes the radar to report Report_02C4 and Report_08C4
+pub const REQUEST_03_REPORT: [u8; 2] = [0x04, 0xc2]; // This causes the radar to report Report 3
+pub const REQUEST_MANY2_REPORT: [u8; 2] = [0x01, 0xc2]; // This causes the radar to report Report 02, 03, 04, 07 and 08
+pub const REQUEST_04_REPORT: [u8; 2] = [0x02, 0xc2]; // This causes the radar to report Report 3
+pub const REQUEST_02_08_REPORT: [u8; 2] = [0x03, 0xc2]; // This causes the radar to report Report 2 and Report 8
 
 pub struct Command {
     info: RadarLocationInfo,

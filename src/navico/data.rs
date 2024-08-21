@@ -2,8 +2,6 @@ use bincode::deserialize;
 use log::{debug, trace, warn};
 use serde::Deserialize;
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::UdpSocket;
@@ -16,9 +14,6 @@ use crate::util::{create_multicast, PrintableSpoke};
 
 use super::command::Command;
 use super::NavicoSettings;
-
-// Size of a pixel in bits. Every pixel is 4 bits (one nibble.)
-const NAVICO_BITS_PER_PIXEL: usize = 4;
 
 // Length of a spoke in pixels. Every pixel is 4 bits (one nibble.)
 const NAVICO_SPOKE_LEN: usize = 1024;
@@ -38,103 +33,44 @@ const NAVICO_SPOKES_RAW: u16 = 4096;
 */
 const HEADING_TRUE_FLAG: u16 = 0x4000;
 const HEADING_MASK: u16 = NAVICO_SPOKES_RAW - 1;
-fn heading_value(x: u16) -> bool {
+fn is_valid_heading_value(x: u16) -> bool {
     x & !(HEADING_TRUE_FLAG | HEADING_MASK) == 0
 }
-
-// One MFD or OpenCPN shall send the radar timing and heading info
-// Without this the Doppler function doesn't work
-const HALO_INFO_ADDRESS: SocketAddr =
-    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(239, 238, 55, 73)), 7527);
-
-#[derive(Deserialize, Debug, Clone, Copy)]
-#[repr(packed)]
-struct HaloHeadingPacket {
-    marker: [u8; 4], // 4 bytes containing 'NKOE'
-    _u00: [u8; 4],   // 4 bytes containing '00 01 90 02'
-    counter: u16,    // 2 byte counter incrementing by 1 every transmission, in BigEndian
-    // 10
-    _u01: [u8; 26], // 25 bytes of unknown stuff that doesn't seem to vary
-    // 36
-    _u02: [u8; 2], // 2 bytes containing '12 f1'
-    _u03: [u8; 2], // 2 bytes containing '01 00'
-    // 40
-    epoch: u128, // 8 bytes containing millis since 1970
-    // 48
-    _u04: [u8; 2], // 8 bytes containing 2
-    // 56
-    _u05a: [u8; 4], // 4 bytes containing some fixed data, could be position?
-    // 60
-    _u05b: [u8; 4], // 4 bytes containing some fixed data, could be position?
-    // 64
-    _u06: u8, // 1 byte containing counter or 0xff
-    // 65
-    heading: u16, // 2 bytes containing heading
-    // 67
-    u07: [u8; 5], // 5 bytes containing varying unknown data
-                  // 72
-}
-
-#[derive(Deserialize, Debug, Clone, Copy)]
-#[repr(packed)]
-struct HaloMysteryPacket {
-    marker: [u8; 4], // 4 bytes containing 'NKOE'
-    _u00: [u8; 4],   // 4 bytes containing '00 01 90 02'
-    counter: u16,    // 2 byte counter incrementing by 1 every transmission, in BigEndian
-    // 10
-    _u01: [u8; 26], // 26 bytes of unknown stuff that doesn't seem to vary
-    // 36
-    _u02: [u8; 2], // 2 bytes containing '02 f8'...
-    _u03: [u8; 2], // 2 bytes containing '01 00'
-    // 40
-    epoch: u128, // 8 bytes containing millis since 1970
-    // 48
-    _u04: [u8; 8], // 8 bytes containing 2
-    // 56
-    _u05a: u32, // 4 bytes containing some fixed data, could be position?
-    // 60
-    _u05b: u32, // 4 bytes containing some fixed data, could be position?
-    // 64
-    _u06: u8, // 1 byte containing counter or 0xff
-    // 65
-    _u07: u8, // 1 byte containing 0xfc
-    // 66
-    _mystery1: u16, // 2 bytes containing some varying field
-    // 68
-    _mystery2: u16, // 2 bytes containing some varying field
-    // 70
-    _u08: [u8; 2], // 2 bytes containg 0xff 0xff
-                   // 72
+fn extract_heading_value(x: u16) -> u16 {
+    match is_valid_heading_value(x) {
+        true => x & HEADING_MASK,
+        false => 0xffff,
+    }
 }
 
 #[derive(Deserialize, Debug, Clone, Copy)]
 #[repr(packed)]
 struct Br24Header {
-    header_len: u8,       // 1 bytes
-    status: u8,           // 1 bytes
-    scan_number: [u8; 2], // 1 byte (HALO and newer), 2 bytes (4G and older)
-    mark: [u8; 4],        // 4 bytes, on BR24 this is always 0x00, 0x44, 0x0d, 0x0e
-    angle: [u8; 2],       // 2 bytes
-    heading: [u8; 2],     // 2 bytes heading with RI-10/11. See bitmask explanation above.
-    range: [u8; 4],       // 4 bytes
-    _u01: [u8; 2],        // 2 bytes blank
-    _u02: [u8; 2],        // 2 bytes
-    _u03: [u8; 4],        // 4 bytes blank
+    header_len: u8,        // 1 bytes
+    status: u8,            // 1 bytes
+    _scan_number: [u8; 2], // 1 byte (HALO and newer), 2 bytes (4G and older)
+    _mark: [u8; 4],        // 4 bytes, on BR24 this is always 0x00, 0x44, 0x0d, 0x0e
+    angle: [u8; 2],        // 2 bytes
+    heading: [u8; 2],      // 2 bytes heading with RI-10/11. See bitmask explanation above.
+    range: [u8; 4],        // 4 bytes
+    _u01: [u8; 2],         // 2 bytes blank
+    _u02: [u8; 2],         // 2 bytes
+    _u03: [u8; 4],         // 4 bytes blank
 } /* total size = 24 */
 
 #[derive(Deserialize, Debug, Clone, Copy)]
 #[repr(packed)]
 struct Br4gHeader {
-    header_len: u8,       // 1 bytes
-    status: u8,           // 1 bytes
-    scan_number: [u8; 2], // 1 byte (HALO and newer), 2 bytes (4G and older)
-    _mark: [u8; 2],       // 2 bytes
-    large_range: [u8; 2], // 2 bytes, on 4G and up
-    angle: [u8; 2],       // 2 bytes
-    heading: [u8; 2],     // 2 bytes heading with RI-10/11. See bitmask explanation above.
-    small_range: [u8; 2], // 2 bytes or -1
-    rotation: [u8; 2],    // 2 bytes or -1
-    _u01: [u8; 4],        // 4 bytes signed integer, always -1
+    header_len: u8,        // 1 bytes
+    status: u8,            // 1 bytes
+    _scan_number: [u8; 2], // 1 byte (HALO and newer), 2 bytes (4G and older)
+    _mark: [u8; 2],        // 2 bytes
+    large_range: [u8; 2],  // 2 bytes, on 4G and up
+    angle: [u8; 2],        // 2 bytes
+    heading: [u8; 2],      // 2 bytes heading with RI-10/11. See bitmask explanation above.
+    small_range: [u8; 2],  // 2 bytes or -1
+    _rotation: [u8; 2],    // 2 bytes or -1
+    _u01: [u8; 4],         // 4 bytes signed integer, always -1
     _u02: [u8; 4], // 4 bytes signed integer, mostly -1 (0x80 in last byte) or 0xa0 in last byte
 } /* total size = 24 */
 
@@ -233,22 +169,16 @@ pub struct Receive {
     buf: Vec<u8>,
     sock: Option<UdpSocket>,
     settings: Arc<NavicoSettings>,
-    command_sender: Command,
 }
 
 impl Receive {
-    pub fn new(
-        info: RadarLocationInfo,
-        settings: Arc<NavicoSettings>,
-        command_sender: Command,
-    ) -> Receive {
+    pub fn new(info: RadarLocationInfo, settings: Arc<NavicoSettings>) -> Receive {
         Receive {
             statistics: Statistics { broken_packets: 0 },
             info: info,
             buf: Vec::with_capacity(size_of::<RadarFramePkt>()),
             sock: None,
             settings,
-            command_sender,
         }
     }
 
@@ -401,7 +331,7 @@ impl Receive {
         }
     }
 
-    fn validate_header(header: &Br4gHeader) -> Option<(u32, i16, i16)> {
+    fn validate_header(header: &Br4gHeader) -> Option<(u32, u16, i16)> {
         if header.header_len != RADAR_LINE_HEADER_LENGTH as u8 {
             warn!(
                 "Spoke with illegal header length ({}) ignored",
@@ -414,10 +344,11 @@ impl Receive {
             return None;
         }
 
-        let heading = i16::from_le_bytes(header.heading);
+        let heading = u16::from_le_bytes(header.heading);
         let angle = i16::from_le_bytes(header.angle);
         let large_range = u16::from_le_bytes(header.large_range);
         let small_range = u16::from_le_bytes(header.small_range);
+
         let range = if large_range == 0x80 {
             if small_range == 0xffff {
                 0
@@ -427,10 +358,12 @@ impl Receive {
         } else {
             large_range as u32 * small_range as u32 / 512
         };
+
+        let heading = extract_heading_value(heading);
         Some((range, heading, angle))
     }
 
-    fn validate_br24_header(header: &Br24Header) -> Option<(u32, i16, i16)> {
+    fn validate_br24_header(header: &Br24Header) -> Option<(u32, u16, i16)> {
         if header.header_len != RADAR_LINE_HEADER_LENGTH as u8 {
             warn!(
                 "Spoke with illegal header length ({}) ignored",
@@ -443,7 +376,7 @@ impl Receive {
             return None;
         }
 
-        let heading = i16::from_le_bytes(header.heading);
+        let heading = u16::from_le_bytes(header.heading);
         let angle = i16::from_le_bytes(header.angle);
         let range = u32::from_le_bytes(header.range);
         Some((range, heading, angle))
@@ -452,7 +385,7 @@ impl Receive {
     fn process_spoke(
         &self,
         range: u32,
-        angle: i16,
+        angle: u16,
         heading: i16,
         doppler_mode: DopplerMode,
         spoke: &[u8],
