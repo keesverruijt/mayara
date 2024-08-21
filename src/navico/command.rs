@@ -1,4 +1,4 @@
-use log::{debug, trace, warn};
+use log::{debug, trace};
 use std::io;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
@@ -10,10 +10,11 @@ use super::NavicoSettings;
 
 pub const REQUEST_03_REPORT: [u8; 2] = [0x04, 0xc2]; // This causes the radar to report Report 3
 pub const REQUEST_MANY2_REPORT: [u8; 2] = [0x01, 0xc2]; // This causes the radar to report Report 02, 03, 04, 07 and 08
-pub const REQUEST_04_REPORT: [u8; 2] = [0x02, 0xc2]; // This causes the radar to report Report 3
-pub const REQUEST_02_08_REPORT: [u8; 2] = [0x03, 0xc2]; // This causes the radar to report Report 2 and Report 8
+pub const _REQUEST_04_REPORT: [u8; 2] = [0x02, 0xc2]; // This causes the radar to report Report 4
+pub const _REQUEST_02_08_REPORT: [u8; 2] = [0x03, 0xc2]; // This causes the radar to report Report 2 and Report 8
 
 pub struct Command {
+    key: String,
     info: RadarLocationInfo,
     sock: Option<UdpSocket>,
     settings: Arc<NavicoSettings>,
@@ -22,26 +23,29 @@ pub struct Command {
 impl Command {
     pub fn new(info: RadarLocationInfo, settings: Arc<NavicoSettings>) -> Self {
         Command {
+            key: info.key(),
             info: info,
             sock: None,
             settings,
         }
     }
 
-    async fn start_socket(&mut self) -> io::Result<(())> {
+    async fn start_socket(&mut self) -> io::Result<()> {
         match create_multicast_send(&self.info.send_command_addr, &self.info.nic_addr) {
             Ok(sock) => {
                 debug!(
-                    "{} via {}: sending commands",
-                    &self.info.send_command_addr, &self.info.nic_addr
+                    "{} {} via {}: sending commands",
+                    self.key, &self.info.send_command_addr, &self.info.nic_addr
                 );
                 self.sock = Some(sock);
+                debug!("{}: Settings {:?}", self.key, self.settings);
+
                 Ok(())
             }
             Err(e) => {
                 debug!(
-                    "{} via {}: create multicast failed: {}",
-                    &self.info.send_command_addr, &self.info.nic_addr, e
+                    "{} {} via {}: create multicast failed: {}",
+                    self.key, &self.info.send_command_addr, &self.info.nic_addr, e
                 );
                 Err(e)
             }
@@ -54,12 +58,7 @@ impl Command {
         }
         if let Some(sock) = &self.sock {
             sock.send(message).await?;
-            trace!(
-                "{} via {}: sent {:02X?}",
-                self.info.send_command_addr,
-                self.info.nic_addr,
-                message
-            );
+            trace!("{}: sent {:02X?}", self.key, message);
         }
 
         Ok(())

@@ -9,7 +9,7 @@ use tokio::net::UdpSocket;
 use tokio::time::{sleep, sleep_until, Instant};
 use tokio_shutdown::Shutdown;
 
-use crate::radar::RadarLocationInfo;
+use crate::radar::{DopplerMode, RadarLocationInfo};
 use crate::util::{c_wide_string, create_multicast};
 
 use super::command::{self, Command};
@@ -109,9 +109,9 @@ struct RadarReport8_18 {
 }
 
 struct RadarReport8_21 {
-    old: RadarReport8_18,
+    _old: RadarReport8_18,
     doppler_state: u8,
-    doppler_speed: [u8; 2],
+    doppler_speed: [u8; 2], // doppler speed threshold in values 0..1594 (in cm/s).
 }
 
 impl RadarReport8_18 {
@@ -328,10 +328,22 @@ impl Receive {
             let doppler_speed = u16::from_le_bytes(report.doppler_speed);
             let doppler_state = report.doppler_state;
 
-            debug!(
-                "{}: doppler state={} speed={}",
-                self.key, doppler_state, doppler_speed
-            );
+            let doppler_mode: Result<DopplerMode, _> = doppler_state.try_into();
+            match doppler_mode {
+                Err(_) => {
+                    bail!(
+                        "{}: Unknown doppler state {}",
+                        self.key,
+                        report.doppler_state
+                    );
+                }
+                Ok(doppler_mode) => {
+                    debug!(
+                        "{}: doppler state={} speed={}",
+                        self.key, doppler_mode, doppler_speed
+                    );
+                }
+            }
         }
         Ok(())
     }

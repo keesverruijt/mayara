@@ -26,19 +26,18 @@ use tokio_shutdown::Shutdown;
 use crate::radar::Radars;
 use crate::{navico, util};
 
-#[derive(PartialEq, Eq, Copy, Clone, Serialize)]
+#[derive(PartialEq, Eq, Copy, Clone, Serialize, Debug)]
 pub enum LocatorId {
-    NavicoNew,
-    NavicoBR24,
+    GenBR24,
+    Gen3Plus,
 }
 
 impl LocatorId {
     pub(crate) fn as_str(&self) -> &'static str {
         use LocatorId::*;
-        // tidy-alphabetical-start
         match *self {
-            NavicoNew => "Navico 3G/4G/HALO",
-            NavicoBR24 => "Navico BR24",
+            GenBR24 => "Navico BR24",
+            Gen3Plus => "Navico 3G/4G/HALO",
         }
     }
 }
@@ -89,7 +88,6 @@ impl RadarListenAddress {
 struct LocatorInfo {
     sock: UdpSocket,
     nic_addr: Ipv4Addr,
-    id: LocatorId,
     process: &'static dyn Fn(
         &[u8],       // message
         &SocketAddr, // from
@@ -291,7 +289,6 @@ fn create_multicast_sockets(
                                             sockets.push(LocatorInfo {
                                                 sock: socket,
                                                 nic_addr: nic_ip.clone(),
-                                                id: radar_listen_address.id,
                                                 process: radar_listen_address.process,
                                             });
                                             debug!(

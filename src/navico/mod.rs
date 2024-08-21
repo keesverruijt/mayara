@@ -211,6 +211,8 @@ impl fmt::Display for Model {
         write!(f, "{}", s)
     }
 }
+
+#[derive(Debug)]
 pub struct NavicoSettings {
     radars: Arc<RwLock<Radars>>,
     doppler: AtomicCell<DopplerMode>,
@@ -311,7 +313,7 @@ fn process_beacon_report(
                     let radar_report: SocketAddrV4 = data.a.report.into();
                     let radar_send: SocketAddrV4 = data.a.send.into();
                     let location_info: RadarLocationInfo = RadarLocationInfo::new(
-                        LocatorId::NavicoNew,
+                        LocatorId::Gen3Plus,
                         "Navico",
                         None,
                         Some(serial_no),
@@ -330,7 +332,7 @@ fn process_beacon_report(
                     let radar_report: SocketAddrV4 = data.b.report.into();
                     let radar_send: SocketAddrV4 = data.b.send.into();
                     let location_info: RadarLocationInfo = RadarLocationInfo::new(
-                        LocatorId::NavicoNew,
+                        LocatorId::Gen3Plus,
                         "Navico",
                         None,
                         Some(serial_no),
@@ -363,7 +365,7 @@ fn process_beacon_report(
                     let radar_report: SocketAddrV4 = data.a.report.into();
                     let radar_send: SocketAddrV4 = data.a.send.into();
                     let location_info: RadarLocationInfo = RadarLocationInfo::new(
-                        LocatorId::NavicoNew,
+                        LocatorId::Gen3Plus,
                         "Navico",
                         None,
                         Some(serial_no),
@@ -396,7 +398,7 @@ fn process_beacon_report(
                     let radar_report: SocketAddrV4 = data.report.into();
                     let radar_send: SocketAddrV4 = data.send.into();
                     let location_info: RadarLocationInfo = RadarLocationInfo::new(
-                        LocatorId::NavicoBR24,
+                        LocatorId::GenBR24,
                         "Navico",
                         Some("BR24"),
                         Some(serial_no),
@@ -427,10 +429,10 @@ impl RadarLocator for NavicoLocator {
     fn update_listen_addresses(&self, addresses: &mut Vec<RadarListenAddress>) {
         if !addresses
             .iter()
-            .any(|i| i.id == LocatorId::NavicoNew && i.brand == "Navico Beacon")
+            .any(|i| i.id == LocatorId::Gen3Plus && i.brand == "Navico Beacon")
         {
             addresses.push(RadarListenAddress::new(
-                LocatorId::NavicoNew,
+                LocatorId::Gen3Plus,
                 &NAVICO_BEACON_ADDRESS,
                 "Navico Beacon",
                 Some(&NAVICO_ADDRESS_REQUEST_PACKET),
@@ -451,10 +453,10 @@ impl RadarLocator for NavicoBR24Locator {
     fn update_listen_addresses(&self, addresses: &mut Vec<RadarListenAddress>) {
         if !addresses
             .iter()
-            .any(|i| i.id == LocatorId::NavicoBR24 && i.brand == "Navico BR24 Beacon")
+            .any(|i| i.id == LocatorId::GenBR24 && i.brand == "Navico BR24 Beacon")
         {
             addresses.push(RadarListenAddress::new(
-                LocatorId::NavicoBR24,
+                LocatorId::GenBR24,
                 &NAVICO_BR24_BEACON_ADDRESS,
                 "Navico BR24 Beacon",
                 Some(&NAVICO_ADDRESS_REQUEST_PACKET),

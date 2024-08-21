@@ -1,3 +1,4 @@
+use enum_primitive_derive::Primitive;
 use log::info;
 use std::{
     collections::HashMap,
@@ -8,7 +9,7 @@ use std::{
 
 use crate::locator::LocatorId;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RadarLocationInfo {
     key: String,
     pub id: usize,
@@ -109,8 +110,7 @@ impl Display for RadarLocationInfo {
     }
 }
 
-#[derive(Clone)]
-
+#[derive(Clone, Debug)]
 pub struct Radars {
     pub info: HashMap<String, RadarLocationInfo>,
 }
@@ -124,14 +124,22 @@ impl Radars {
 }
 
 pub struct Statistics {
-    broken_packets: usize,
+    pub broken_packets: usize,
 }
 
-#[derive(Copy, Clone)]
+// The actual values are not arbitrary: these are the exact values as reported
+// by HALO radars, simplifying the navico::report code.
+#[derive(Copy, Clone, Debug, Primitive)]
 pub enum DopplerMode {
     None = 0,
-    Both,
-    Approaching,
+    Both = 1,
+    Approaching = 2,
+}
+
+impl fmt::Display for DopplerMode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
+    }
 }
 
 // A radar has been found

@@ -9,10 +9,9 @@ use tokio::time::sleep;
 use tokio_shutdown::Shutdown;
 
 use crate::locator::LocatorId;
-use crate::radar::{DopplerMode, RadarLocationInfo};
+use crate::radar::{DopplerMode, RadarLocationInfo, Statistics};
 use crate::util::{create_multicast, PrintableSpoke};
 
-use super::command::Command;
 use super::NavicoSettings;
 
 // Length of a spoke in pixels. Every pixel is 4 bits (one nibble.)
@@ -77,8 +76,8 @@ struct Br4gHeader {
 #[derive(Debug, Clone, Copy)]
 #[repr(packed)]
 struct RadarLine {
-    header: Br4gHeader, // or Br24Header
-    data: [u8; NAVICO_SPOKE_LEN / 2],
+    _header: Br4gHeader, // or Br24Header
+    _data: [u8; NAVICO_SPOKE_LEN / 2],
 }
 
 #[repr(packed)]
@@ -158,10 +157,6 @@ const LOOKUP_PIXEL_VALUE: [[u8; 256]; 6] = {
     }
     lookup
 };
-
-pub struct Statistics {
-    broken_packets: usize,
-}
 
 pub struct Receive {
     statistics: Statistics,
@@ -263,7 +258,7 @@ impl Receive {
                 ..offset + RADAR_LINE_HEADER_LENGTH + RADAR_LINE_DATA_LENGTH];
 
             match self.info.locator_id {
-                LocatorId::NavicoNew => {
+                LocatorId::Gen3Plus => {
                     match deserialize::<Br4gHeader>(&header_slice) {
                         Ok(header) => {
                             trace!("Received {:04} header {:?}", scanline, header);
@@ -294,7 +289,7 @@ impl Receive {
                         }
                     };
                 }
-                LocatorId::NavicoBR24 => {
+                LocatorId::GenBR24 => {
                     match deserialize::<Br24Header>(&header_slice) {
                         Ok(header) => {
                             trace!("Received {:04} header {:?}", scanline, header);
@@ -408,6 +403,14 @@ impl Receive {
             generic_spoke.push(LOOKUP_PIXEL_VALUE[low_nibble_index][pixel]);
             generic_spoke.push(LOOKUP_PIXEL_VALUE[high_nibble_index][pixel]);
         }
+
+        trace!(
+            "Spoke {}/{}/{} len {}",
+            range,
+            heading,
+            angle,
+            generic_spoke.len()
+        );
     }
 }
 /*
