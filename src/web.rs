@@ -10,9 +10,10 @@ use axum::{
 use log::info;
 use miette::Result;
 use serde::Serialize;
+use serde_with::skip_serializing_none;
 use std::{
     collections::HashMap,
-    io,
+    fmt, io,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::{Arc, RwLock},
 };
@@ -85,12 +86,59 @@ async fn root() -> String {
 }
 
 #[derive(Serialize)]
+enum PixelType {
+    Normal,
+    History,
+    TargetBorder,
+    DopplerApproaching,
+    DopplerReceding,
+}
+
+struct Colour {
+    r: u8,
+    g: u8,
+    b: u8,
+    a: u8,
+}
+
+impl fmt::Display for Colour {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "#{:02x}{:02x}{:02x}{:02x}",
+            self.r, self.g, self.b, self.a
+        )
+    }
+}
+
+use serde::ser::Serializer;
+
+impl Serialize for Colour {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+#[skip_serializing_none]
+#[derive(Serialize)]
+struct Lookup {
+    key: u8,
+    value: Option<u8>,
+    r#type: PixelType,
+    colour: Colour,
+}
+
+#[derive(Serialize)]
 struct RadarApi {
     id: String,
     name: String,
     spokes: u16,
     max_spoke_len: u16,
     stream_url: String,
+    legend: Vec<Lookup>,
 }
 
 impl RadarApi {
@@ -101,8 +149,88 @@ impl RadarApi {
             spokes,
             max_spoke_len,
             stream_url,
+            legend: Vec::new(),
         }
     }
+
+    fn set_legend(&mut self, legend: Vec<Lookup>) {
+        self.legend = legend;
+    }
+}
+
+fn abs(n: f32) -> f32 {
+    if n >= 0. {
+        n
+    } else {
+        -n
+    }
+}
+
+fn fake_legend() -> Vec<Lookup> {
+    let mut legend = Vec::new();
+
+    for history in 0..32 {
+        let colour = Colour {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: history * 4,
+        };
+        legend.push(Lookup {
+            key: history,
+            value: Some(history),
+            r#type: PixelType::History,
+            colour,
+        });
+    }
+    for v in 0..13 {
+        legend.push(Lookup {
+            key: 32 + v,
+            value: Some(v),
+            r#type: PixelType::Normal,
+            colour: Colour {
+                r: (v as f32 * (200. / 13.)) as u8,
+                g: (abs(7. - v as f32) * (200. / 13.)) as u8,
+                b: ((13 - v) as f32 * (200. / 13.)) as u8,
+                a: 255,
+            },
+        });
+    }
+    legend.push(Lookup {
+        key: 32 + 13,
+        value: None,
+        r#type: PixelType::TargetBorder,
+        colour: Colour {
+            r: 200,
+            g: 200,
+            b: 200,
+            a: 255,
+        },
+    });
+    legend.push(Lookup {
+        key: 32 + 13 + 1,
+        value: None,
+        r#type: PixelType::DopplerApproaching,
+        colour: Colour {
+            r: 0,
+            g: 200,
+            b: 200,
+            a: 255,
+        },
+    });
+    legend.push(Lookup {
+        key: 32 + 13 + 2,
+        value: None,
+        r#type: PixelType::DopplerReceding,
+        colour: Colour {
+            r: 0x90,
+            g: 0xd0,
+            b: 0xf0,
+            a: 255,
+        },
+    });
+
+    legend
 }
 
 //
@@ -126,10 +254,10 @@ async fn get_radars(State(state): State<Web>, _request: Body) -> Response {
                     name.push(' ');
                     name.push_str(value.which.as_ref().unwrap());
                 }
-                api.insert(
-                    id.to_owned(),
-                    RadarApi::new(id, &name, value.spokes, value.max_spoke_len, url),
-                );
+                let mut v =
+                    RadarApi::new(id.to_owned(), &name, value.spokes, value.max_spoke_len, url);
+                v.set_legend(fake_legend());
+                api.insert(id.to_owned(), v);
             }
             Json(api).into_response()
         }
