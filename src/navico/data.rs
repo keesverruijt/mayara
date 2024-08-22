@@ -178,33 +178,40 @@ impl Receive {
         }
     }
 
-    async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> io::Result<()> {
+    async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
         loop {
             tokio::select! { biased;
-              _ = subsys.on_shutdown_requested() => {
-                break;
-              },
-              r = self.sock.as_ref().unwrap().recv_buf_from(&mut self.buf)  => {
-                  match r {
-                    Ok(_) => {
-                    self.process_frame();
-
-                    },
-                    Err(e) => { return Err(e); }
-                  }
-              },
+                _ = subsys.on_shutdown_requested() => {
+                    return Err(RadarError::Shutdown);
+                },
+                r = self.sock.as_ref().unwrap().recv_buf_from(&mut self.buf)  => {
+                    match r {
+                        Ok(_) => {
+                            self.process_frame();
+                        },
+                        Err(e) => {
+                            return Err(RadarError::Io(e));
+                        }
+                    }
+                },
             };
             self.buf.clear();
         }
-        Ok(())
     }
 
-    pub async fn run(mut self, subsys: SubsystemHandle) -> Result<(), io::Error> {
+    pub async fn run(mut self, subsys: SubsystemHandle) -> Result<(), RadarError> {
         debug!("Started receive thread");
         self.start_socket().await.unwrap();
         loop {
             if self.sock.is_some() {
-                self.socket_loop(&subsys).await.unwrap();
+                match self.socket_loop(&subsys).await {
+                    Err(RadarError::Shutdown) => {
+                        return Ok(());
+                    }
+                    _ => {
+                        // Ignore, reopen socket
+                    }
+                }
                 self.sock = None;
             } else {
                 sleep(Duration::from_millis(1000)).await;

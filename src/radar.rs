@@ -2,14 +2,32 @@ use enum_primitive_derive::Primitive;
 use log::info;
 use serde::ser::{SerializeMap, Serializer};
 use serde::Serialize;
+use std::io;
 use std::{
     collections::HashMap,
     fmt::{self, Display, Write},
     net::{Ipv4Addr, SocketAddrV4},
     sync::{Arc, RwLock},
 };
+use thiserror::Error;
 
 use crate::locator::LocatorId;
+
+#[derive(Error, Debug)]
+pub enum RadarError {
+    #[error("Socket operation failed")]
+    Io(#[from] io::Error),
+    #[error("Interface '{0}' is not available")]
+    InterfaceNotFound(String),
+    #[error("Interface '{0}' has no valid IPv4 address")]
+    InterfaceNoV4(String),
+    #[error("Cannot detect Ethernet devices")]
+    EnumerationFailed,
+    #[error("Timeout")]
+    Timeout,
+    #[error("Shutdown")]
+    Shutdown,
+}
 
 #[derive(Serialize, Clone, Debug)]
 enum PixelType {

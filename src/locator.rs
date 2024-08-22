@@ -18,30 +18,13 @@ use log::{debug, error, info, trace, warn};
 use miette::Result;
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use serde::Serialize;
-use thiserror::Error;
 use tokio::net::UdpSocket;
 use tokio::task::JoinSet;
 use tokio::time::sleep;
 use tokio_graceful_shutdown::SubsystemHandle;
 
-use crate::radar::Radars;
+use crate::radar::{RadarError, Radars};
 use crate::{navico, util};
-
-#[derive(Error, Debug)]
-pub enum LocatorError {
-    #[error("Multicast socket operation failed")]
-    Io(#[from] io::Error),
-    #[error("Interface '{0}' is not available")]
-    InterfaceNotFound(String),
-    #[error("Interface '{0}' has no valid IPv4 address")]
-    InterfaceNoV4(String),
-    #[error("Cannot detect Ethernet devices")]
-    EnumerationFailed,
-    #[error("Timeout")]
-    Timeout,
-    #[error("Shutdown")]
-    Shutdown,
-}
 
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Debug)]
 pub enum LocatorId {
@@ -141,7 +124,7 @@ impl Locator {
         Locator { radars, interface }
     }
 
-    pub async fn run(self, subsys: SubsystemHandle) -> Result<(), LocatorError> {
+    pub async fn run(self, subsys: SubsystemHandle) -> Result<(), RadarError> {
         let radars = self.radars;
         let navico_locator = navico::create_locator();
         let navico_br24_locator = navico::create_br24_locator();
@@ -181,11 +164,11 @@ impl Locator {
             }
             set.spawn(async move {
                 cancellation_token.cancelled().await;
-                Err(LocatorError::Shutdown)
+                Err(RadarError::Shutdown)
             });
             set.spawn(async move {
                 sleep(Duration::from_millis(30000)).await;
-                Err(LocatorError::Timeout)
+                Err(RadarError::Timeout)
             });
 
             // Now that we're listening to the radars, send any address request (wake) packets
@@ -216,11 +199,11 @@ impl Locator {
                             }
                             Err(e) => {
                                 match e {
-                                    LocatorError::Shutdown => {
+                                    RadarError::Shutdown => {
                                         info!("Locator shutdown");
                                         return Ok(());
                                     }
-                                    LocatorError::Timeout => {
+                                    RadarError::Timeout => {
                                         // Loop, reread everything
                                         break;
                                     }
@@ -240,7 +223,7 @@ impl Locator {
 }
 
 fn spawn_receive(
-    set: &mut JoinSet<Result<(LocatorInfo, SocketAddr, Vec<u8>), LocatorError>>,
+    set: &mut JoinSet<Result<(LocatorInfo, SocketAddr, Vec<u8>), RadarError>>,
     socket: LocatorInfo,
 ) {
     set.spawn(async move {
@@ -249,7 +232,7 @@ fn spawn_receive(
 
         match res {
             Ok((_, addr)) => Ok((socket, addr, buf)),
-            Err(e) => Err(LocatorError::Io(e)),
+            Err(e) => Err(RadarError::Io(e)),
         }
     });
 }
@@ -284,7 +267,7 @@ fn send_multicast_packet(addr: &SocketAddr, msg: &[u8]) {
 fn create_multicast_sockets(
     listen_addresses: &Vec<RadarListenAddress>,
     interface_state: &mut InterfaceState,
-) -> Result<Vec<LocatorInfo>, LocatorError> {
+) -> Result<Vec<LocatorInfo>, RadarError> {
     let only_interface = &interface_state.interface;
 
     match NetworkInterface::show() {
@@ -361,7 +344,7 @@ fn create_multicast_sockets(
                     if interface_state.interface.is_some()
                         && interface_state.active_nic_addresses.len() == 0
                     {
-                        return Err(LocatorError::InterfaceNoV4(
+                        return Err(RadarError::InterfaceNoV4(
                             interface_state.interface.clone().unwrap(),
                         ));
                     }
@@ -389,12 +372,12 @@ fn create_multicast_sockets(
             if interface_state.interface.is_some()
                 && interface_state.active_nic_addresses.len() == 0
             {
-                return Err(LocatorError::InterfaceNotFound(
+                return Err(RadarError::InterfaceNotFound(
                     interface_state.interface.clone().unwrap(),
                 ));
             }
             Ok(sockets)
         }
-        Err(_) => Err(LocatorError::EnumerationFailed),
+        Err(_) => Err(RadarError::EnumerationFailed),
     }
 }

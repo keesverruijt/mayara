@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
         s.start(SubsystemBuilder::new("Webserver", |a| web.run(a)));
     })
     .catch_signals()
-    .handle_shutdown_requests(Duration::from_millis(1000))
+    .handle_shutdown_requests(Duration::from_millis(5000))
     .await
     .map_err(Into::into)
 }

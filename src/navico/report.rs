@@ -9,7 +9,7 @@ use tokio::net::UdpSocket;
 use tokio::time::{sleep, sleep_until, Instant};
 use tokio_graceful_shutdown::SubsystemHandle;
 
-use crate::radar::{DopplerMode, RadarInfo};
+use crate::radar::{DopplerMode, RadarError, RadarInfo};
 use crate::util::{c_wide_string, create_multicast};
 
 use super::command::{self, Command};
@@ -174,11 +174,12 @@ impl Receive {
         }
     }
 
-    async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> io::Result<()> {
+    async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
         loop {
             tokio::select! { biased;
               _ = subsys.on_shutdown_requested() => {
-                    break;
+                    info!("{}: shutdown", self.key);
+                    return Err(RadarError::Shutdown);
               },
               _ = sleep_until(self.subtype_timeout) => {
                     self.send_report_requests().await?;
@@ -190,7 +191,6 @@ impl Receive {
               },
             };
         }
-        Ok(())
     }
 
     async fn send_report_requests(&mut self) -> Result<(), io::Error> {
@@ -203,11 +203,18 @@ impl Receive {
         Ok(())
     }
 
-    pub async fn run(mut self, subsys: SubsystemHandle) -> io::Result<()> {
+    pub async fn run(mut self, subsys: SubsystemHandle) -> Result<(), RadarError> {
         self.start_socket().await?;
         loop {
             if self.sock.is_some() {
-                let _ = self.socket_loop(&subsys).await; // Ignore the error, re-open socket
+                match self.socket_loop(&subsys).await {
+                    Err(RadarError::Shutdown) => {
+                        return Ok(());
+                    }
+                    _ => {
+                        // Ignore, reopen socket
+                    }
+                }
                 self.sock = None;
             } else {
                 sleep(Duration::from_millis(1000)).await;

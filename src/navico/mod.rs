@@ -244,6 +244,8 @@ fn found(info: RadarInfo, radars: &Arc<RwLock<Radars>>, subsys: &SubsystemHandle
         let command_sender = command::Command::new(info.clone(), navico_settings.clone());
 
         // Clone everything moved into future twice or more
+        let data_name = info.key() + " data";
+        let report_name = info.key() + " reports";
         let info_clone = info.clone();
         let navico_settings_clone = navico_settings.clone();
 
@@ -251,10 +253,10 @@ fn found(info: RadarInfo, radars: &Arc<RwLock<Radars>>, subsys: &SubsystemHandle
         let report_receiver =
             report::Receive::new(info_clone, navico_settings_clone, command_sender);
 
-        subsys.start(SubsystemBuilder::new("Navico Data Receiver", move |s| {
+        subsys.start(SubsystemBuilder::new(data_name, move |s| {
             data_receiver.run(s)
         }));
-        subsys.start(SubsystemBuilder::new("Navico Report Receiver", |s| {
+        subsys.start(SubsystemBuilder::new(report_name, |s| {
             report_receiver.run(s)
         }));
     }
