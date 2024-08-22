@@ -1,7 +1,7 @@
 use enum_primitive_derive::Primitive;
 use log::info;
+use serde::ser::{SerializeMap, Serializer};
 use serde::Serialize;
-use serde_json::ser;
 use std::{
     collections::HashMap,
     fmt::{self, Display, Write},
@@ -51,8 +51,6 @@ impl fmt::Display for Colour {
     }
 }
 
-use serde::ser::Serializer;
-
 impl Serialize for Colour {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -68,17 +66,27 @@ pub struct Lookup {
     colour: Colour,
 }
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct Legend {
     pub pixels: Vec<Lookup>,
-    #[serde(skip_serializing)]
-    pub history_start: u8,
-    #[serde(skip_serializing)]
     pub border: u8,
-    #[serde(skip_serializing)]
     pub doppler_approaching: u8,
-    #[serde(skip_serializing)]
     pub doppler_receding: u8,
+    pub history_start: u8,
+}
+
+impl Serialize for Legend {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_map(Some(self.pixels.len()))?;
+        for (n, value) in self.pixels.iter().enumerate() {
+            let key = n.to_string();
+            state.serialize_entry(&key, value)?;
+        }
+        state.end()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -300,24 +308,6 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
         });
     }
 
-    legend.history_start = legend.pixels.len() as u8;
-    const START_DENSITY: u8 = 255; // Target trail starts as white
-    const END_DENSITY: u8 = 63; // Ends as gray
-    const DELTA_INTENSITY: u8 = (START_DENSITY - END_DENSITY) / BLOB_HISTORY_COLORS;
-    let mut density = START_DENSITY;
-    for _history in 0..BLOB_HISTORY_COLORS {
-        let colour = Colour {
-            r: density,
-            g: density,
-            b: density,
-        };
-        density -= DELTA_INTENSITY;
-        legend.pixels.push(Lookup {
-            r#type: PixelType::History,
-            colour,
-        });
-    }
-
     legend.border = legend.pixels.len() as u8;
     legend.pixels.push(Lookup {
         r#type: PixelType::TargetBorder,
@@ -346,6 +336,24 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
                 g: 0xd0,
                 b: 0xf0,
             },
+        });
+    }
+
+    legend.history_start = legend.pixels.len() as u8;
+    const START_DENSITY: u8 = 255; // Target trail starts as white
+    const END_DENSITY: u8 = 63; // Ends as gray
+    const DELTA_INTENSITY: u8 = (START_DENSITY - END_DENSITY) / BLOB_HISTORY_COLORS;
+    let mut density = START_DENSITY;
+    for _history in 0..BLOB_HISTORY_COLORS {
+        let colour = Colour {
+            r: density,
+            g: density,
+            b: density,
+        };
+        density -= DELTA_INTENSITY;
+        legend.pixels.push(Lookup {
+            r#type: PixelType::History,
+            colour,
         });
     }
 
