@@ -125,8 +125,6 @@ impl Serialize for Colour {
 #[skip_serializing_none]
 #[derive(Serialize)]
 struct Lookup {
-    key: u8,
-    value: Option<u8>,
     r#type: PixelType,
     colour: Colour,
 }
@@ -138,7 +136,7 @@ struct RadarApi {
     spokes: u16,
     max_spoke_len: u16,
     stream_url: String,
-    legend: Vec<Lookup>,
+    legend: HashMap<String, Lookup>,
 }
 
 impl RadarApi {
@@ -149,12 +147,18 @@ impl RadarApi {
             spokes,
             max_spoke_len,
             stream_url,
-            legend: Vec::new(),
+            legend: HashMap::new(),
         }
     }
 
     fn set_legend(&mut self, legend: Vec<Lookup>) {
-        self.legend = legend;
+        let mut l = HashMap::new();
+        let mut n = 0;
+        for lookup in legend {
+            l.insert(n.to_string(), lookup);
+            n += 1;
+        }
+        self.legend = l;
     }
 }
 
@@ -177,16 +181,12 @@ fn fake_legend() -> Vec<Lookup> {
             a: history * 4,
         };
         legend.push(Lookup {
-            key: history,
-            value: Some(history),
             r#type: PixelType::History,
             colour,
         });
     }
     for v in 0..13 {
         legend.push(Lookup {
-            key: 32 + v,
-            value: Some(v),
             r#type: PixelType::Normal,
             colour: Colour {
                 r: (v as f32 * (200. / 13.)) as u8,
@@ -197,8 +197,6 @@ fn fake_legend() -> Vec<Lookup> {
         });
     }
     legend.push(Lookup {
-        key: 32 + 13,
-        value: None,
         r#type: PixelType::TargetBorder,
         colour: Colour {
             r: 200,
@@ -208,8 +206,6 @@ fn fake_legend() -> Vec<Lookup> {
         },
     });
     legend.push(Lookup {
-        key: 32 + 13 + 1,
-        value: None,
         r#type: PixelType::DopplerApproaching,
         colour: Colour {
             r: 0,
@@ -219,8 +215,6 @@ fn fake_legend() -> Vec<Lookup> {
         },
     });
     legend.push(Lookup {
-        key: 32 + 13 + 2,
-        value: None,
         r#type: PixelType::DopplerReceding,
         colour: Colour {
             r: 0x90,
@@ -287,5 +281,27 @@ where
 {
     fn from(err: E) -> Self {
         Self(err.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{fake_legend, RadarApi};
+
+    #[test]
+    fn legend() {
+        let mut v = RadarApi::new(
+            "Navico Halo".to_owned(),
+            "Halo A",
+            2048,
+            1024,
+            "http://bla".to_string(),
+        );
+        v.set_legend(fake_legend());
+
+        let json = json!(v).to_string();
+        println!("{}", json);
     }
 }
