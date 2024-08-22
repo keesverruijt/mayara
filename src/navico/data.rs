@@ -2,9 +2,9 @@ use bincode::deserialize;
 use log::{debug, trace, warn};
 use serde::Deserialize;
 use std::io;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::UdpSocket;
+use tokio::sync::mpsc::Receiver;
 use tokio::time::sleep;
 use tokio_graceful_shutdown::SubsystemHandle;
 
@@ -12,7 +12,7 @@ use crate::locator::LocatorId;
 use crate::radar::*;
 use crate::util::{create_multicast, PrintableSpoke};
 
-use super::NavicoSettings;
+use super::DataUpdate;
 
 // Length of a spoke in pixels. Every pixel is 4 bits (one nibble.)
 const NAVICO_SPOKE_LEN: usize = 1024;
@@ -105,55 +105,28 @@ enum LookupSpokeEnum {
     HighApproaching = 5,
 }
 
-const LOOKUP_PIXEL_VALUE: [[u8; 256]; 6] = {
-    let mut lookup: [[u8; 256]; 6] = [[0; 256]; 6];
-    // Cannot use for() in const expr, so use while instead
-    let mut j: usize = 0;
-    while j < 256 {
-        let low: u8 = j as u8 & 0x0f;
-        let high: u8 = (j as u8 >> 4) & 0x0f;
-
-        lookup[LookupSpokeEnum::LowNormal as usize][j] = BLOB_NORMAL_START + low;
-        lookup[LookupSpokeEnum::LowBoth as usize][j] = match low {
-            0x0f => BLOB_DOPPLER_APPROACHING,
-            0x0e => BLOB_DOPPLER_RECEDING,
-            _ => BLOB_NORMAL_START + low,
-        };
-        lookup[LookupSpokeEnum::LowApproaching as usize][j] = match low {
-            0x0f => BLOB_DOPPLER_APPROACHING,
-            _ => BLOB_NORMAL_START + low,
-        };
-        lookup[LookupSpokeEnum::HighNormal as usize][j] = high;
-        lookup[LookupSpokeEnum::HighBoth as usize][j] = match high {
-            0x0f => BLOB_DOPPLER_APPROACHING,
-            0x0e => BLOB_DOPPLER_RECEDING,
-            _ => BLOB_NORMAL_START + high,
-        };
-        lookup[LookupSpokeEnum::HighApproaching as usize][j] = match high {
-            0x0f => BLOB_DOPPLER_APPROACHING,
-            _ => BLOB_NORMAL_START + high,
-        };
-        j += 1;
-    }
-    lookup
-};
-
-pub struct Receive {
+pub struct NavicoDataReceiver {
     statistics: Statistics,
     info: RadarInfo,
     buf: Vec<u8>,
     sock: Option<UdpSocket>,
-    settings: Arc<NavicoSettings>,
+    rx: Receiver<DataUpdate>,
+    doppler: DopplerMode,
+    legend: Option<Legend>,
+    pixel_to_blob: Option<[[u8; 256]; 6]>,
 }
 
-impl Receive {
-    pub fn new(info: RadarInfo, settings: Arc<NavicoSettings>) -> Receive {
-        Receive {
+impl NavicoDataReceiver {
+    pub fn new(info: RadarInfo, rx: Receiver<DataUpdate>) -> NavicoDataReceiver {
+        NavicoDataReceiver {
             statistics: Statistics { broken_packets: 0 },
             info: info,
             buf: Vec::with_capacity(size_of::<RadarFramePkt>()),
             sock: None,
-            settings,
+            rx,
+            doppler: DopplerMode::None,
+            legend: None,
+            pixel_to_blob: None,
         }
     }
 
@@ -178,11 +151,60 @@ impl Receive {
         }
     }
 
+    fn fill_pixel_to_blob(&mut self, legend: &Legend) {
+        let mut lookup: [[u8; 256]; 6] = [[0; 256]; 6];
+        // Cannot use for() in const expr, so use while instead
+        let mut j: usize = 0;
+        while j < 256 {
+            let low: u8 = j as u8 & 0x0f;
+            let high: u8 = (j as u8 >> 4) & 0x0f;
+
+            lookup[LookupSpokeEnum::LowNormal as usize][j] = low;
+            lookup[LookupSpokeEnum::LowBoth as usize][j] = match low {
+                0x0f => legend.doppler_approaching,
+                0x0e => legend.doppler_receding,
+                _ => low,
+            };
+            lookup[LookupSpokeEnum::LowApproaching as usize][j] = match low {
+                0x0f => legend.doppler_approaching,
+                _ => low,
+            };
+            lookup[LookupSpokeEnum::HighNormal as usize][j] = high;
+            lookup[LookupSpokeEnum::HighBoth as usize][j] = match high {
+                0x0f => legend.doppler_approaching,
+                0x0e => legend.doppler_receding,
+                _ => high,
+            };
+            lookup[LookupSpokeEnum::HighApproaching as usize][j] = match high {
+                0x0f => legend.doppler_approaching,
+                _ => high,
+            };
+            j += 1;
+        }
+        self.pixel_to_blob = Some(lookup);
+    }
+
+    fn handle_data_update(&mut self, r: Option<DataUpdate>) {
+        match r {
+            Some(DataUpdate::Doppler(doppler)) => {
+                self.doppler = doppler;
+            }
+            Some(DataUpdate::Legend(legend)) => {
+                self.fill_pixel_to_blob(&legend);
+                self.legend = Some(legend);
+            }
+            None => {}
+        }
+    }
+
     async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
         loop {
             tokio::select! { biased;
                 _ = subsys.on_shutdown_requested() => {
                     return Err(RadarError::Shutdown);
+                },
+                r = self.rx.recv() => {
+                  self.handle_data_update(r);
                 },
                 r = self.sock.as_ref().unwrap().recv_buf_from(&mut self.buf)  => {
                     match r {
@@ -239,8 +261,6 @@ impl Receive {
             }
         }
 
-        let doppler_mode = self.settings.doppler.load();
-
         debug!("Received UDP frame with {} spokes", &scanlines_in_packet);
 
         let mut offset: usize = FRAME_HEADER_LENGTH;
@@ -255,7 +275,8 @@ impl Receive {
                         Ok(header) => {
                             trace!("Received {:04} header {:?}", scanline, header);
 
-                            if let Some((range, angle, heading)) = Receive::validate_header(&header)
+                            if let Some((range, angle, heading)) =
+                                NavicoDataReceiver::validate_header(&header)
                             {
                                 debug!("range {} angle {} heading {}", range, angle, heading);
                                 debug!(
@@ -263,13 +284,7 @@ impl Receive {
                                     scanline,
                                     PrintableSpoke::new(spoke_slice),
                                 );
-                                self.process_spoke(
-                                    range,
-                                    angle,
-                                    heading,
-                                    doppler_mode,
-                                    spoke_slice,
-                                );
+                                self.process_spoke(range, angle, heading, spoke_slice);
                             } else {
                                 warn!("Invalid spoke: header {:02X?}", &header_slice);
                                 self.statistics.broken_packets += 1;
@@ -287,7 +302,7 @@ impl Receive {
                             trace!("Received {:04} header {:?}", scanline, header);
 
                             if let Some((range, angle, heading)) =
-                                Receive::validate_br24_header(&header)
+                                NavicoDataReceiver::validate_br24_header(&header)
                             {
                                 debug!("range {} angle {} heading {}", range, angle, heading);
                                 trace!(
@@ -295,13 +310,7 @@ impl Receive {
                                     scanline,
                                     PrintableSpoke::new(spoke_slice),
                                 );
-                                self.process_spoke(
-                                    range,
-                                    angle,
-                                    heading,
-                                    doppler_mode,
-                                    spoke_slice,
-                                );
+                                self.process_spoke(range, angle, heading, spoke_slice);
                             } else {
                                 warn!("Invalid spoke: header {:02X?}", &header_slice);
                                 self.statistics.broken_packets += 1;
@@ -369,40 +378,35 @@ impl Receive {
         Some((range, heading, angle))
     }
 
-    fn process_spoke(
-        &self,
-        range: u32,
-        angle: u16,
-        heading: i16,
-        doppler_mode: DopplerMode,
-        spoke: &[u8],
-    ) {
-        // Convert the spoke data to bytes
-        let mut generic_spoke: Vec<u8> = Vec::with_capacity(1024);
-        let low_nibble_index = match doppler_mode {
-            DopplerMode::None => LookupSpokeEnum::LowNormal,
-            DopplerMode::Both => LookupSpokeEnum::LowBoth,
-            DopplerMode::Approaching => LookupSpokeEnum::LowApproaching,
-        } as usize;
-        let high_nibble_index = match doppler_mode {
-            DopplerMode::None => LookupSpokeEnum::HighNormal,
-            DopplerMode::Both => LookupSpokeEnum::HighBoth,
-            DopplerMode::Approaching => LookupSpokeEnum::HighApproaching,
-        } as usize;
+    fn process_spoke(&self, range: u32, angle: u16, heading: i16, spoke: &[u8]) {
+        if let Some(pixel_to_blob) = self.pixel_to_blob {
+            // Convert the spoke data to bytes
+            let mut generic_spoke: Vec<u8> = Vec::with_capacity(1024);
+            let low_nibble_index = match self.doppler {
+                DopplerMode::None => LookupSpokeEnum::LowNormal,
+                DopplerMode::Both => LookupSpokeEnum::LowBoth,
+                DopplerMode::Approaching => LookupSpokeEnum::LowApproaching,
+            } as usize;
+            let high_nibble_index = match self.doppler {
+                DopplerMode::None => LookupSpokeEnum::HighNormal,
+                DopplerMode::Both => LookupSpokeEnum::HighBoth,
+                DopplerMode::Approaching => LookupSpokeEnum::HighApproaching,
+            } as usize;
 
-        for pixel in spoke {
-            let pixel = *pixel as usize;
-            generic_spoke.push(LOOKUP_PIXEL_VALUE[low_nibble_index][pixel]);
-            generic_spoke.push(LOOKUP_PIXEL_VALUE[high_nibble_index][pixel]);
+            for pixel in spoke {
+                let pixel = *pixel as usize;
+                generic_spoke.push(pixel_to_blob[low_nibble_index][pixel]);
+                generic_spoke.push(pixel_to_blob[high_nibble_index][pixel]);
+            }
+
+            trace!(
+                "Spoke {}/{}/{} len {}",
+                range,
+                heading,
+                angle,
+                generic_spoke.len()
+            );
         }
-
-        trace!(
-            "Spoke {}/{}/{} len {}",
-            range,
-            heading,
-            angle,
-            generic_spoke.len()
-        );
     }
 }
 /*

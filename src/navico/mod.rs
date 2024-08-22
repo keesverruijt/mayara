@@ -7,10 +7,11 @@ use serde::Deserialize;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::{Arc, RwLock};
 use std::{fmt, io};
+use tokio::sync::mpsc;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
 use crate::locator::{LocatorId, RadarListenAddress, RadarLocator};
-use crate::radar::{located, DopplerMode, RadarInfo, Radars};
+use crate::radar::{located, DopplerMode, Legend, RadarInfo, Radars};
 use crate::util::c_string;
 use crate::util::PrintableSlice;
 
@@ -20,6 +21,12 @@ mod report;
 
 const NAVICO_BEACON_ADDRESS: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(236, 6, 7, 5)), 6878);
+
+// Messages sent to Data receiver
+pub enum DataUpdate {
+    Doppler(DopplerMode),
+    Legend(Legend),
+}
 
 #[derive(Deserialize, Debug, Copy, Clone)]
 struct NetworkSocketAddrV4 {
@@ -224,7 +231,6 @@ impl fmt::Display for Model {
 #[derive(Debug)]
 pub struct NavicoSettings {
     radars: Arc<RwLock<Radars>>,
-    doppler: AtomicCell<DopplerMode>,
     model: AtomicCell<Model>,
 }
 
@@ -237,10 +243,10 @@ fn found(info: RadarInfo, radars: &Arc<RwLock<Radars>>, subsys: &SubsystemHandle
         // It's new, start the RadarProcessor thread
         let navico_settings = Arc::new(NavicoSettings {
             radars: radars.clone(),
-            doppler: AtomicCell::new(DopplerMode::None),
             model: AtomicCell::new(Model::Unknown),
         });
 
+        let (tx_data, rx_data) = mpsc::channel(10);
         let command_sender = command::Command::new(info.clone(), navico_settings.clone());
 
         // Clone everything moved into future twice or more
@@ -249,9 +255,13 @@ fn found(info: RadarInfo, radars: &Arc<RwLock<Radars>>, subsys: &SubsystemHandle
         let info_clone = info.clone();
         let navico_settings_clone = navico_settings.clone();
 
-        let data_receiver = data::Receive::new(info, navico_settings);
-        let report_receiver =
-            report::Receive::new(info_clone, navico_settings_clone, command_sender);
+        let data_receiver = data::NavicoDataReceiver::new(info, rx_data);
+        let report_receiver = report::NavicoReportReceiver::new(
+            info_clone,
+            navico_settings_clone,
+            command_sender,
+            tx_data,
+        );
 
         subsys.start(SubsystemBuilder::new(data_name, move |s| {
             data_receiver.run(s)

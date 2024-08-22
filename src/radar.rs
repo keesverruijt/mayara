@@ -38,24 +38,6 @@ enum PixelType {
     Normal,
 }
 
-// The Target Trails code is the same on all radars, and all spoke
-// pixel values contain [0..32> as history values.
-pub const BLOB_HISTORY_COLORS: u8 = 32;
-pub const BLOB_TARGET_BORDER: u8 = 32;
-pub const BLOB_DOPPLER_APPROACHING: u8 = 33;
-pub const BLOB_DOPPLER_RECEDING: u8 = 34;
-pub const BLOB_NORMAL_START: u8 = 35;
-
-pub fn map_pixel_to_type(p: u8) -> PixelType {
-    match p {
-        0..BLOB_HISTORY_COLORS => PixelType::History,
-        BLOB_TARGET_BORDER => PixelType::TargetBorder,
-        BLOB_DOPPLER_APPROACHING => PixelType::DopplerApproaching,
-        BLOB_DOPPLER_RECEDING => PixelType::DopplerReceding,
-        _ => PixelType::Normal,
-    }
-}
-
 #[derive(Clone, Debug)]
 struct Colour {
     r: u8,
@@ -265,6 +247,8 @@ pub fn located(new_info: RadarInfo, radars: &Arc<RwLock<Radars>>) -> Option<Rada
         None
     }
 }
+
+pub const BLOB_HISTORY_COLORS: u8 = 32;
 
 fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
     let mut legend = Legend {

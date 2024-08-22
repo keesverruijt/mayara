@@ -11,8 +11,8 @@ use log::info;
 use miette::Result;
 use serde::Serialize;
 use std::{
-    collections::{BTreeMap, HashMap},
-    fmt, io,
+    collections::HashMap,
+    io,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::{Arc, RwLock},
 };
@@ -20,7 +20,7 @@ use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio_graceful_shutdown::SubsystemHandle;
 
-use crate::radar::{Legend, Lookup, Radars};
+use crate::radar::{Legend, Radars};
 use crate::VERSION;
 
 #[derive(Error, Debug)]

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{fmt, io};
 use tokio::net::UdpSocket;
+use tokio::sync::mpsc::Sender;
 use tokio::time::{sleep, sleep_until, Instant};
 use tokio_graceful_shutdown::SubsystemHandle;
 
@@ -13,15 +14,16 @@ use crate::radar::{DopplerMode, RadarError, RadarInfo};
 use crate::util::{c_wide_string, create_multicast};
 
 use super::command::{self, Command};
-use super::{Model, NavicoSettings};
+use super::{DataUpdate, Model, NavicoSettings};
 
-pub struct Receive {
+pub struct NavicoReportReceiver {
     info: RadarInfo,
     key: String,
     buf: Vec<u8>,
     sock: Option<UdpSocket>,
     settings: Arc<NavicoSettings>,
     command_sender: Command,
+    data_tx: Sender<DataUpdate>,
     subtype_timeout: Instant,
     subtype_repeat: Duration,
 }
@@ -138,10 +140,15 @@ impl RadarReport8_21 {
 
 const REPORT_08_C4_18_OR_21: u8 = 0x08;
 
-impl Receive {
-    pub fn new(info: RadarInfo, settings: Arc<NavicoSettings>, command_sender: Command) -> Receive {
+impl NavicoReportReceiver {
+    pub fn new(
+        info: RadarInfo,
+        settings: Arc<NavicoSettings>,
+        command_sender: Command,
+        data_tx: Sender<DataUpdate>,
+    ) -> NavicoReportReceiver {
         let key = info.key();
-        Receive {
+        NavicoReportReceiver {
             key: key,
             info: info,
             buf: Vec::with_capacity(1024),
@@ -150,6 +157,7 @@ impl Receive {
             command_sender,
             subtype_timeout: Instant::now(),
             subtype_repeat: Duration::from_millis(5000),
+            data_tx,
         }
     }
 
@@ -223,7 +231,7 @@ impl Receive {
         }
     }
 
-    fn process_report(&mut self) -> Result<(), Error> {
+    async fn process_report(&mut self) -> Result<(), Error> {
         let data = &self.buf;
 
         trace!("{}: report received: {:02X?}", self.key, data);
@@ -238,13 +246,13 @@ impl Receive {
         let report_identification = data[0];
         match report_identification {
             REPORT_01_C4_18 => {
-                return self.process_report_01();
+                return self.process_report_01().await;
             }
             REPORT_03_C4_129 => {
-                return self.process_report_03();
+                return self.process_report_03().await;
             }
             REPORT_08_C4_18_OR_21 => {
-                return self.process_report_08();
+                return self.process_report_08().await;
             }
             _ => {
                 bail!(
@@ -256,7 +264,7 @@ impl Receive {
         };
     }
 
-    fn process_report_01(&mut self) -> Result<(), Error> {
+    async fn process_report_01(&mut self) -> Result<(), Error> {
         let report = RadarReport1_18::transmute(&self.buf)?;
 
         let status: Result<Status, _> = report.status.try_into();
@@ -267,7 +275,7 @@ impl Receive {
         Ok(())
     }
 
-    fn process_report_03(&mut self) -> Result<(), Error> {
+    async fn process_report_03(&mut self) -> Result<(), Error> {
         let report = RadarReport3_129::transmute(&self.buf)?;
         let model = report.model;
         let hours = u32::from_le_bytes(report.hours);
@@ -291,6 +299,11 @@ impl Receive {
                     if let Some(info) = radars.info.get_mut(&self.key) {
                         info.model = Some(format!("{}", model));
                         info.set_legend(model == Model::HALO);
+                        if let Some(legend) = &info.legend {
+                            self.data_tx
+                                .send(DataUpdate::Legend(legend.clone()))
+                                .await?;
+                        }
                     }
                 }
             }
@@ -301,7 +314,7 @@ impl Receive {
         Ok(())
     }
 
-    fn process_report_08(&mut self) -> Result<(), Error> {
+    async fn process_report_08(&mut self) -> Result<(), Error> {
         let data = &self.buf;
 
         if data.len() != 18 && data.len() != 21 {
@@ -342,9 +355,10 @@ impl Receive {
                 }
                 Ok(doppler_mode) => {
                     debug!(
-                        "{}: doppler state={} speed={}",
+                        "{}: doppler mode={} speed={}",
                         self.key, doppler_mode, doppler_speed
                     );
+                    self.data_tx.send(DataUpdate::Doppler(doppler_mode)).await?;
                 }
             }
         }
