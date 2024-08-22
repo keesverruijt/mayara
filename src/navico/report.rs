@@ -9,14 +9,14 @@ use tokio::net::UdpSocket;
 use tokio::time::{sleep, sleep_until, Instant};
 use tokio_graceful_shutdown::SubsystemHandle;
 
-use crate::radar::{DopplerMode, RadarLocationInfo};
+use crate::radar::{DopplerMode, RadarInfo};
 use crate::util::{c_wide_string, create_multicast};
 
 use super::command::{self, Command};
 use super::{Model, NavicoSettings};
 
 pub struct Receive {
-    info: RadarLocationInfo,
+    info: RadarInfo,
     key: String,
     buf: Vec<u8>,
     sock: Option<UdpSocket>,
@@ -139,11 +139,7 @@ impl RadarReport8_21 {
 const REPORT_08_C4_18_OR_21: u8 = 0x08;
 
 impl Receive {
-    pub fn new(
-        info: RadarLocationInfo,
-        settings: Arc<NavicoSettings>,
-        command_sender: Command,
-    ) -> Receive {
+    pub fn new(info: RadarInfo, settings: Arc<NavicoSettings>, command_sender: Command) -> Receive {
         let key = info.key();
         Receive {
             key: key,
@@ -287,6 +283,7 @@ impl Receive {
                     let mut radars = self.settings.radars.write().unwrap();
                     if let Some(info) = radars.info.get_mut(&self.key) {
                         info.model = Some(format!("{}", model));
+                        info.set_legend(model == Model::HALO);
                     }
                 }
             }

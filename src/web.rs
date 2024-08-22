@@ -10,9 +10,8 @@ use axum::{
 use log::info;
 use miette::Result;
 use serde::Serialize;
-use serde_with::skip_serializing_none;
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fmt, io,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::{Arc, RwLock},
@@ -21,7 +20,7 @@ use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio_graceful_shutdown::SubsystemHandle;
 
-use crate::radar::Radars;
+use crate::radar::{Legend, Lookup, Radars};
 use crate::VERSION;
 
 #[derive(Error, Debug)]
@@ -86,145 +85,33 @@ async fn root() -> String {
 }
 
 #[derive(Serialize)]
-enum PixelType {
-    Normal,
-    History,
-    TargetBorder,
-    DopplerApproaching,
-    DopplerReceding,
-}
-
-struct Colour {
-    r: u8,
-    g: u8,
-    b: u8,
-    a: u8,
-}
-
-impl fmt::Display for Colour {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "#{:02x}{:02x}{:02x}{:02x}",
-            self.r, self.g, self.b, self.a
-        )
-    }
-}
-
-use serde::ser::Serializer;
-
-impl Serialize for Colour {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
-    }
-}
-
-#[skip_serializing_none]
-#[derive(Serialize)]
-struct Lookup {
-    r#type: PixelType,
-    colour: Colour,
-}
-
-#[derive(Serialize)]
 struct RadarApi {
     id: String,
     name: String,
     spokes: u16,
     max_spoke_len: u16,
     stream_url: String,
-    legend: HashMap<String, Lookup>,
+    legend: Legend,
 }
 
 impl RadarApi {
-    fn new(id: String, name: &str, spokes: u16, max_spoke_len: u16, stream_url: String) -> Self {
+    fn new(
+        id: String,
+        name: &str,
+        spokes: u16,
+        max_spoke_len: u16,
+        stream_url: String,
+        legend: Legend,
+    ) -> Self {
         RadarApi {
             id: id,
             name: name.to_owned(),
             spokes,
             max_spoke_len,
             stream_url,
-            legend: HashMap::new(),
+            legend,
         }
     }
-
-    fn set_legend(&mut self, legend: Vec<Lookup>) {
-        let mut l = HashMap::new();
-        let mut n = 0;
-        for lookup in legend {
-            l.insert(n.to_string(), lookup);
-            n += 1;
-        }
-        self.legend = l;
-    }
-}
-
-fn abs(n: f32) -> f32 {
-    if n >= 0. {
-        n
-    } else {
-        -n
-    }
-}
-
-fn fake_legend() -> Vec<Lookup> {
-    let mut legend = Vec::new();
-
-    for history in 0..32 {
-        let colour = Colour {
-            r: 255,
-            g: 255,
-            b: 255,
-            a: history * 4,
-        };
-        legend.push(Lookup {
-            r#type: PixelType::History,
-            colour,
-        });
-    }
-    for v in 0..13 {
-        legend.push(Lookup {
-            r#type: PixelType::Normal,
-            colour: Colour {
-                r: (v as f32 * (200. / 13.)) as u8,
-                g: (abs(7. - v as f32) * (200. / 13.)) as u8,
-                b: ((13 - v) as f32 * (200. / 13.)) as u8,
-                a: 255,
-            },
-        });
-    }
-    legend.push(Lookup {
-        r#type: PixelType::TargetBorder,
-        colour: Colour {
-            r: 200,
-            g: 200,
-            b: 200,
-            a: 255,
-        },
-    });
-    legend.push(Lookup {
-        r#type: PixelType::DopplerApproaching,
-        colour: Colour {
-            r: 0,
-            g: 200,
-            b: 200,
-            a: 255,
-        },
-    });
-    legend.push(Lookup {
-        r#type: PixelType::DopplerReceding,
-        colour: Colour {
-            r: 0x90,
-            g: 0xd0,
-            b: 0xf0,
-            a: 255,
-        },
-    });
-
-    legend
 }
 
 //
@@ -237,21 +124,29 @@ async fn get_radars(State(state): State<Web>, _request: Body) -> Response {
             let x = &radars.info;
             let mut api: HashMap<String, RadarApi> = HashMap::new();
             for (_key, value) in x.iter() {
-                let id = format!("radar-{}", value.id);
-                let url = format!("{}stream/{}", state.url.as_ref().unwrap(), id);
-                let mut name = value.brand.to_owned();
-                if value.model.is_some() {
-                    name.push(' ');
-                    name.push_str(value.model.as_ref().unwrap());
+                if let Some(legend) = &value.legend {
+                    let id = format!("radar-{}", value.id);
+                    let url = format!("{}stream/{}", state.url.as_ref().unwrap(), id);
+                    let mut name = value.brand.to_owned();
+                    if value.model.is_some() {
+                        name.push(' ');
+                        name.push_str(value.model.as_ref().unwrap());
+                    }
+                    if value.which.is_some() {
+                        name.push(' ');
+                        name.push_str(value.which.as_ref().unwrap());
+                    }
+                    let v = RadarApi::new(
+                        id.to_owned(),
+                        &name,
+                        value.spokes,
+                        value.max_spoke_len,
+                        url,
+                        legend.clone(),
+                    );
+
+                    api.insert(id.to_owned(), v);
                 }
-                if value.which.is_some() {
-                    name.push(' ');
-                    name.push_str(value.which.as_ref().unwrap());
-                }
-                let mut v =
-                    RadarApi::new(id.to_owned(), &name, value.spokes, value.max_spoke_len, url);
-                v.set_legend(fake_legend());
-                api.insert(id.to_owned(), v);
             }
             Json(api).into_response()
         }
@@ -281,27 +176,5 @@ where
 {
     fn from(err: E) -> Self {
         Self(err.into())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::{fake_legend, RadarApi};
-
-    #[test]
-    fn legend() {
-        let mut v = RadarApi::new(
-            "Navico Halo".to_owned(),
-            "Halo A",
-            2048,
-            1024,
-            "http://bla".to_string(),
-        );
-        v.set_legend(fake_legend());
-
-        let json = json!(v).to_string();
-        println!("{}", json);
     }
 }

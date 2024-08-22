@@ -9,7 +9,7 @@ use tokio::time::sleep;
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::locator::LocatorId;
-use crate::radar::{DopplerMode, RadarLocationInfo, Statistics};
+use crate::radar::*;
 use crate::util::{create_multicast, PrintableSpoke};
 
 use super::NavicoSettings;
@@ -105,53 +105,33 @@ enum LookupSpokeEnum {
     HighApproaching = 5,
 }
 
-// Make space for BLOB_HISTORY_COLORS
-const LOOKUP_NIBBLE_TO_BYTE: [u8; 16] = [
-    0,    // 0
-    0x32, // 1
-    0x40, // 2
-    0x4e, // 3
-    0x5c, // 4
-    0x6a, // 5
-    0x78, // 6
-    0x86, // 7
-    0x94, // 8
-    0xa2, // 9
-    0xb0, // a
-    0xbe, // b
-    0xcc, // c
-    0xda, // d
-    0xe8, // e
-    0xf4, // f
-];
-
 const LOOKUP_PIXEL_VALUE: [[u8; 256]; 6] = {
     let mut lookup: [[u8; 256]; 6] = [[0; 256]; 6];
     // Cannot use for() in const expr, so use while instead
     let mut j: usize = 0;
     while j < 256 {
-        let low: u8 = LOOKUP_NIBBLE_TO_BYTE[j & 0x0f];
-        let high: u8 = LOOKUP_NIBBLE_TO_BYTE[(j >> 4) & 0x0f];
+        let low: u8 = j as u8 & 0x0f;
+        let high: u8 = (j as u8 >> 4) & 0x0f;
 
-        lookup[LookupSpokeEnum::LowNormal as usize][j] = low;
+        lookup[LookupSpokeEnum::LowNormal as usize][j] = BLOB_NORMAL_START + low;
         lookup[LookupSpokeEnum::LowBoth as usize][j] = match low {
-            0xf4 => 0xff,
-            0xe8 => 0xfe,
-            _ => low,
+            0x0f => BLOB_DOPPLER_APPROACHING,
+            0x0e => BLOB_DOPPLER_RECEDING,
+            _ => BLOB_NORMAL_START + low,
         };
         lookup[LookupSpokeEnum::LowApproaching as usize][j] = match low {
-            0xf4 => 0xff,
-            _ => low,
+            0x0f => BLOB_DOPPLER_APPROACHING,
+            _ => BLOB_NORMAL_START + low,
         };
         lookup[LookupSpokeEnum::HighNormal as usize][j] = high;
-        lookup[LookupSpokeEnum::HighBoth as usize][j] = match low {
-            0xf4 => 0xff,
-            0xe8 => 0xfe,
-            _ => high,
+        lookup[LookupSpokeEnum::HighBoth as usize][j] = match high {
+            0x0f => BLOB_DOPPLER_APPROACHING,
+            0x0e => BLOB_DOPPLER_RECEDING,
+            _ => BLOB_NORMAL_START + high,
         };
-        lookup[LookupSpokeEnum::HighApproaching as usize][j] = match low {
-            0xf4 => 0xff,
-            _ => high,
+        lookup[LookupSpokeEnum::HighApproaching as usize][j] = match high {
+            0x0f => BLOB_DOPPLER_APPROACHING,
+            _ => BLOB_NORMAL_START + high,
         };
         j += 1;
     }
@@ -160,14 +140,14 @@ const LOOKUP_PIXEL_VALUE: [[u8; 256]; 6] = {
 
 pub struct Receive {
     statistics: Statistics,
-    info: RadarLocationInfo,
+    info: RadarInfo,
     buf: Vec<u8>,
     sock: Option<UdpSocket>,
     settings: Arc<NavicoSettings>,
 }
 
 impl Receive {
-    pub fn new(info: RadarLocationInfo, settings: Arc<NavicoSettings>) -> Receive {
+    pub fn new(info: RadarInfo, settings: Arc<NavicoSettings>) -> Receive {
         Receive {
             statistics: Statistics { broken_packets: 0 },
             info: info,

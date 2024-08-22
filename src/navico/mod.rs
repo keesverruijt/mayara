@@ -10,7 +10,7 @@ use std::{fmt, io};
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
 use crate::locator::{LocatorId, RadarListenAddress, RadarLocator};
-use crate::radar::{located, DopplerMode, RadarLocationInfo, Radars};
+use crate::radar::{located, DopplerMode, RadarInfo, Radars};
 use crate::util::c_string;
 use crate::util::PrintableSlice;
 
@@ -32,6 +32,15 @@ impl From<NetworkSocketAddrV4> for SocketAddrV4 {
         SocketAddrV4::new(item.addr, u16::from_be_bytes(item.port))
     }
 }
+
+/* NAVICO API SPOKES */
+/*
+ * Data coming from radar is always 4 bits, packed two per byte.
+ * The values 14 and 15 may be special depending on DopplerMode (only on HALO).
+ *
+ * To support targets, target trails and doppler we map those values 0..15 to
+ * a
+ */
 
 /*
 RADAR REPORTS
@@ -223,7 +232,7 @@ const NAVICO_BEACON_SINGLE_SIZE: usize = size_of::<NavicoBeaconSingle>();
 const NAVICO_BEACON_DUAL_SIZE: usize = size_of::<NavicoBeaconDual>();
 const NAVICO_BEACON_BR24_SIZE: usize = size_of::<BR24Beacon>();
 
-fn found(info: RadarLocationInfo, radars: &Arc<RwLock<Radars>>, subsys: &SubsystemHandle) {
+fn found(info: RadarInfo, radars: &Arc<RwLock<Radars>>, subsys: &SubsystemHandle) {
     if let Some(info) = located(info, radars) {
         // It's new, start the RadarProcessor thread
         let navico_settings = Arc::new(NavicoSettings {
@@ -310,12 +319,13 @@ fn process_beacon_report(
                     let radar_data: SocketAddrV4 = data.a.data.into();
                     let radar_report: SocketAddrV4 = data.a.report.into();
                     let radar_send: SocketAddrV4 = data.a.send.into();
-                    let location_info: RadarLocationInfo = RadarLocationInfo::new(
+                    let location_info: RadarInfo = RadarInfo::new(
                         LocatorId::Gen3Plus,
                         "Navico",
                         None,
                         Some(serial_no),
                         Some("A"),
+                        16,
                         2048,
                         1024,
                         radar_addr.into(),
@@ -329,12 +339,13 @@ fn process_beacon_report(
                     let radar_data: SocketAddrV4 = data.b.data.into();
                     let radar_report: SocketAddrV4 = data.b.report.into();
                     let radar_send: SocketAddrV4 = data.b.send.into();
-                    let location_info: RadarLocationInfo = RadarLocationInfo::new(
+                    let location_info: RadarInfo = RadarInfo::new(
                         LocatorId::Gen3Plus,
                         "Navico",
                         None,
                         Some(serial_no),
                         Some("B"),
+                        16,
                         2048,
                         1024,
                         radar_addr.into(),
@@ -362,12 +373,13 @@ fn process_beacon_report(
                     let radar_data: SocketAddrV4 = data.a.data.into();
                     let radar_report: SocketAddrV4 = data.a.report.into();
                     let radar_send: SocketAddrV4 = data.a.send.into();
-                    let location_info: RadarLocationInfo = RadarLocationInfo::new(
+                    let location_info: RadarInfo = RadarInfo::new(
                         LocatorId::Gen3Plus,
                         "Navico",
                         None,
                         Some(serial_no),
                         None,
+                        16,
                         2048,
                         1024,
                         radar_addr.into(),
@@ -395,12 +407,13 @@ fn process_beacon_report(
                     let radar_data: SocketAddrV4 = data.data.into();
                     let radar_report: SocketAddrV4 = data.report.into();
                     let radar_send: SocketAddrV4 = data.send.into();
-                    let location_info: RadarLocationInfo = RadarLocationInfo::new(
+                    let location_info: RadarInfo = RadarInfo::new(
                         LocatorId::GenBR24,
                         "Navico",
                         Some("BR24"),
                         Some(serial_no),
                         None,
+                        16,
                         2048,
                         1024,
                         radar_addr.into(),

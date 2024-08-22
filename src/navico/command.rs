@@ -3,7 +3,7 @@ use std::io;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 
-use crate::radar::RadarLocationInfo;
+use crate::radar::RadarInfo;
 use crate::util::create_multicast_send;
 
 use super::NavicoSettings;
@@ -15,13 +15,13 @@ pub const _REQUEST_02_08_REPORT: [u8; 2] = [0x03, 0xc2]; // This causes the rada
 
 pub struct Command {
     key: String,
-    info: RadarLocationInfo,
+    info: RadarInfo,
     sock: Option<UdpSocket>,
     settings: Arc<NavicoSettings>,
 }
 
 impl Command {
-    pub fn new(info: RadarLocationInfo, settings: Arc<NavicoSettings>) -> Self {
+    pub fn new(info: RadarInfo, settings: Arc<NavicoSettings>) -> Self {
         Command {
             key: info.key(),
             info: info,

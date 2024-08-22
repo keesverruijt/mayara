@@ -1,5 +1,7 @@
 use enum_primitive_derive::Primitive;
 use log::info;
+use serde::Serialize;
+use serde_json::ser;
 use std::{
     collections::HashMap,
     fmt::{self, Display, Write},
@@ -9,31 +11,104 @@ use std::{
 
 use crate::locator::LocatorId;
 
+#[derive(Serialize, Clone, Debug)]
+enum PixelType {
+    History,
+    TargetBorder,
+    DopplerApproaching,
+    DopplerReceding,
+    Normal,
+}
+
+// The Target Trails code is the same on all radars, and all spoke
+// pixel values contain [0..32> as history values.
+pub const BLOB_HISTORY_COLORS: u8 = 32;
+pub const BLOB_TARGET_BORDER: u8 = 32;
+pub const BLOB_DOPPLER_APPROACHING: u8 = 33;
+pub const BLOB_DOPPLER_RECEDING: u8 = 34;
+pub const BLOB_NORMAL_START: u8 = 35;
+
+pub fn map_pixel_to_type(p: u8) -> PixelType {
+    match p {
+        0..BLOB_HISTORY_COLORS => PixelType::History,
+        BLOB_TARGET_BORDER => PixelType::TargetBorder,
+        BLOB_DOPPLER_APPROACHING => PixelType::DopplerApproaching,
+        BLOB_DOPPLER_RECEDING => PixelType::DopplerReceding,
+        _ => PixelType::Normal,
+    }
+}
+
 #[derive(Clone, Debug)]
-pub struct RadarLocationInfo {
+struct Colour {
+    r: u8,
+    g: u8,
+    b: u8,
+}
+
+impl fmt::Display for Colour {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
+    }
+}
+
+use serde::ser::Serializer;
+
+impl Serialize for Colour {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Lookup {
+    r#type: PixelType,
+    colour: Colour,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct Legend {
+    pub pixels: Vec<Lookup>,
+    #[serde(skip_serializing)]
+    pub history_start: u8,
+    #[serde(skip_serializing)]
+    pub border: u8,
+    #[serde(skip_serializing)]
+    pub doppler_approaching: u8,
+    #[serde(skip_serializing)]
+    pub doppler_receding: u8,
+}
+
+#[derive(Clone, Debug)]
+pub struct RadarInfo {
     key: String,
     pub id: usize,
     pub locator_id: LocatorId,
     pub brand: String,
     pub model: Option<String>,
-    pub serial_no: Option<String>, // Serial # for this radar
-    pub which: Option<String>,     // "A", "B" or None
-    pub spokes: u16,
-    pub max_spoke_len: u16,
-    pub addr: SocketAddrV4,            // The assigned IP address of the radar
-    pub nic_addr: Ipv4Addr,            // IPv4 address of NIC via which radar can be reached
-    pub spoke_data_addr: SocketAddrV4, // Where the radar will send data spokes
-    pub report_addr: SocketAddrV4,     // Where the radar will send reports
+    pub serial_no: Option<String>,       // Serial # for this radar
+    pub which: Option<String>,           // "A", "B" or None
+    pub pixel_values: u8,                // How many values per pixel, 0..220 or so
+    pub spokes: u16,                     // How many spokes per rotation
+    pub max_spoke_len: u16,              // Fixed for some radars, variable for others
+    pub addr: SocketAddrV4,              // The assigned IP address of the radar
+    pub nic_addr: Ipv4Addr,              // IPv4 address of NIC via which radar can be reached
+    pub spoke_data_addr: SocketAddrV4,   // Where the radar will send data spokes
+    pub report_addr: SocketAddrV4,       // Where the radar will send reports
     pub send_command_addr: SocketAddrV4, // Where displays will send commands to the radar
+    pub legend: Option<Legend>,          // What pixel values mean
 }
 
-impl RadarLocationInfo {
+impl RadarInfo {
     pub fn new(
         locator_id: LocatorId,
         brand: &str,
         model: Option<&str>,
         serial_no: Option<&str>,
         which: Option<&str>,
+        pixel_values: u8, // How many values per pixel, 0..220 or so
         spokes: u16,
         max_spoke_len: u16,
         addr: SocketAddrV4,
@@ -42,7 +117,7 @@ impl RadarLocationInfo {
         report_addr: SocketAddrV4,
         send_command_addr: SocketAddrV4,
     ) -> Self {
-        RadarLocationInfo {
+        RadarInfo {
             key: {
                 let mut key = brand.to_string();
 
@@ -65,6 +140,7 @@ impl RadarLocationInfo {
             model: model.map(String::from),
             serial_no: serial_no.map(String::from),
             which: which.map(String::from),
+            pixel_values,
             spokes,
             max_spoke_len,
             addr,
@@ -72,15 +148,20 @@ impl RadarLocationInfo {
             spoke_data_addr,
             report_addr,
             send_command_addr,
+            legend: None,
         }
     }
 
     pub fn key(&self) -> String {
         self.key.to_owned()
     }
+
+    pub fn set_legend(&mut self, doppler: bool) {
+        self.legend = Some(default_legend(doppler, self.pixel_values));
+    }
 }
 
-impl Display for RadarLocationInfo {
+impl Display for RadarInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -112,7 +193,7 @@ impl Display for RadarLocationInfo {
 
 #[derive(Clone, Debug)]
 pub struct Radars {
-    pub info: HashMap<String, RadarLocationInfo>,
+    pub info: HashMap<String, RadarInfo>,
 }
 
 impl Radars {
@@ -143,10 +224,7 @@ impl fmt::Display for DopplerMode {
 }
 
 // A radar has been found
-pub fn located(
-    new_info: RadarLocationInfo,
-    radars: &Arc<RwLock<Radars>>,
-) -> Option<RadarLocationInfo> {
+pub fn located(new_info: RadarInfo, radars: &Arc<RwLock<Radars>>) -> Option<RadarInfo> {
     let key = new_info.key.to_owned();
     let mut radars = radars.write().unwrap();
     let count = radars.info.len();
@@ -159,5 +237,130 @@ pub fn located(
         Some(entry.clone())
     } else {
         None
+    }
+}
+
+fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
+    let mut legend = Legend {
+        pixels: Vec::new(),
+        history_start: 0,
+        border: 0,
+        doppler_approaching: 0,
+        doppler_receding: 0,
+    };
+
+    let mut pixel_values = pixel_values;
+    if pixel_values > 255 - 32 - 2 {
+        pixel_values = 255 - 32 - 2;
+    }
+
+    const WHITE: f32 = 256.;
+    let pixels_with_color = pixel_values - 1;
+    let start = WHITE / 3.;
+    let delta: f32 = WHITE * 2. / (pixels_with_color as f32);
+    let one_third = pixels_with_color / 3;
+    let two_thirds = one_third * 2;
+
+    // No return is black
+    legend.pixels.push(Lookup {
+        r#type: PixelType::Normal,
+        colour: Colour {
+            // red starts at 2/3 and peaks at end
+            r: 0,
+            // green speaks at 2/3
+            g: 0,
+            // blue peaks at 1/3 and is zero by 2/3
+            b: 0,
+        },
+    });
+
+    for v in 1..pixel_values {
+        legend.pixels.push(Lookup {
+            r#type: PixelType::Normal,
+            colour: Colour {
+                // red starts at 2/3 and peaks at end
+                r: if v >= two_thirds {
+                    (start + (v - two_thirds) as f32 * delta) as u8
+                } else {
+                    0
+                },
+                // green starts at 1/3 and peaks at 2/3
+                g: if v >= one_third && v < two_thirds {
+                    (start + (v - one_third) as f32 * delta) as u8
+                } else {
+                    0
+                },
+                // blue peaks at 1/3
+                b: if v < one_third {
+                    (start + v as f32 * (WHITE / pixel_values as f32)) as u8
+                } else {
+                    0
+                },
+            },
+        });
+    }
+
+    legend.history_start = legend.pixels.len() as u8;
+    const START_DENSITY: u8 = 255; // Target trail starts as white
+    const END_DENSITY: u8 = 63; // Ends as gray
+    const DELTA_INTENSITY: u8 = (START_DENSITY - END_DENSITY) / BLOB_HISTORY_COLORS;
+    let mut density = START_DENSITY;
+    for _history in 0..BLOB_HISTORY_COLORS {
+        let colour = Colour {
+            r: density,
+            g: density,
+            b: density,
+        };
+        density -= DELTA_INTENSITY;
+        legend.pixels.push(Lookup {
+            r#type: PixelType::History,
+            colour,
+        });
+    }
+
+    legend.border = legend.pixels.len() as u8;
+    legend.pixels.push(Lookup {
+        r#type: PixelType::TargetBorder,
+        colour: Colour {
+            r: 200,
+            g: 200,
+            b: 200,
+        },
+    });
+
+    if doppler {
+        legend.doppler_approaching = legend.pixels.len() as u8;
+        legend.pixels.push(Lookup {
+            r#type: PixelType::DopplerApproaching,
+            colour: Colour {
+                r: 0,
+                g: 200,
+                b: 200,
+            },
+        });
+        legend.doppler_receding = legend.pixels.len() as u8;
+        legend.pixels.push(Lookup {
+            r#type: PixelType::DopplerReceding,
+            colour: Colour {
+                r: 0x90,
+                g: 0xd0,
+                b: 0xf0,
+            },
+        });
+    }
+
+    legend
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::default_legend;
+
+    #[test]
+    fn legend() {
+        let legend = default_legend(true, 16);
+        let json = serde_json::to_string_pretty(&legend).unwrap();
+        println!("{}", json);
     }
 }
