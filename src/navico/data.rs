@@ -36,13 +36,16 @@ const NAVICO_SPOKES_RAW: u16 = 4096;
 */
 const HEADING_TRUE_FLAG: u16 = 0x4000;
 const HEADING_MASK: u16 = NAVICO_SPOKES_RAW - 1;
+fn is_heading_true(x: u16) -> bool {
+    x & HEADING_TRUE_FLAG != 0
+}
 fn is_valid_heading_value(x: u16) -> bool {
     x & !(HEADING_TRUE_FLAG | HEADING_MASK) == 0
 }
-fn extract_heading_value(x: u16) -> u16 {
-    match is_valid_heading_value(x) {
-        true => x & HEADING_MASK,
-        false => 0xffff,
+fn extract_heading_value(x: u16) -> Option<u16> {
+    match is_valid_heading_value(x) && is_heading_true(x) {
+        true => Some(x & HEADING_MASK),
+        false => None,
     }
 }
 
@@ -288,7 +291,7 @@ impl NavicoDataReceiver {
 
                 if let Some((range, angle, heading)) = self.validate_header(header_slice, scanline)
                 {
-                    debug!("range {} angle {} heading {}", range, angle, heading);
+                    debug!("range {} angle {} heading {:?}", range, angle, heading);
                     debug!(
                         "Received {:04} spoke {}",
                         scanline,
@@ -328,7 +331,11 @@ impl NavicoDataReceiver {
         }
     }
 
-    fn validate_header(&self, header_slice: &[u8], scanline: usize) -> Option<(u32, u16, i16)> {
+    fn validate_header(
+        &self,
+        header_slice: &[u8],
+        scanline: usize,
+    ) -> Option<(u32, u16, Option<u16>)> {
         match self.info.locator_id {
             LocatorId::Gen3Plus => match deserialize::<Br4gHeader>(&header_slice) {
                 Ok(header) => {
@@ -355,7 +362,7 @@ impl NavicoDataReceiver {
         }
     }
 
-    fn validate_4g_header(header: &Br4gHeader) -> Option<(u32, u16, i16)> {
+    fn validate_4g_header(header: &Br4gHeader) -> Option<(u32, u16, Option<u16>)> {
         if header.header_len != RADAR_LINE_HEADER_LENGTH as u8 {
             warn!(
                 "Spoke with illegal header length ({}) ignored",
@@ -369,7 +376,7 @@ impl NavicoDataReceiver {
         }
 
         let heading = u16::from_le_bytes(header.heading);
-        let angle = i16::from_le_bytes(header.angle);
+        let angle = u16::from_le_bytes(header.angle);
         let large_range = u16::from_le_bytes(header.large_range);
         let small_range = u16::from_le_bytes(header.small_range);
 
@@ -384,10 +391,10 @@ impl NavicoDataReceiver {
         };
 
         let heading = extract_heading_value(heading);
-        Some((range, heading, angle))
+        Some((range, angle, heading))
     }
 
-    fn validate_br24_header(header: &Br24Header) -> Option<(u32, u16, i16)> {
+    fn validate_br24_header(header: &Br24Header) -> Option<(u32, u16, Option<u16>)> {
         if header.header_len != RADAR_LINE_HEADER_LENGTH as u8 {
             warn!(
                 "Spoke with illegal header length ({}) ignored",
@@ -401,9 +408,12 @@ impl NavicoDataReceiver {
         }
 
         let heading = u16::from_le_bytes(header.heading);
-        let angle = i16::from_le_bytes(header.angle);
+        let angle = u16::from_le_bytes(header.angle);
         let range = u32::from_le_bytes(header.range);
-        Some((range, heading, angle))
+
+        let heading = extract_heading_value(heading);
+
+        Some((range, angle, heading))
     }
 
     fn process_spoke(
@@ -411,7 +421,7 @@ impl NavicoDataReceiver {
         pixel_to_blob: &[[u8; 256]; 6],
         range: u32,
         angle: u16,
-        heading: i16,
+        heading: Option<u16>,
         spoke: &[u8],
     ) -> Spoke {
         // Convert the spoke data to bytes
@@ -434,7 +444,7 @@ impl NavicoDataReceiver {
         }
 
         trace!(
-            "Spoke {}/{}/{} len {}",
+            "Spoke {}/{:?}/{} len {}",
             range,
             heading,
             angle,
@@ -446,11 +456,11 @@ impl NavicoDataReceiver {
         let mut spoke = Spoke::new();
         spoke.range = range;
         spoke.angle = angle as u32;
-        spoke.bearing = heading as u32;
+        spoke.bearing = heading.map(|h| h as u32);
         spoke.time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+            .map(|d| d.as_millis() as u64)
+            .ok();
         spoke.data = generic_spoke;
 
         spoke
