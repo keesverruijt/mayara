@@ -2,6 +2,7 @@ use bincode::deserialize;
 use log::{debug, trace, warn};
 use protobuf::Message;
 use serde::Deserialize;
+use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{io, time::Duration};
 use tokio::net::UdpSocket;
@@ -118,10 +119,15 @@ pub struct NavicoDataReceiver {
     doppler: DopplerMode,
     legend: Option<Legend>,
     pixel_to_blob: Option<[[u8; 256]; 6]>,
+    record_spokes: usize,
 }
 
 impl NavicoDataReceiver {
-    pub fn new(info: RadarInfo, rx: Receiver<DataUpdate>) -> NavicoDataReceiver {
+    pub fn new(
+        info: RadarInfo,
+        rx: Receiver<DataUpdate>,
+        record_spokes: usize,
+    ) -> NavicoDataReceiver {
         let key = info.key();
 
         NavicoDataReceiver {
@@ -134,6 +140,7 @@ impl NavicoDataReceiver {
             doppler: DopplerMode::None,
             legend: None,
             pixel_to_blob: None,
+            record_spokes,
         }
     }
 
@@ -306,6 +313,10 @@ impl NavicoDataReceiver {
         message
             .write_to_vec(&mut bytes)
             .expect("Cannot write RadarMessage to vec");
+        if self.record_spokes > 0 {
+            io::stdout().write_all(&bytes).unwrap();
+            self.record_spokes -= 1;
+        }
 
         match self.info.radar_message_tx.send(bytes) {
             Err(e) => {

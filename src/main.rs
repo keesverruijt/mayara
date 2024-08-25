@@ -20,14 +20,22 @@ mod web;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-#[derive(Parser)]
-struct Cli {
+#[derive(Parser, Clone, Debug)]
+pub struct Cli {
     #[clap(flatten)]
     verbose: clap_verbosity_flag::Verbosity<clap_verbosity_flag::InfoLevel>,
+
+    /// Port for webserver
     #[arg(short, long, default_value_t = 6502)]
     port: u16,
+
+    /// Limit radar location to a single interface
     #[arg(short, long)]
     interface: Option<String>,
+
+    /// Record first n revolutions of first radar to stdout
+    #[arg(long)]
+    record: Option<usize>,
 }
 
 #[tokio::main]
@@ -44,8 +52,8 @@ async fn main() -> Result<()> {
     let radars = Radars::new();
     let radars_clone1 = radars.clone();
 
-    let locator = Locator::new(radars, args.interface);
     let web = Web::new(args.port, radars_clone1);
+    let locator = Locator::new(radars, args);
 
     Toplevel::new(|s| async move {
         s.start(SubsystemBuilder::new("Locator", |a| locator.run(a)));

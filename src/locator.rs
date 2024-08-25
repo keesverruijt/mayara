@@ -24,7 +24,7 @@ use tokio::time::sleep;
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::radar::{RadarError, Radars};
-use crate::{navico, util};
+use crate::{navico, util, Cli};
 
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Debug)]
 pub enum LocatorId {
@@ -54,6 +54,7 @@ pub struct RadarListenAddress {
         &Ipv4Addr,   // nic_addr
         &Arc<RwLock<Radars>>,
         &SubsystemHandle,
+        &Cli,
     ) -> Result<(), io::Error>,
 }
 
@@ -73,6 +74,7 @@ impl RadarListenAddress {
             &Ipv4Addr,
             &Arc<RwLock<Radars>>,
             &SubsystemHandle,
+            &Cli,
         ) -> Result<(), io::Error>,
     ) -> RadarListenAddress {
         RadarListenAddress {
@@ -94,6 +96,7 @@ struct LocatorInfo {
         &Ipv4Addr,   // nic_addr
         &Arc<RwLock<Radars>>,
         &SubsystemHandle,
+        &Cli,
     ) -> Result<(), io::Error>,
 }
 
@@ -107,7 +110,7 @@ pub trait RadarLocator {
 }
 
 struct InterfaceState {
-    interface: Option<String>, // If set, listen only here (even if lo0 or lo)
+    args: Cli,
     active_nic_addresses: Vec<Ipv4Addr>,
     inactive_nic_names: HashMap<String, u32>,
     lost_nic_names: HashMap<String, u32>,
@@ -116,12 +119,12 @@ struct InterfaceState {
 
 pub struct Locator {
     pub radars: Arc<RwLock<Radars>>,
-    pub interface: Option<String>,
+    pub args: Cli,
 }
 
 impl Locator {
-    pub fn new(radars: Arc<RwLock<Radars>>, interface: Option<String>) -> Self {
-        Locator { radars, interface }
+    pub fn new(radars: Arc<RwLock<Radars>>, args: Cli) -> Self {
+        Locator { radars, args }
     }
 
     pub async fn run(self, subsys: SubsystemHandle) -> Result<(), RadarError> {
@@ -137,7 +140,7 @@ impl Locator {
 
         info!("Entering loop, listening for radars");
         let mut interface_state = InterfaceState {
-            interface: self.interface,
+            args: self.args,
             active_nic_addresses: Vec::new(),
             inactive_nic_names: HashMap::new(),
             lost_nic_names: HashMap::new(),
@@ -151,7 +154,7 @@ impl Locator {
             let sockets = create_multicast_sockets(&listen_addresses, &mut interface_state);
             let mut set = JoinSet::new();
             if sockets.is_err() {
-                if interface_state.interface.is_some() {
+                if interface_state.args.interface.is_some() {
                     return Err(sockets.err().unwrap());
                 }
                 debug!("No NIC addresses found");
@@ -193,6 +196,7 @@ impl Locator {
                                     &socket.nic_addr,
                                     &radars,
                                     &subsys,
+                                    &interface_state.args,
                                 );
                                 // Respawn this task
                                 spawn_receive(&mut set, socket);
@@ -268,7 +272,7 @@ fn create_multicast_sockets(
     listen_addresses: &Vec<RadarListenAddress>,
     interface_state: &mut InterfaceState,
 ) -> Result<Vec<LocatorInfo>, RadarError> {
-    let only_interface = &interface_state.interface;
+    let only_interface = &interface_state.args.interface;
 
     match NetworkInterface::show() {
         Ok(interfaces) => {
@@ -341,11 +345,11 @@ fn create_multicast_sockets(
                             }
                         }
                     }
-                    if interface_state.interface.is_some()
+                    if interface_state.args.interface.is_some()
                         && interface_state.active_nic_addresses.len() == 0
                     {
                         return Err(RadarError::InterfaceNoV4(
-                            interface_state.interface.clone().unwrap(),
+                            interface_state.args.interface.clone().unwrap(),
                         ));
                     }
                 }
@@ -369,11 +373,11 @@ fn create_multicast_sockets(
             }
             interface_state.first_loop = false;
 
-            if interface_state.interface.is_some()
+            if interface_state.args.interface.is_some()
                 && interface_state.active_nic_addresses.len() == 0
             {
                 return Err(RadarError::InterfaceNotFound(
-                    interface_state.interface.clone().unwrap(),
+                    interface_state.args.interface.clone().unwrap(),
                 ));
             }
             Ok(sockets)

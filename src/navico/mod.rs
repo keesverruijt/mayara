@@ -14,10 +14,13 @@ use crate::locator::{LocatorId, RadarListenAddress, RadarLocator};
 use crate::radar::{located, DopplerMode, Legend, RadarInfo, Radars};
 use crate::util::c_string;
 use crate::util::PrintableSlice;
+use crate::Cli;
 
 mod command;
 mod data;
 mod report;
+
+const NAVICO_SPOKES: usize = 2048;
 
 const NAVICO_BEACON_ADDRESS: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(236, 6, 7, 5)), 6878);
@@ -238,7 +241,7 @@ const NAVICO_BEACON_SINGLE_SIZE: usize = size_of::<NavicoBeaconSingle>();
 const NAVICO_BEACON_DUAL_SIZE: usize = size_of::<NavicoBeaconDual>();
 const NAVICO_BEACON_BR24_SIZE: usize = size_of::<BR24Beacon>();
 
-fn found(info: RadarInfo, radars: &Arc<RwLock<Radars>>, subsys: &SubsystemHandle) {
+fn found(info: RadarInfo, radars: &Arc<RwLock<Radars>>, subsys: &SubsystemHandle, args: &Cli) {
     if let Some(info) = located(info, radars) {
         // It's new, start the RadarProcessor thread
         let navico_settings = Arc::new(NavicoSettings {
@@ -255,7 +258,11 @@ fn found(info: RadarInfo, radars: &Arc<RwLock<Radars>>, subsys: &SubsystemHandle
         let info_clone = info.clone();
         let navico_settings_clone = navico_settings.clone();
 
-        let data_receiver = data::NavicoDataReceiver::new(info, rx_data);
+        let data_receiver = data::NavicoDataReceiver::new(
+            info,
+            rx_data,
+            args.record.map(|n| n * NAVICO_SPOKES).unwrap_or(0),
+        );
         let report_receiver = report::NavicoReportReceiver::new(
             info_clone,
             navico_settings_clone,
@@ -278,6 +285,7 @@ fn process_locator_report(
     via: &Ipv4Addr,
     radars: &Arc<RwLock<Radars>>,
     subsys: &SubsystemHandle,
+    args: &Cli,
 ) -> io::Result<()> {
     if report.len() < 2 {
         return Ok(());
@@ -300,7 +308,7 @@ fn process_locator_report(
     if report[0] == 0x1 && report[1] == 0xB2 {
         // Common Navico message
 
-        return process_beacon_report(report, from, via, radars, subsys);
+        return process_beacon_report(report, from, via, radars, subsys, args);
     }
     Ok(())
 }
@@ -311,6 +319,7 @@ fn process_beacon_report(
     via: &Ipv4Addr,
     radars: &Arc<RwLock<Radars>>,
     subsys: &SubsystemHandle,
+    args: &Cli,
 ) -> Result<(), io::Error> {
     if report.len() < size_of::<BR24Beacon>() {
         debug!(
@@ -346,7 +355,7 @@ fn process_beacon_report(
                         radar_report.into(),
                         radar_send.into(),
                     );
-                    found(location_info, radars, subsys);
+                    found(location_info, radars, subsys, args);
 
                     let radar_data: SocketAddrV4 = data.b.data.into();
                     let radar_report: SocketAddrV4 = data.b.report.into();
@@ -366,7 +375,7 @@ fn process_beacon_report(
                         radar_report.into(),
                         radar_send.into(),
                     );
-                    found(location_info, radars, subsys);
+                    found(location_info, radars, subsys, args);
                 }
             }
             Err(e) => {
@@ -400,7 +409,7 @@ fn process_beacon_report(
                         radar_report.into(),
                         radar_send.into(),
                     );
-                    found(location_info, radars, subsys);
+                    found(location_info, radars, subsys, args);
                 }
             }
             Err(e) => {
@@ -434,7 +443,7 @@ fn process_beacon_report(
                         radar_report.into(),
                         radar_send.into(),
                     );
-                    found(location_info, radars, subsys);
+                    found(location_info, radars, subsys, args);
                 }
             }
             Err(e) => {
