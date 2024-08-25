@@ -11,7 +11,7 @@ Changing the radar settings is possible, a [JSON Schema](https://json-schema.org
 
 ## Origins
 
-This is basically a rewrite of the [OpenCPN radar plugin]([https://](https://github.com/opencpn-radar-pi/radar_pi) that I have worked over ten years or so.
+This is basically a rewrite of the [OpenCPN radar plugin](https://github.com/opencpn-radar-pi/radar_pi) that I have worked over ten years or so.
 The problem with that code is that it is written in C++ with wxWidgets, and very much meant to operate as a plugin to OpenCPN. That makes it hard to graft on
 an extra layer that allows it to be used in other contexts.
 
