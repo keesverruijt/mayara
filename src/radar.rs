@@ -107,6 +107,9 @@ pub struct RadarInfo {
     pub report_addr: SocketAddrV4,       // Where the radar will send reports
     pub send_command_addr: SocketAddrV4, // Where displays will send commands to the radar
     pub legend: Option<Legend>,          // What pixel values mean
+
+    // Channels
+    pub radar_message_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
 }
 
 impl RadarInfo {
@@ -125,6 +128,8 @@ impl RadarInfo {
         report_addr: SocketAddrV4,
         send_command_addr: SocketAddrV4,
     ) -> Self {
+        let (radar_message_tx, _radar_message_rx) = tokio::sync::broadcast::channel(32);
+
         RadarInfo {
             key: {
                 let mut key = brand.to_string();
@@ -157,6 +162,7 @@ impl RadarInfo {
             report_addr,
             send_command_addr,
             legend: None,
+            radar_message_tx,
         }
     }
 

@@ -1,0 +1,14 @@
+syntax = "proto3";
+option go_package = "../radar";
+
+message RadarMessage {
+    uint32 radar = 1;
+    message Spoke {
+        uint32 angle = 1;
+        uint32 bearing = 2;
+        uint32 range = 3;
+        uint64 time = 4;
+        bytes data = 5;        
+    }
+    repeated Spoke spokes = 2;
+}

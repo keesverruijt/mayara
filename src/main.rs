@@ -13,6 +13,7 @@ use web::Web;
 // mod garmin;
 mod locator;
 mod navico;
+mod protos;
 mod radar;
 mod util;
 mod web;

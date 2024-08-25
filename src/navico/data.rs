@@ -1,14 +1,17 @@
 use bincode::deserialize;
 use log::{debug, trace, warn};
+use protobuf::Message;
 use serde::Deserialize;
-use std::io;
-use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
+use std::{io, time::Duration};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::Receiver;
 use tokio::time::sleep;
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::locator::LocatorId;
+use crate::protos::RadarMessage::radar_message::Spoke;
+use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::*;
 use crate::util::{create_multicast, PrintableSpoke};
 
@@ -106,11 +109,12 @@ enum LookupSpokeEnum {
 }
 
 pub struct NavicoDataReceiver {
+    key: String,
     statistics: Statistics,
     info: RadarInfo,
     buf: Vec<u8>,
     sock: Option<UdpSocket>,
-    rx: Receiver<DataUpdate>,
+    rx: tokio::sync::mpsc::Receiver<DataUpdate>,
     doppler: DopplerMode,
     legend: Option<Legend>,
     pixel_to_blob: Option<[[u8; 256]; 6]>,
@@ -118,7 +122,10 @@ pub struct NavicoDataReceiver {
 
 impl NavicoDataReceiver {
     pub fn new(info: RadarInfo, rx: Receiver<DataUpdate>) -> NavicoDataReceiver {
+        let key = info.key();
+
         NavicoDataReceiver {
+            key,
             statistics: Statistics { broken_packets: 0 },
             info: info,
             buf: Vec::with_capacity(size_of::<RadarFramePkt>()),
@@ -263,71 +270,81 @@ impl NavicoDataReceiver {
 
         debug!("Received UDP frame with {} spokes", &scanlines_in_packet);
 
-        let mut offset: usize = FRAME_HEADER_LENGTH;
-        for scanline in 0..scanlines_in_packet {
-            let header_slice = &data[offset..offset + RADAR_LINE_HEADER_LENGTH];
-            let spoke_slice = &data[offset + RADAR_LINE_HEADER_LENGTH
-                ..offset + RADAR_LINE_HEADER_LENGTH + RADAR_LINE_DATA_LENGTH];
+        let mut message = RadarMessage::new();
+        message.radar = 1;
+        if let Some(pixel_to_blob) = self.pixel_to_blob {
+            let mut offset: usize = FRAME_HEADER_LENGTH;
+            for scanline in 0..scanlines_in_packet {
+                let header_slice = &data[offset..offset + RADAR_LINE_HEADER_LENGTH];
+                let spoke_slice = &data[offset + RADAR_LINE_HEADER_LENGTH
+                    ..offset + RADAR_LINE_HEADER_LENGTH + RADAR_LINE_DATA_LENGTH];
 
-            match self.info.locator_id {
-                LocatorId::Gen3Plus => {
-                    match deserialize::<Br4gHeader>(&header_slice) {
-                        Ok(header) => {
-                            trace!("Received {:04} header {:?}", scanline, header);
-
-                            if let Some((range, angle, heading)) =
-                                NavicoDataReceiver::validate_header(&header)
-                            {
-                                debug!("range {} angle {} heading {}", range, angle, heading);
-                                debug!(
-                                    "Received {:04} spoke {}",
-                                    scanline,
-                                    PrintableSpoke::new(spoke_slice),
-                                );
-                                self.process_spoke(range, angle, heading, spoke_slice);
-                            } else {
-                                warn!("Invalid spoke: header {:02X?}", &header_slice);
-                                self.statistics.broken_packets += 1;
-                            }
-                        }
-                        Err(e) => {
-                            warn!("Illegible spoke: {} header {:02X?}", e, &header_slice);
-                            self.statistics.broken_packets += 1;
-                        }
-                    };
+                if let Some((range, angle, heading)) = self.validate_header(header_slice, scanline)
+                {
+                    debug!("range {} angle {} heading {}", range, angle, heading);
+                    debug!(
+                        "Received {:04} spoke {}",
+                        scanline,
+                        PrintableSpoke::new(spoke_slice),
+                    );
+                    message.spokes.push(self.process_spoke(
+                        &pixel_to_blob,
+                        range,
+                        angle,
+                        heading,
+                        spoke_slice,
+                    ));
+                } else {
+                    warn!("Invalid spoke: header {:02X?}", &header_slice);
+                    self.statistics.broken_packets += 1;
                 }
-                LocatorId::GenBR24 => {
-                    match deserialize::<Br24Header>(&header_slice) {
-                        Ok(header) => {
-                            trace!("Received {:04} header {:?}", scanline, header);
-
-                            if let Some((range, angle, heading)) =
-                                NavicoDataReceiver::validate_br24_header(&header)
-                            {
-                                debug!("range {} angle {} heading {}", range, angle, heading);
-                                trace!(
-                                    "Received {:04} spoke {}",
-                                    scanline,
-                                    PrintableSpoke::new(spoke_slice),
-                                );
-                                self.process_spoke(range, angle, heading, spoke_slice);
-                            } else {
-                                warn!("Invalid spoke: header {:02X?}", &header_slice);
-                                self.statistics.broken_packets += 1;
-                            }
-                        }
-                        Err(e) => {
-                            warn!("Illegible spoke: {} header {:02X?}", e, &header_slice);
-                            self.statistics.broken_packets += 1;
-                        }
-                    };
-                }
+                offset += RADAR_LINE_LENGTH;
             }
-            offset += RADAR_LINE_LENGTH;
+        }
+
+        let mut bytes = Vec::new();
+        message
+            .write_to_vec(&mut bytes)
+            .expect("Cannot write RadarMessage to vec");
+
+        match self.info.radar_message_tx.send(bytes) {
+            Err(e) => {
+                debug!("{}: Dropping received spoke: {}", self.key, e);
+            }
+            Ok(count) => {
+                debug!("{}: sent to {} receivers", self.key, count);
+            }
         }
     }
 
-    fn validate_header(header: &Br4gHeader) -> Option<(u32, u16, i16)> {
+    fn validate_header(&self, header_slice: &[u8], scanline: usize) -> Option<(u32, u16, i16)> {
+        match self.info.locator_id {
+            LocatorId::Gen3Plus => match deserialize::<Br4gHeader>(&header_slice) {
+                Ok(header) => {
+                    trace!("Received {:04} header {:?}", scanline, header);
+
+                    NavicoDataReceiver::validate_4g_header(&header)
+                }
+                Err(e) => {
+                    warn!("Illegible spoke: {} header {:02X?}", e, &header_slice);
+                    return None;
+                }
+            },
+            LocatorId::GenBR24 => match deserialize::<Br24Header>(&header_slice) {
+                Ok(header) => {
+                    trace!("Received {:04} header {:?}", scanline, header);
+
+                    NavicoDataReceiver::validate_br24_header(&header)
+                }
+                Err(e) => {
+                    warn!("Illegible spoke: {} header {:02X?}", e, &header_slice);
+                    return None;
+                }
+            },
+        }
+    }
+
+    fn validate_4g_header(header: &Br4gHeader) -> Option<(u32, u16, i16)> {
         if header.header_len != RADAR_LINE_HEADER_LENGTH as u8 {
             warn!(
                 "Spoke with illegal header length ({}) ignored",
@@ -378,35 +395,54 @@ impl NavicoDataReceiver {
         Some((range, heading, angle))
     }
 
-    fn process_spoke(&self, range: u32, angle: u16, heading: i16, spoke: &[u8]) {
-        if let Some(pixel_to_blob) = self.pixel_to_blob {
-            // Convert the spoke data to bytes
-            let mut generic_spoke: Vec<u8> = Vec::with_capacity(1024);
-            let low_nibble_index = match self.doppler {
-                DopplerMode::None => LookupSpokeEnum::LowNormal,
-                DopplerMode::Both => LookupSpokeEnum::LowBoth,
-                DopplerMode::Approaching => LookupSpokeEnum::LowApproaching,
-            } as usize;
-            let high_nibble_index = match self.doppler {
-                DopplerMode::None => LookupSpokeEnum::HighNormal,
-                DopplerMode::Both => LookupSpokeEnum::HighBoth,
-                DopplerMode::Approaching => LookupSpokeEnum::HighApproaching,
-            } as usize;
+    fn process_spoke(
+        &self,
+        pixel_to_blob: &[[u8; 256]; 6],
+        range: u32,
+        angle: u16,
+        heading: i16,
+        spoke: &[u8],
+    ) -> Spoke {
+        // Convert the spoke data to bytes
+        let mut generic_spoke: Vec<u8> = Vec::with_capacity(1024);
+        let low_nibble_index = match self.doppler {
+            DopplerMode::None => LookupSpokeEnum::LowNormal,
+            DopplerMode::Both => LookupSpokeEnum::LowBoth,
+            DopplerMode::Approaching => LookupSpokeEnum::LowApproaching,
+        } as usize;
+        let high_nibble_index = match self.doppler {
+            DopplerMode::None => LookupSpokeEnum::HighNormal,
+            DopplerMode::Both => LookupSpokeEnum::HighBoth,
+            DopplerMode::Approaching => LookupSpokeEnum::HighApproaching,
+        } as usize;
 
-            for pixel in spoke {
-                let pixel = *pixel as usize;
-                generic_spoke.push(pixel_to_blob[low_nibble_index][pixel]);
-                generic_spoke.push(pixel_to_blob[high_nibble_index][pixel]);
-            }
-
-            trace!(
-                "Spoke {}/{}/{} len {}",
-                range,
-                heading,
-                angle,
-                generic_spoke.len()
-            );
+        for pixel in spoke {
+            let pixel = *pixel as usize;
+            generic_spoke.push(pixel_to_blob[low_nibble_index][pixel]);
+            generic_spoke.push(pixel_to_blob[high_nibble_index][pixel]);
         }
+
+        trace!(
+            "Spoke {}/{}/{} len {}",
+            range,
+            heading,
+            angle,
+            generic_spoke.len()
+        );
+
+        let mut message = RadarMessage::new();
+        message.radar = 1;
+        let mut spoke = Spoke::new();
+        spoke.range = range;
+        spoke.angle = angle as u32;
+        spoke.bearing = heading as u32;
+        spoke.time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        spoke.data = generic_spoke;
+
+        spoke
     }
 }
 /*

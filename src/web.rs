@@ -1,15 +1,19 @@
 use anyhow::anyhow;
 use axum::{
     body::Body,
-    extract::State,
+    debug_handler,
+    extract::{
+        ws::{Message, WebSocket},
+        ConnectInfo, Path, State, WebSocketUpgrade,
+    },
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::get,
     Json, Router,
 };
-use log::info;
+use log::{debug, info, trace};
 use miette::Result;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     io,
@@ -29,19 +33,28 @@ pub enum WebError {
     Io(#[from] io::Error),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Web {
     radars: Arc<RwLock<Radars>>,
     url: Option<String>,
     port: u16,
+    shutdown_tx: tokio::sync::broadcast::Sender<()>,
+}
+
+#[derive(Deserialize)]
+struct WebSocketHandlerParameters {
+    key: String,
 }
 
 impl Web {
     pub fn new(port: u16, radars: Arc<RwLock<Radars>>) -> Self {
+        let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
+
         Web {
             radars,
             port,
             url: None,
+            shutdown_tx,
         }
     }
 
@@ -56,21 +69,24 @@ impl Web {
         let url = format!("http://{}/v1/api/", listener.local_addr().unwrap());
         info!("HTTP server available on {}", &url);
         self.url = Some(url);
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
+        let shutdown_tx = self.shutdown_tx.clone(); // Clone as self used in with_state() and with_graceful_shutdown() below
 
         let app = Router::new()
             .route("/", get(root))
-            .route("/v1/api/radars", get(get_radars).with_state(self));
-
-        let (close_tx, close_rx) = tokio::sync::oneshot::channel();
+            .route("/v1/api/radars", get(get_radars))
+            .route("/v1/api/stream/:key", get(ws_handler))
+            .with_state(self)
+            .into_make_service_with_connect_info::<SocketAddr>();
 
         tokio::select! { biased;
             _ = subsys.on_shutdown_requested() => {
-                let _ = close_tx.send(());
+                let _ = shutdown_tx.send(());
             },
             r = axum::serve(listener, app)
                     .with_graceful_shutdown(
                         async move {
-                            _ = close_rx.await;
+                            _ = shutdown_rx.recv().await;
                         }
                     ) => {
                 return r.map_err(|e| WebError::Io(e));
@@ -176,5 +192,85 @@ where
 {
     fn from(err: E) -> Self {
         Self(err.into())
+    }
+}
+
+/// The handler for the HTTP request (this gets called when the HTTP GET lands at the start
+/// of websocket negotiation). After this completes, the actual switching from HTTP to
+/// websocket protocol will occur.
+/// This is the last point where we can extract TCP/IP metadata such as IP address of the client
+/// as well as things from HTTP headers such as user-agent of the browser etc.
+#[debug_handler]
+async fn ws_handler(
+    State(state): State<Web>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Path(params): Path<WebSocketHandlerParameters>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    debug!("stream request from {} for {}", addr, params.key);
+
+    match match_radar_id(&state, &params.key) {
+        Ok(radar_message_rx) => {
+            let shutdown_rx = state.shutdown_tx.subscribe();
+            // finalize the upgrade process by returning upgrade callback.
+            // we can customize the callback by sending additional info such as address.
+            ws.on_upgrade(move |socket| handle_socket(socket, radar_message_rx, shutdown_rx))
+        }
+        Err(e) => e.into_response(),
+    }
+}
+
+fn match_radar_id(
+    state: &Web,
+    key: &str,
+) -> Result<tokio::sync::broadcast::Receiver<Vec<u8>>, AppError> {
+    match state.radars.read() {
+        Ok(radars) => {
+            let x = &radars.info;
+
+            for (_key, value) in x.iter() {
+                if value.legend.is_some() {
+                    let id = format!("radar-{}", value.id);
+                    if id == key {
+                        return Ok(value.radar_message_tx.subscribe());
+                    }
+                }
+            }
+        }
+        Err(_) => return Err(AppError(anyhow!("Poisoned lock"))),
+    }
+    Err(AppError(anyhow!("No such radar {}", key)))
+}
+/// Actual websocket statemachine (one will be spawned per connection)
+
+async fn handle_socket(
+    mut socket: WebSocket,
+    mut radar_message_rx: tokio::sync::broadcast::Receiver<Vec<u8>>,
+    mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
+) {
+    loop {
+        tokio::select! {
+            _ = shutdown_rx.recv() => {
+                debug!("Shutdown of websocket");
+                break;
+            },
+            r = radar_message_rx.recv() => {
+                match r {
+                    Ok(message) => {
+                        let len = message.len();
+                        let ws_message = Message::Binary(message);
+                        if let Err(e) = socket.send(ws_message).await {
+                            debug!("Error on send to websocket: {}", e);
+                            break;
+                        }
+                        trace!("Sent radar message {} bytes", len);
+                    },
+                    Err(e) => {
+                        debug!("Error on RadarMessage channel: {}", e);
+                        break;
+                    }
+                }
+            }
+        }
     }
 }

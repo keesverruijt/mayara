@@ -1,6 +1,6 @@
 use anyhow::{bail, Error};
 use enum_primitive_derive::Primitive;
-use log::{debug, info, trace};
+use log::{debug, error, info, trace};
 use std::mem::transmute;
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,7 +10,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::time::{sleep, sleep_until, Instant};
 use tokio_graceful_shutdown::SubsystemHandle;
 
-use crate::radar::{DopplerMode, RadarError, RadarInfo};
+use crate::radar::{DopplerMode, Legend, RadarError, RadarInfo};
 use crate::util::{c_wide_string, create_multicast};
 
 use super::command::{self, Command};
@@ -166,16 +166,16 @@ impl NavicoReportReceiver {
             Ok(sock) => {
                 self.sock = Some(sock);
                 debug!(
-                    "{} via {}: listening for reports",
-                    &self.info.report_addr, &self.info.nic_addr
+                    "{}: {} via {}: listening for reports",
+                    self.key, &self.info.report_addr, &self.info.nic_addr
                 );
                 Ok(())
             }
             Err(e) => {
                 sleep(Duration::from_millis(1000)).await;
                 debug!(
-                    "{} via {}: create multicast failed: {}",
-                    &self.info.report_addr, &self.info.nic_addr, e
+                    "{}: {} via {}: create multicast failed: {}",
+                    self.key, &self.info.report_addr, &self.info.nic_addr, e
                 );
                 Err(e)
             }
@@ -183,6 +183,7 @@ impl NavicoReportReceiver {
     }
 
     async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
+        debug!("{}: listening for reports", self.key);
         loop {
             tokio::select! { biased;
               _ = subsys.on_shutdown_requested() => {
@@ -193,9 +194,18 @@ impl NavicoReportReceiver {
                     self.send_report_requests().await?;
                     self.subtype_timeout += self.subtype_repeat;
               },
-              _ = self.sock.as_ref().unwrap().recv_buf_from(&mut self.buf)  => {
-                  let _ = self.process_report();
-                  self.buf.clear();
+              r = self.sock.as_ref().unwrap().recv_buf_from(&mut self.buf)  => {
+                    match r {
+                        Ok((len, addr)) => {
+                            debug!("{}: received {} bytes from {}", self.key, len, addr);
+                            let _ = self.process_report().await;
+                            self.buf.clear();
+                        }
+                        Err(e) => {
+                            error!("{}: receive error: {}", self.key, e);
+                            return Err(RadarError::Io(e));
+                        }
+                    }
               },
             };
         }
@@ -295,14 +305,12 @@ impl NavicoReportReceiver {
                     info!("{}: Radar is model {}", self.key, model);
                     self.settings.model.store(model);
 
-                    let mut radars = self.settings.radars.write().unwrap();
-                    if let Some(info) = radars.info.get_mut(&self.key) {
-                        info.model = Some(format!("{}", model));
-                        info.set_legend(model == Model::HALO);
-                        if let Some(legend) = &info.legend {
-                            self.data_tx
-                                .send(DataUpdate::Legend(legend.clone()))
-                                .await?;
+                    match self.update_info_state(model) {
+                        Some(legend) => {
+                            self.data_tx.send(DataUpdate::Legend(legend)).await?;
+                        }
+                        None => {
+                            error!("{}: Weird, no legend now", self.key);
                         }
                     }
                 }
@@ -312,6 +320,29 @@ impl NavicoReportReceiver {
         self.subtype_repeat = Duration::from_secs(600);
 
         Ok(())
+    }
+
+    ///
+    /// Separate function so we don't lock radars longer than necessary
+    /// Once we return the lock is gone, and the legend can be sent to
+    /// the data thread.
+    ///
+    fn update_info_state(&mut self, model: Model) -> Option<Legend> {
+        match self.settings.radars.write() {
+            Ok(mut radars) => {
+                if let Some(info) = radars.info.get_mut(&self.key) {
+                    info.model = Some(format!("{}", model));
+                    info.set_legend(model == Model::HALO);
+                    if let Some(legend) = &info.legend {
+                        return Some(legend.clone());
+                    }
+                }
+                None
+            }
+            Err(_) => {
+                panic!("Poisoned RwLock on Radars");
+            }
+        }
     }
 
     async fn process_report_08(&mut self) -> Result<(), Error> {
