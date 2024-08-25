@@ -8,7 +8,7 @@ option go_package = "../radar";
  * .../v1/api/radars as 'spokes'. The maximum length of each
  * spoke is also defined there, as well as the legend that provides
  * a lookup table for each byte of data in the spoke.
- * 
+ *
  * The angle and bearing fields below are in terms of spokes, so
  * range from [0..spokes>.
  *
@@ -17,12 +17,12 @@ option go_package = "../radar";
  * ahead, spokes / 4 is to starboard, spokes / 2 is directly astern, etc.
  *
  * Bearing, if set, means that either the radar or the radar server has
- * enriched the data with a true bearing, e.g. 0 is directly North, 
+ * enriched the data with a true bearing, e.g. 0 is directly North,
  * spokes / 4 is directly West, spokes / 2 is South, etc.
- * 
+ *
  * Likewise, time and lat/lon indicate the best effort when the spoke
  * was generated, and the lat/lon of the radar at the time of generation.
- * 
+ *
  * Latitude and longitude are expressed in 10**-16 degrees, for compatibility
  * with NMEA-2000 data.
  */
@@ -35,7 +35,7 @@ message RadarMessage {
         optional uint64 time = 4; // [millis since UNIX epoch] Time when spoke was generated or received
         optional int64 lat = 6; // [1e-16 degree] Location of radar at time of generation
         optional int64 lon = 7; // [1e-16 degree] Location of radar at time of generation
-        bytes data = 5;        
+        bytes data = 5;
     }
     repeated Spoke spokes = 2;
 }
