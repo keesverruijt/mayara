@@ -56,6 +56,7 @@ async fn main() -> Result<()> {
         warn!("Replay mode activated, this does the following:");
         warn!(" * A circle is drawn at the last two pixels in each spoke");
         warn!(" * Timestamp on each spoke is as if received now");
+        warn!(" * Any 4G/HALO secondary radar B is ignored and not reported");
     }
     if args.record > 0 {
         warn!(
@@ -65,7 +66,7 @@ async fn main() -> Result<()> {
         warn!("to stdout. The data is in 'protobuf' format and consists of RadarMessages.");
     }
 
-    let radars = Radars::new();
+    let radars = Radars::new(args.clone()); // TODO args moet hier in
     let radars_clone1 = radars.clone();
 
     let web = Web::new(args.port, radars_clone1);

@@ -12,6 +12,7 @@ use std::{
 use thiserror::Error;
 
 use crate::locator::LocatorId;
+use crate::Cli;
 
 #[derive(Error, Debug)]
 pub enum RadarError {
@@ -213,12 +214,14 @@ impl Display for RadarInfo {
 #[derive(Clone, Debug)]
 pub struct Radars {
     pub info: HashMap<String, RadarInfo>,
+    pub args: Cli,
 }
 
 impl Radars {
-    pub fn new() -> Arc<RwLock<Radars>> {
+    pub fn new(args: Cli) -> Arc<RwLock<Radars>> {
         Arc::new(RwLock::new(Radars {
             info: HashMap::new(),
+            args,
         }))
     }
 }
@@ -229,10 +232,10 @@ impl Radars {
         let mut radars = radars.write().unwrap();
         let count = radars.info.len();
 
-        // For now, drop second radar...
-        // if count > 0 {
-        //     return None;
-        // }
+        // For now, drop second radar in replay Mode...
+        if radars.args.replay && key.ends_with("-B") {
+            return None;
+        }
         let entry = radars.info.entry(key).or_insert(new_info);
 
         if entry.id == usize::MAX {
