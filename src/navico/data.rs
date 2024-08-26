@@ -13,10 +13,10 @@ use tokio_graceful_shutdown::SubsystemHandle;
 use crate::locator::LocatorId;
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
-use crate::radar::*;
 use crate::util::{create_multicast, PrintableSpoke};
+use crate::{radar::*, Cli};
 
-use super::DataUpdate;
+use super::{DataUpdate, NAVICO_SPOKES};
 
 // Length of a spoke in pixels. Every pixel is 4 bits (one nibble.)
 const NAVICO_SPOKE_LEN: usize = 1024;
@@ -24,6 +24,13 @@ const NAVICO_SPOKE_LEN: usize = 1024;
 // Spoke numbers go from [0..4096>, but only half of them are used.
 // The actual image is 2048 x 1024 x 4 bits
 const NAVICO_SPOKES_RAW: u16 = 4096;
+
+const SPOKES_PER_FRAME: usize = 32;
+const BITS_PER_BYTE: usize = 8;
+const BITS_PER_NIBBLE: usize = 4;
+const NIBBLES_PER_BYTE: usize = BITS_PER_BYTE / BITS_PER_NIBBLE;
+const RADAR_LINE_DATA_LENGTH: usize = NAVICO_SPOKE_LEN / NIBBLES_PER_BYTE;
+const BYTE_LOOKUP_LENGTH: usize = u8::MAX as usize + 1;
 
 /*
  Heading on radar. Observed in field:
@@ -84,7 +91,7 @@ struct Br4gHeader {
 #[repr(packed)]
 struct RadarLine {
     _header: Br4gHeader, // or Br24Header
-    _data: [u8; NAVICO_SPOKE_LEN / 2],
+    _data: [u8; RADAR_LINE_DATA_LENGTH],
 }
 
 #[repr(packed)]
@@ -95,14 +102,14 @@ struct FrameHeader {
 #[repr(packed)]
 struct RadarFramePkt {
     _header: FrameHeader,
-    _line: [RadarLine; 32], //  scan lines, or spokes
+    _line: [RadarLine; SPOKES_PER_FRAME], //  scan lines, or spokes
 }
 
 const FRAME_HEADER_LENGTH: usize = size_of::<FrameHeader>();
-const RADAR_LINE_DATA_LENGTH: usize = NAVICO_SPOKE_LEN / 2;
 const RADAR_LINE_HEADER_LENGTH: usize = size_of::<Br4gHeader>();
 const RADAR_LINE_LENGTH: usize = size_of::<RadarLine>();
 
+// The LookupSpokEnum is an index into an array, really
 enum LookupSpokeEnum {
     LowNormal = 0,
     LowBoth = 1,
@@ -111,6 +118,7 @@ enum LookupSpokeEnum {
     HighBoth = 4,
     HighApproaching = 5,
 }
+const LOOKUP_SPOKE_LENGTH: usize = LookupSpokeEnum::HighApproaching as usize + 1;
 
 pub struct NavicoDataReceiver {
     key: String,
@@ -121,17 +129,15 @@ pub struct NavicoDataReceiver {
     rx: tokio::sync::mpsc::Receiver<DataUpdate>,
     doppler: DopplerMode,
     legend: Option<Legend>,
-    pixel_to_blob: Option<[[u8; 256]; 6]>,
+    pixel_to_blob: Option<[[u8; BYTE_LOOKUP_LENGTH]; 6]>,
+    args: Cli,
     record_spokes: usize,
 }
 
 impl NavicoDataReceiver {
-    pub fn new(
-        info: RadarInfo,
-        rx: Receiver<DataUpdate>,
-        record_spokes: usize,
-    ) -> NavicoDataReceiver {
+    pub fn new(info: RadarInfo, rx: Receiver<DataUpdate>, args: Cli) -> NavicoDataReceiver {
         let key = info.key();
+        let record_spokes = args.record * NAVICO_SPOKES;
 
         NavicoDataReceiver {
             key,
@@ -143,6 +149,7 @@ impl NavicoDataReceiver {
             doppler: DopplerMode::None,
             legend: None,
             pixel_to_blob: None,
+            args,
             record_spokes,
         }
     }
@@ -169,10 +176,11 @@ impl NavicoDataReceiver {
     }
 
     fn fill_pixel_to_blob(&mut self, legend: &Legend) {
-        let mut lookup: [[u8; 256]; 6] = [[0; 256]; 6];
+        let mut lookup: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH] =
+            [[0; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH];
         // Cannot use for() in const expr, so use while instead
         let mut j: usize = 0;
-        while j < 256 {
+        while j < BYTE_LOOKUP_LENGTH {
             let low: u8 = j as u8 & 0x0f;
             let high: u8 = (j as u8 >> 4) & 0x0f;
 
@@ -278,7 +286,7 @@ impl NavicoDataReceiver {
             }
         }
 
-        debug!("Received UDP frame with {} spokes", &scanlines_in_packet);
+        trace!("Received UDP frame with {} spokes", &scanlines_in_packet);
 
         let mut message = RadarMessage::new();
         message.radar = 1;
@@ -291,8 +299,8 @@ impl NavicoDataReceiver {
 
                 if let Some((range, angle, heading)) = self.validate_header(header_slice, scanline)
                 {
-                    debug!("range {} angle {} heading {:?}", range, angle, heading);
-                    debug!(
+                    trace!("range {} angle {} heading {:?}", range, angle, heading);
+                    trace!(
                         "Received {:04} spoke {}",
                         scanline,
                         PrintableSpoke::new(spoke_slice),
@@ -418,7 +426,7 @@ impl NavicoDataReceiver {
 
     fn process_spoke(
         &self,
-        pixel_to_blob: &[[u8; 256]; 6],
+        pixel_to_blob: &[[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH],
         range: u32,
         angle: u16,
         heading: Option<u16>,
@@ -443,6 +451,15 @@ impl NavicoDataReceiver {
             generic_spoke.push(pixel_to_blob[high_nibble_index][pixel]);
         }
 
+        if self.args.replay {
+            // Generate circle at extreme range
+            let pixel = 0xff as usize;
+            generic_spoke.pop();
+            generic_spoke.pop();
+            generic_spoke.push(pixel_to_blob[low_nibble_index][pixel]);
+            generic_spoke.push(pixel_to_blob[high_nibble_index][pixel]);
+        }
+
         trace!(
             "Spoke {}/{:?}/{} len {}",
             range,
@@ -451,12 +468,21 @@ impl NavicoDataReceiver {
             generic_spoke.len()
         );
 
+        let angle = (angle / 2) as u32;
+        // For now, don't send heading in replay mode, signalk-radar-client doesn't
+        // handle it well yet.
+        let heading = if self.args.replay {
+            None
+        } else {
+            heading.map(|h| ((h / 2) as u32 + angle) % NAVICO_SPOKES as u32)
+        };
+
         let mut message = RadarMessage::new();
         message.radar = 1;
         let mut spoke = Spoke::new();
         spoke.range = range;
-        spoke.angle = angle as u32;
-        spoke.bearing = heading.map(|h| h as u32);
+        spoke.angle = angle;
+        spoke.bearing = heading;
         spoke.time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)

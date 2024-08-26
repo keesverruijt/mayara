@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
 use crate::locator::{LocatorId, RadarListenAddress, RadarLocator};
-use crate::radar::{located, DopplerMode, Legend, RadarInfo, Radars};
+use crate::radar::{DopplerMode, Legend, RadarInfo, Radars};
 use crate::util::c_string;
 use crate::util::PrintableSlice;
 use crate::Cli;
@@ -242,7 +242,7 @@ const NAVICO_BEACON_DUAL_SIZE: usize = size_of::<NavicoBeaconDual>();
 const NAVICO_BEACON_BR24_SIZE: usize = size_of::<BR24Beacon>();
 
 fn found(info: RadarInfo, radars: &Arc<RwLock<Radars>>, subsys: &SubsystemHandle, args: &Cli) {
-    if let Some(info) = located(info, radars) {
+    if let Some(info) = Radars::located(info, radars) {
         // It's new, start the RadarProcessor thread
         let navico_settings = Arc::new(NavicoSettings {
             radars: radars.clone(),
@@ -258,11 +258,7 @@ fn found(info: RadarInfo, radars: &Arc<RwLock<Radars>>, subsys: &SubsystemHandle
         let info_clone = info.clone();
         let navico_settings_clone = navico_settings.clone();
 
-        let data_receiver = data::NavicoDataReceiver::new(
-            info,
-            rx_data,
-            args.record.map(|n| n * NAVICO_SPOKES).unwrap_or(0),
-        );
+        let data_receiver = data::NavicoDataReceiver::new(info, rx_data, args.clone());
         let report_receiver = report::NavicoReportReceiver::new(
             info_clone,
             navico_settings_clone,

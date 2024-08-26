@@ -39,19 +39,24 @@ enum PixelType {
 }
 
 #[derive(Clone, Debug)]
-struct Colour {
+struct Color {
     r: u8,
     g: u8,
     b: u8,
+    a: u8,
 }
 
-impl fmt::Display for Colour {
+impl fmt::Display for Color {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
+        write!(
+            f,
+            "#{:02x}{:02x}{:02x}{:02x}",
+            self.r, self.g, self.b, self.a
+        )
     }
 }
 
-impl Serialize for Colour {
+impl Serialize for Color {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -63,7 +68,7 @@ impl Serialize for Colour {
 #[derive(Clone, Debug, Serialize)]
 pub struct Lookup {
     r#type: PixelType,
-    colour: Colour,
+    color: Color,
 }
 
 #[derive(Clone, Debug)]
@@ -147,7 +152,7 @@ impl RadarInfo {
                 }
                 key
             },
-            id: 0,
+            id: usize::MAX,
             locator_id,
             brand: brand.to_owned(),
             model: model.map(String::from),
@@ -217,6 +222,29 @@ impl Radars {
         }))
     }
 }
+impl Radars {
+    // A radar has been found
+    pub fn located(new_info: RadarInfo, radars: &Arc<RwLock<Radars>>) -> Option<RadarInfo> {
+        let key = new_info.key.to_owned();
+        let mut radars = radars.write().unwrap();
+        let count = radars.info.len();
+
+        // For now, drop second radar...
+        // if count > 0 {
+        //     return None;
+        // }
+        let entry = radars.info.entry(key).or_insert(new_info);
+
+        if entry.id == usize::MAX {
+            entry.id = count;
+
+            info!("Located a new radar: {}", &entry);
+            Some(entry.clone())
+        } else {
+            None
+        }
+    }
+}
 
 pub struct Statistics {
     pub broken_packets: usize,
@@ -237,24 +265,9 @@ impl fmt::Display for DopplerMode {
     }
 }
 
-// A radar has been found
-pub fn located(new_info: RadarInfo, radars: &Arc<RwLock<Radars>>) -> Option<RadarInfo> {
-    let key = new_info.key.to_owned();
-    let mut radars = radars.write().unwrap();
-    let count = radars.info.len();
-    let entry = radars.info.entry(key).or_insert(new_info);
-
-    if entry.id == 0 {
-        entry.id = count + 1;
-
-        info!("Located a new radar: {}", &entry);
-        Some(entry.clone())
-    } else {
-        None
-    }
-}
-
 pub const BLOB_HISTORY_COLORS: u8 = 32;
+const TRANSPARENT: u8 = 0;
+const OPAQUE: u8 = 255;
 
 fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
     let mut legend = Legend {
@@ -277,23 +290,24 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
     let one_third = pixels_with_color / 3;
     let two_thirds = one_third * 2;
 
-    // No return is black
+    // No return is black and transparent
     legend.pixels.push(Lookup {
         r#type: PixelType::Normal,
-        colour: Colour {
+        color: Color {
             // red starts at 2/3 and peaks at end
             r: 0,
             // green speaks at 2/3
             g: 0,
             // blue peaks at 1/3 and is zero by 2/3
             b: 0,
+            a: TRANSPARENT,
         },
     });
 
     for v in 1..pixel_values {
         legend.pixels.push(Lookup {
             r#type: PixelType::Normal,
-            colour: Colour {
+            color: Color {
                 // red starts at 2/3 and peaks at end
                 r: if v >= two_thirds {
                     (start + (v - two_thirds) as f32 * delta) as u8
@@ -312,6 +326,7 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
                 } else {
                     0
                 },
+                a: OPAQUE,
             },
         });
     }
@@ -319,10 +334,11 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
     legend.border = legend.pixels.len() as u8;
     legend.pixels.push(Lookup {
         r#type: PixelType::TargetBorder,
-        colour: Colour {
+        color: Color {
             r: 200,
             g: 200,
             b: 200,
+            a: OPAQUE,
         },
     });
 
@@ -330,19 +346,21 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
         legend.doppler_approaching = legend.pixels.len() as u8;
         legend.pixels.push(Lookup {
             r#type: PixelType::DopplerApproaching,
-            colour: Colour {
+            color: Color {
                 r: 0,
                 g: 200,
                 b: 200,
+                a: OPAQUE,
             },
         });
         legend.doppler_receding = legend.pixels.len() as u8;
         legend.pixels.push(Lookup {
             r#type: PixelType::DopplerReceding,
-            colour: Colour {
+            color: Color {
                 r: 0x90,
                 g: 0xd0,
                 b: 0xf0,
+                a: OPAQUE,
             },
         });
     }
@@ -353,15 +371,16 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
     const DELTA_INTENSITY: u8 = (START_DENSITY - END_DENSITY) / BLOB_HISTORY_COLORS;
     let mut density = START_DENSITY;
     for _history in 0..BLOB_HISTORY_COLORS {
-        let colour = Colour {
+        let color = Color {
             r: density,
             g: density,
             b: density,
+            a: OPAQUE,
         };
         density -= DELTA_INTENSITY;
         legend.pixels.push(Lookup {
             r#type: PixelType::History,
-            colour,
+            color,
         });
     }
 

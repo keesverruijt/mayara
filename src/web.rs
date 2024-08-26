@@ -66,7 +66,10 @@ impl Web {
         .await
         .unwrap();
 
-        let url = format!("http://{}/v1/api/", listener.local_addr().unwrap());
+        let url = format!(
+            "http://localhost:{}/v1/api/",
+            listener.local_addr().unwrap().port()
+        );
         info!("HTTP server available on {}", &url);
         self.url = Some(url);
         let mut shutdown_rx = self.shutdown_tx.subscribe();
@@ -105,7 +108,9 @@ struct RadarApi {
     id: String,
     name: String,
     spokes: u16,
+    #[serde(rename = "maxSpokeLen")]
     max_spoke_len: u16,
+    #[serde(rename = "streamUrl")]
     stream_url: String,
     legend: Legend,
 }

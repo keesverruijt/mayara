@@ -3,7 +3,7 @@ extern crate tokio;
 use clap::Parser;
 use env_logger::Env;
 use locator::Locator;
-use log::info;
+use log::{info, warn};
 use miette::Result;
 use radar::Radars;
 use std::time::Duration;
@@ -34,8 +34,12 @@ pub struct Cli {
     interface: Option<String>,
 
     /// Record first n revolutions of first radar to stdout
-    #[arg(long)]
-    record: Option<usize>,
+    #[arg(long, default_value_t = 0)]
+    record: usize,
+
+    /// Replay or dev mode; draw circle at extreme range
+    #[arg(long, default_value_t = false)]
+    replay: bool,
 }
 
 #[tokio::main]
@@ -48,6 +52,18 @@ async fn main() -> Result<()> {
         .init();
 
     info!("Mayara {} loglevel {}", VERSION, log_level);
+    if args.replay {
+        warn!("Replay mode activated, this does the following:");
+        warn!(" * A circle is drawn at the last two pixels in each spoke");
+        warn!(" * Timestamp on each spoke is as if received now");
+    }
+    if args.record > 0 {
+        warn!(
+            "Record mode activated; the first {} revolutions of spokes will be written",
+            args.record
+        );
+        warn!("to stdout. The data is in 'protobuf' format and consists of RadarMessages.");
+    }
 
     let radars = Radars::new();
     let radars_clone1 = radars.clone();
