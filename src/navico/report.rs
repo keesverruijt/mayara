@@ -281,43 +281,45 @@ impl NavicoReportReceiver {
         }
     }
 
-    fn set(&mut self, control: &ControlType, value: i32) {
-        let model = self.settings.model.load();
-
-        if model != Model::Unknown {
-            let controls = self.controls.get_or_insert_with(|| {
-                NavicoControls::new2(model, self.info.radar_message_tx.clone())
-            });
-
-            match controls.set(control, value) {
+    fn set(&mut self, control_type: &ControlType, value: i32) {
+        if let Some(controls) = self.controls.as_mut() {
+            match controls.set(control_type, value) {
                 Err(e) => {
                     error!("{}: {}", self.key, e.to_string());
                 }
-                Ok(Some(v)) => {
-                    debug!("{}: Control '{}' new value {}", self.key, control, v);
+                Ok(Some(())) => {
+                    if log::log_enabled!(log::Level::Debug) {
+                        let control = controls.controls.get(control_type).unwrap();
+                        debug!(
+                            "{}: Control '{}' new value {}",
+                            self.key,
+                            control_type,
+                            control.value_string()
+                        );
+                    }
                 }
                 Ok(None) => {}
             }
         };
     }
 
-    fn set_auto(&mut self, control: &ControlType, value: i32, auto: u8) {
-        let model = self.settings.model.load();
-
-        if model != Model::Unknown {
-            let controls = self.controls.get_or_insert_with(|| {
-                NavicoControls::new2(model, self.info.radar_message_tx.clone())
-            });
-
-            match controls.set_auto(control, auto > 0, value) {
+    fn set_auto(&mut self, control_type: &ControlType, value: i32, auto: u8) {
+        if let Some(controls) = self.controls.as_mut() {
+            match controls.set_auto(control_type, auto > 0, value) {
                 Err(e) => {
                     error!("{}: {}", self.key, e.to_string());
                 }
-                Ok(Some(v)) => {
-                    debug!(
-                        "{}: Control '{}' new value {} auto {}",
-                        self.key, control, v, auto
-                    );
+                Ok(Some(())) => {
+                    if log::log_enabled!(log::Level::Debug) {
+                        let control = controls.controls.get(control_type).unwrap();
+                        debug!(
+                            "{}: Control '{}' new value {} auto {}",
+                            self.key,
+                            control_type,
+                            control.value_string(),
+                            auto
+                        );
+                    }
                 }
                 Ok(None) => {}
             }
@@ -325,24 +327,13 @@ impl NavicoReportReceiver {
     }
 
     fn set_string(&mut self, control: &ControlType, value: String) {
-        let model = self.settings.model.load();
-
-        if model != Model::Unknown {
-            let controls = self.controls.get_or_insert_with(|| {
-                NavicoControls::new2(model, self.info.radar_message_tx.clone())
-            });
-
-            let value_clone = value.clone();
-
+        if let Some(controls) = self.controls.as_mut() {
             match controls.set_string(control, value) {
                 Err(e) => {
                     error!("{}: {}", self.key, e.to_string());
                 }
-                Ok(Some(())) => {
-                    debug!(
-                        "{}: Control '{}' new value {}",
-                        self.key, control, value_clone
-                    );
+                Ok(Some(v)) => {
+                    debug!("{}: Control '{}' new value '{}'", self.key, control, v);
                 }
                 Ok(None) => {}
             }
@@ -392,7 +383,8 @@ impl NavicoReportReceiver {
         if status.is_err() {
             bail!("{}: Unknown radar status {}", self.key, report.status);
         }
-        debug!("{}: status {}", self.key, status.unwrap());
+        self.set(&ControlType::Status, report.status as i32);
+
         Ok(())
     }
 
@@ -434,12 +426,16 @@ impl NavicoReportReceiver {
     async fn process_report_03(&mut self) -> Result<(), Error> {
         let report = RadarReport3_129::transmute(&self.buf)?;
         let model = report.model;
-        let hours = u32::from_le_bytes(report.hours);
+        let hours = i32::from_le_bytes(report.hours);
         let firmware_date = c_wide_string(&report.firmware_date);
         let firmware_time = c_wide_string(&report.firmware_time);
-        info!(
+        trace!(
             "{}: model={} hours={} firmware: {:?} {:?}",
-            self.key, model, hours, firmware_date, firmware_time
+            self.key,
+            model,
+            hours,
+            firmware_date,
+            firmware_time
         );
         let model: Result<Model, _> = model.try_into();
         match model {
@@ -459,11 +455,16 @@ impl NavicoReportReceiver {
                             error!("{}: Weird, no legend now", self.key);
                         }
                     }
+                    self.controls = Some(NavicoControls::new2(
+                        model,
+                        self.info.radar_message_tx.clone(),
+                    ));
                 }
             }
         }
 
         let firmware = format!("{} {}", firmware_date, firmware_time);
+        self.set(&ControlType::OperatingHours, hours);
         self.set_string(&ControlType::FirmwareVersion, firmware);
         self.subtype_repeat = Duration::from_secs(600);
 

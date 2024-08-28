@@ -185,6 +185,14 @@ impl NavicoControls {
             Control::new_string(ControlType::FirmwareVersion, true),
         );
 
+        controls.insert(
+            ControlType::Status,
+            Control::new_list(
+                ControlType::Status,
+                &["Off", "Standby", "Transmit", "", "", "SpinningUp"],
+            ),
+        );
+
         Controls::new(controls, update_tx)
     }
 }

@@ -88,11 +88,11 @@ impl Controls {
         &mut self,
         control_type: &ControlType,
         value: i32,
-    ) -> Result<Option<i32>, ControlError> {
+    ) -> Result<Option<()>, ControlError> {
         if let Some(control) = self.controls.get_mut(control_type) {
             if control.set(value)?.is_some() {
                 Self::broadcast(&self.update_tx, control);
-                return Ok(Some(control.value));
+                return Ok(Some(()));
             }
             Ok(None)
         } else {
@@ -104,11 +104,11 @@ impl Controls {
         control_type: &ControlType,
         auto: bool,
         value: i32,
-    ) -> Result<Option<i32>, ControlError> {
+    ) -> Result<Option<()>, ControlError> {
         if let Some(control) = self.controls.get_mut(control_type) {
             if control.set_auto(auto, value)?.is_some() {
                 Self::broadcast(&self.update_tx, control);
-                return Ok(Some(control.value));
+                return Ok(Some(()));
             }
             Ok(None)
         } else {
@@ -119,11 +119,11 @@ impl Controls {
         &mut self,
         control_type: &ControlType,
         value: String,
-    ) -> Result<Option<()>, ControlError> {
+    ) -> Result<Option<String>, ControlError> {
         if let Some(control) = self.controls.get_mut(control_type) {
             if control.set_string(value).is_some() {
                 Self::broadcast(&self.update_tx, control);
-                return Ok(Some(()));
+                return Ok(control.value_string.clone());
             }
             Ok(None)
         } else {
@@ -268,16 +268,25 @@ impl Control {
     }
 
     /// Read-only access to the definition of the control
-    pub fn item(&self) -> &ControlValue {
-        &self.item
-    }
+    // pub fn item(&self) -> &ControlValue {
+    //     &self.item
+    // }
 
-    pub fn value(&self) -> i32 {
-        self.value
-    }
+    // pub fn value(&self) -> i32 {
+    //     self.value
+    // }
 
-    pub fn auto(&self) -> Option<bool> {
-        self.auto
+    // pub fn auto(&self) -> Option<bool> {
+    //     self.auto
+    // }
+
+    pub fn value_string(&self) -> String {
+        if let Some(names) = &self.item.names {
+            if let Some(v) = names.get(self.value as usize) {
+                return v.to_string();
+            }
+        }
+        return format!("{}", self.value);
     }
 
     pub fn set(&mut self, value: i32) -> Result<Option<()>, ControlError> {
@@ -418,6 +427,7 @@ pub enum ControlType {
     SeaState,
     SerialNumber,
     SideLobeSuppression,
+    Status,
     // Stc,
     // StcCurve,
     TargetBoost,
@@ -474,6 +484,7 @@ impl Display for ControlType {
             ControlType::SideLobeSuppression => "Side lobe suppression",
             // ControlType::Stc => "Sensitivity Time Control",
             // ControlType::StcCurve => "STC curve",
+            ControlType::Status => "Status",
             ControlType::TargetBoost => "Target boost",
             ControlType::TargetExpansion => "Target expansion",
             ControlType::TargetSeparation => "Target separation",
