@@ -14,7 +14,7 @@ impl NavicoControls {
             controls.insert(
                 ControlType::Mode,
                 Control::new_list(
-                    ControlType::BearingAlignment,
+                    ControlType::Mode,
                     &["Custom", "Harbor", "Offshore", "Unknown", "Weather", "Bird"],
                 ),
             );
@@ -22,49 +22,77 @@ impl NavicoControls {
                 ControlType::AccentLight,
                 Control::new_list(ControlType::AccentLight, &["Off", "Low", "Medium", "High"]),
             );
+
+            controls.insert(
+                ControlType::ModelName,
+                Control::new_string(ControlType::ModelName, true),
+            );
             controls.insert(
                 ControlType::NoTransmitStart1,
-                Control::new_numeric(ControlType::NoTransmitStart1, -180, 180),
+                Control::new_numeric(ControlType::NoTransmitStart1, -180, 180)
+                    .wire_scale_factor(1800)
+                    .wire_offset(-1),
             );
             controls.insert(
                 ControlType::NoTransmitStart2,
-                Control::new_numeric(ControlType::NoTransmitStart2, -180, 180),
+                Control::new_numeric(ControlType::NoTransmitStart2, -180, 180)
+                    .wire_scale_factor(1800)
+                    .wire_offset(-1),
             );
             controls.insert(
                 ControlType::NoTransmitStart3,
-                Control::new_numeric(ControlType::NoTransmitStart3, -180, 180),
+                Control::new_numeric(ControlType::NoTransmitStart3, -180, 180)
+                    .wire_scale_factor(1800)
+                    .wire_offset(-1),
             );
             controls.insert(
                 ControlType::NoTransmitStart4,
-                Control::new_numeric(ControlType::NoTransmitStart4, -180, 180),
+                Control::new_numeric(ControlType::NoTransmitStart4, -180, 180)
+                    .wire_scale_factor(1800)
+                    .wire_offset(-1),
             );
             controls.insert(
                 ControlType::NoTransmitEnd1,
-                Control::new_numeric(ControlType::NoTransmitEnd1, -180, 180).unit("Deg"),
+                Control::new_numeric(ControlType::NoTransmitEnd1, -180, 180)
+                    .unit("Deg")
+                    .wire_scale_factor(1800)
+                    .wire_offset(-1),
             );
             controls.insert(
                 ControlType::NoTransmitEnd2,
-                Control::new_numeric(ControlType::NoTransmitEnd2, -180, 180).unit("Deg"),
+                Control::new_numeric(ControlType::NoTransmitEnd2, -180, 180)
+                    .unit("Deg")
+                    .wire_scale_factor(1800)
+                    .wire_offset(-1),
             );
             controls.insert(
                 ControlType::NoTransmitEnd3,
-                Control::new_numeric(ControlType::NoTransmitEnd3, -180, 180).unit("Deg"),
+                Control::new_numeric(ControlType::NoTransmitEnd3, -180, 180)
+                    .unit("Deg")
+                    .wire_scale_factor(1800)
+                    .wire_offset(-1),
             );
             controls.insert(
                 ControlType::NoTransmitEnd4,
-                Control::new_numeric(ControlType::NoTransmitEnd4, -180, 180).unit("Deg"),
+                Control::new_numeric(ControlType::NoTransmitEnd4, -180, 180)
+                    .unit("Deg")
+                    .wire_scale_factor(1800)
+                    .wire_offset(-1),
             );
         }
 
         controls.insert(
             ControlType::AntennaHeight,
-            Control::new_numeric(ControlType::AntennaHeight, 0, 99)
-                .step(10)
-                .unit("m"),
+            Control::new_numeric(ControlType::AntennaHeight, 0, 9900)
+                .wire_scale_factor(99000) // we report cm but network has mm
+                .unit("cm"),
         );
         controls.insert(
             ControlType::BearingAlignment,
-            Control::new_numeric(ControlType::BearingAlignment, -180, 180).unit("Deg"),
+            Control::new_numeric(ControlType::BearingAlignment, -180, 180)
+                .unit("Deg")
+                .wire_scale_factor(1800)
+                .wire_offset(-1),
         );
         controls.insert(
             ControlType::Gain,
@@ -163,7 +191,7 @@ impl NavicoControls {
             controls.insert(
                 ControlType::DopplerSpeedTreshold,
                 Control::new_numeric(ControlType::DopplerSpeedTreshold, 0, 1594)
-                    .step(16)
+                    .wire_scale_factor(1594 * 16)
                     .unit("cm/s"),
             );
         }

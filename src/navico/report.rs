@@ -11,8 +11,8 @@ use tokio::time::{sleep, sleep_until, Instant};
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::radar::{DopplerMode, Legend, RadarError, RadarInfo};
-use crate::settings::ControlType;
-use crate::util::{c_wide_string, create_multicast};
+use crate::settings::{ControlState, ControlType};
+use crate::util::{c_string, c_wide_string, create_multicast};
 
 use super::command::{self, Command};
 use super::settings::NavicoControls;
@@ -128,6 +128,84 @@ impl RadarReport3_129 {
 const REPORT_03_C4_129: u8 = 0x03;
 
 #[repr(packed)]
+struct RadarReport4_66 {
+    _what: u8,
+    _command: u8,
+    _u00: [u8; 4],              // 2..6
+    bearing_alignment: [u8; 2], // 6..8
+    _u01: [u8; 2],              // 8..10
+    antenna_height: [u8; 2],    // 10..12 = Antenna height
+    _u02: [u8; 7],              // 12..19
+    accent_light: u8,           // 19 = Accent light
+    _u03: [u8; 46],             // 20..66
+}
+
+impl RadarReport4_66 {
+    fn transmute(bytes: &[u8]) -> Result<Self, anyhow::Error> {
+        // This is safe as the struct's bits are always all valid representations,
+        // or we convert them using a fail safe function
+        Ok(unsafe {
+            let report: [u8; 66] = bytes.try_into()?;
+            transmute(report)
+        })
+    }
+}
+
+const REPORT_04_C4_66: u8 = 0x04;
+
+#[repr(packed)]
+struct SectorBlankingReport {
+    enabled: u8,
+    start_angle: [u8; 2],
+    end_angle: [u8; 2],
+}
+
+#[repr(packed)]
+struct RadarReport6_68 {
+    _what: u8,
+    _command: u8,
+    _u00: [u8; 4],                       // 2..6
+    name: [u8; 6],                       // 6..12
+    _u01: [u8; 24],                      // 12..36
+    blanking: [SectorBlankingReport; 4], // 36..56
+    _u02: [u8; 12],                      // 56..68
+}
+
+impl RadarReport6_68 {
+    fn transmute(bytes: &[u8]) -> Result<Self, anyhow::Error> {
+        // This is safe as the struct's bits are always all valid representations,
+        // or we convert them using a fail safe function
+        Ok(unsafe {
+            let report: [u8; 68] = bytes.try_into()?;
+            transmute(report)
+        })
+    }
+}
+#[repr(packed)]
+struct RadarReport6_74 {
+    _what: u8,
+    _command: u8,
+    _u00: [u8; 4],                       // 2..6
+    name: [u8; 6],                       // 6..12
+    _u01: [u8; 30],                      // 12..42
+    blanking: [SectorBlankingReport; 4], // 42..52
+    _u0: [u8; 12],                       // 62..74
+}
+
+impl RadarReport6_74 {
+    fn transmute(bytes: &[u8]) -> Result<Self, anyhow::Error> {
+        // This is safe as the struct's bits are always all valid representations,
+        // or we convert them using a fail safe function
+        Ok(unsafe {
+            let report: [u8; 74] = bytes.try_into()?;
+            transmute(report)
+        })
+    }
+}
+
+const REPORT_06_C4_68: u8 = 0x06;
+
+#[repr(packed)]
 struct RadarReport8_18 {
     // 08 c4  length 18
     _what: u8,                  // 0  0x08
@@ -238,7 +316,9 @@ impl NavicoReportReceiver {
                     match r {
                         Ok((len, addr)) => {
                             debug!("{}: received {} bytes from {}", self.key, len, addr);
-                            let _ = self.process_report().await;
+                            if let Err(e) = self.process_report().await {
+                                error!("{}: {}", self.key, e);
+                            }
                             self.buf.clear();
                         }
                         Err(e) => {
@@ -279,6 +359,35 @@ impl NavicoReportReceiver {
                 self.start_socket().await?;
             }
         }
+    }
+
+    fn set_all(
+        &mut self,
+        control_type: &ControlType,
+        value: i32,
+        auto: Option<bool>,
+        state: ControlState,
+    ) {
+        if let Some(controls) = self.controls.as_mut() {
+            match controls.set_all(control_type, value, auto, state) {
+                Err(e) => {
+                    error!("{}: {}", self.key, e.to_string());
+                }
+                Ok(Some(())) => {
+                    if log::log_enabled!(log::Level::Debug) {
+                        let control = controls.controls.get(control_type).unwrap();
+                        debug!(
+                            "{}: Control '{}' new value {} state {}",
+                            self.key,
+                            control_type,
+                            control.value_string(),
+                            control.state
+                        );
+                    }
+                }
+                Ok(None) => {}
+            }
+        };
     }
 
     fn set(&mut self, control_type: &ControlType, value: i32) {
@@ -362,6 +471,15 @@ impl NavicoReportReceiver {
             }
             REPORT_03_C4_129 => {
                 return self.process_report_03().await;
+            }
+            REPORT_04_C4_66 => {
+                return self.process_report_04().await;
+            }
+            REPORT_06_C4_68 => {
+                if data.len() == 68 {
+                    return self.process_report_06_68().await;
+                }
+                return self.process_report_06_74().await;
             }
             REPORT_08_C4_18_OR_21 => {
                 return self.process_report_08().await;
@@ -459,6 +577,9 @@ impl NavicoReportReceiver {
                         model,
                         self.info.radar_message_tx.clone(),
                     ));
+                    if let Some(serial_number) = self.info.serial_no.as_ref() {
+                        self.set_string(&ControlType::SerialNumber, serial_number.to_string());
+                    }
                 }
             }
         }
@@ -466,7 +587,107 @@ impl NavicoReportReceiver {
         let firmware = format!("{} {}", firmware_date, firmware_time);
         self.set(&ControlType::OperatingHours, hours);
         self.set_string(&ControlType::FirmwareVersion, firmware);
+
         self.subtype_repeat = Duration::from_secs(600);
+
+        Ok(())
+    }
+
+    async fn process_report_04(&mut self) -> Result<(), Error> {
+        let data = &self.buf;
+
+        if data.len() != size_of::<RadarReport4_66>() {
+            bail!("{}: Report 0x04C4 invalid length {}", self.key, data.len());
+        }
+
+        let report = RadarReport4_66::transmute(&data)?;
+
+        let bearing_alignment = i16::from_le_bytes(report.bearing_alignment) as i32;
+        let antenna_height = u16::from_le_bytes(report.antenna_height) as i32;
+        let accent_light = report.accent_light as i32;
+
+        self.set(&ControlType::BearingAlignment, bearing_alignment);
+        self.set(&ControlType::AntennaHeight, antenna_height);
+        self.set(&ControlType::AccentLight, accent_light);
+
+        Ok(())
+    }
+
+    const BLANKING_SETS: [(usize, ControlType, ControlType); 4] = [
+        (
+            0,
+            ControlType::NoTransmitStart1,
+            ControlType::NoTransmitEnd1,
+        ),
+        (
+            1,
+            ControlType::NoTransmitStart2,
+            ControlType::NoTransmitEnd2,
+        ),
+        (
+            2,
+            ControlType::NoTransmitStart3,
+            ControlType::NoTransmitEnd3,
+        ),
+        (
+            3,
+            ControlType::NoTransmitStart4,
+            ControlType::NoTransmitEnd4,
+        ),
+    ];
+
+    async fn process_report_06_68(&mut self) -> Result<(), Error> {
+        let data = &self.buf;
+
+        if data.len() != size_of::<RadarReport6_68>() {
+            bail!("{}: Report 0x06C4 invalid length {}", self.key, data.len());
+        }
+
+        let report = RadarReport6_68::transmute(&data)?;
+
+        let name = c_string(&report.name);
+        self.set_string(&ControlType::ModelName, name.unwrap_or("").to_string());
+
+        for (i, start, end) in Self::BLANKING_SETS {
+            let blanking = &report.blanking[i];
+            let start_angle = i16::from_le_bytes(blanking.start_angle);
+            let end_angle = i16::from_le_bytes(blanking.end_angle);
+            let state = if blanking.enabled > 0 {
+                ControlState::Manual
+            } else {
+                ControlState::Off
+            };
+            self.set_all(&start, start_angle as i32, None, state);
+            self.set_all(&end, end_angle as i32, None, state);
+        }
+
+        Ok(())
+    }
+
+    async fn process_report_06_74(&mut self) -> Result<(), Error> {
+        let data = &self.buf;
+
+        if data.len() != size_of::<RadarReport6_74>() {
+            bail!("{}: Report 0x06C4 invalid length {}", self.key, data.len());
+        }
+
+        let report = RadarReport6_74::transmute(&data)?;
+
+        let name = c_string(&report.name);
+        self.set_string(&ControlType::ModelName, name.unwrap_or("").to_string());
+
+        for (i, start, end) in Self::BLANKING_SETS {
+            let blanking = &report.blanking[i];
+            let start_angle = i16::from_le_bytes(blanking.start_angle);
+            let end_angle = i16::from_le_bytes(blanking.end_angle);
+            let state = if blanking.enabled > 0 {
+                ControlState::Manual
+            } else {
+                ControlState::Off
+            };
+            self.set_all(&start, start_angle as i32, None, state);
+            self.set_all(&end, end_angle as i32, None, state);
+        }
 
         Ok(())
     }

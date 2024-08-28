@@ -28,6 +28,20 @@ pub enum ControlState {
     Auto, // TODO: radar_pi had multiple for Garmin, lets see if we can do this better
 }
 
+impl Display for ControlState {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                ControlState::Off => "Off",
+                ControlState::Manual => "Manual",
+                ControlState::Auto => "Auto",
+            }
+        )
+    }
+}
+
 pub struct Controls {
     pub controls: HashMap<ControlType, Control>,
     update_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
@@ -82,6 +96,24 @@ impl Controls {
         }
     }
 
+    pub fn set_all(
+        &mut self,
+        control_type: &ControlType,
+        value: i32,
+        auto: Option<bool>,
+        state: ControlState,
+    ) -> Result<Option<()>, ControlError> {
+        if let Some(control) = self.controls.get_mut(control_type) {
+            if control.set_all(value, auto, state)?.is_some() {
+                Self::broadcast(&self.update_tx, control);
+                return Ok(Some(()));
+            }
+            Ok(None)
+        } else {
+            Err(ControlError::NotSupported(*control_type))
+        }
+    }
+
     /// Set a control value, and if it is changed then broadcast the control
     /// to all listeners.
     pub fn set(
@@ -90,7 +122,10 @@ impl Controls {
         value: i32,
     ) -> Result<Option<()>, ControlError> {
         if let Some(control) = self.controls.get_mut(control_type) {
-            if control.set(value)?.is_some() {
+            if control
+                .set_all(value, None, ControlState::Manual)?
+                .is_some()
+            {
                 Self::broadcast(&self.update_tx, control);
                 return Ok(Some(()));
             }
@@ -106,7 +141,13 @@ impl Controls {
         value: i32,
     ) -> Result<Option<()>, ControlError> {
         if let Some(control) = self.controls.get_mut(control_type) {
-            if control.set_auto(auto, value)?.is_some() {
+            let state = if auto {
+                ControlState::Auto
+            } else {
+                ControlState::Manual
+            };
+
+            if control.set_all(value, Some(auto), state)?.is_some() {
                 Self::broadcast(&self.update_tx, control);
                 return Ok(Some(()));
             }
@@ -171,6 +212,12 @@ impl Control {
         self
     }
 
+    pub fn wire_offset(mut self, wire_offset: i32) -> Self {
+        self.item.wire_offset = wire_offset;
+
+        self
+    }
+
     pub fn unit<S: AsRef<str>>(mut self, unit: S) -> Control {
         self.item.unit = Some(unit.as_ref().to_string());
 
@@ -192,6 +239,7 @@ impl Control {
             auto_adjust_max_value: 0,
             step_value: 1,
             wire_scale_factor: max_value,
+            wire_offset: 0,
             unit: None,
             names: None,
             read_only: false,
@@ -215,6 +263,7 @@ impl Control {
             auto_adjust_max_value: 0,
             step_value: 1,
             wire_scale_factor: max_value,
+            wire_offset: 0,
             unit: None,
             names: None,
             read_only: false,
@@ -237,6 +286,7 @@ impl Control {
             auto_adjust_max_value: 0,
             step_value: 1,
             wire_scale_factor: names.len() as i32 - 1,
+            wire_offset: 0,
             unit: None,
             names: Some(names.into_iter().map(|n| n.to_string()).collect()),
             read_only: false,
@@ -259,6 +309,7 @@ impl Control {
             auto_adjust_max_value: 0,
             step_value: 1,
             wire_scale_factor: 0,
+            wire_offset: 0,
             unit: None,
             names: None,
             read_only,
@@ -289,47 +340,25 @@ impl Control {
         return format!("{}", self.value);
     }
 
-    pub fn set(&mut self, value: i32) -> Result<Option<()>, ControlError> {
-        self.state = ControlState::Manual;
-
-        let value = if self.item.wire_scale_factor != self.item.max_value {
+    pub fn set_all(
+        &mut self,
+        value: i32,
+        auto: Option<bool>,
+        state: ControlState,
+    ) -> Result<Option<()>, ControlError> {
+        let mut value = if self.item.wire_scale_factor != self.item.max_value {
             (value as i64 * self.item.max_value as i64 / self.item.wire_scale_factor as i64) as i32
         } else {
             value
         };
-
-        if value < self.item.min_value {
-            Err(ControlError::TooLow(
-                self.item.control_type,
-                value,
-                self.item.min_value,
-            ))
-        } else if value > self.item.max_value {
-            Err(ControlError::TooHigh(
-                self.item.control_type,
-                value,
-                self.item.max_value,
-            ))
-        } else if self.value != value {
-            self.value = value;
-            Ok(Some(()))
-        } else {
-            Ok(None)
+        if self.item.wire_offset == -1
+            && value > self.item.max_value
+            && value <= 2 * self.item.max_value
+        {
+            // debug!("{} value {} -> ", self.item.control_type, value);
+            value -= 2 * self.item.max_value;
+            // debug!("{} ..... {}", self.item.control_type, value);
         }
-    }
-
-    pub fn set_auto(&mut self, auto: bool, value: i32) -> Result<Option<()>, ControlError> {
-        self.state = if auto {
-            ControlState::Auto
-        } else {
-            ControlState::Manual
-        };
-
-        let value = if self.item.wire_scale_factor != self.item.max_value {
-            (value as i64 * self.item.max_value as i64 / self.item.wire_scale_factor as i64) as i32
-        } else {
-            value
-        };
 
         if value < self.item.min_value {
             Err(ControlError::TooLow(
@@ -343,11 +372,13 @@ impl Control {
                 value,
                 self.item.max_value,
             ))
-        } else if !self.item.has_auto {
+        } else if auto.is_some() && !self.item.has_auto {
             Err(ControlError::NoAuto(self.item.control_type))
-        } else if self.value != value || self.auto != Some(auto) {
+        } else if self.value != value || self.auto != auto {
             self.value = value;
-            self.auto = Some(auto);
+            self.auto = auto;
+            self.state = state;
+
             Ok(Some(()))
         } else {
             Ok(None)
@@ -357,6 +388,7 @@ impl Control {
     pub fn set_string(&mut self, value: String) -> Option<()> {
         if self.value_string.is_none() || self.value_string.as_ref().unwrap() != &value {
             self.value_string = Some(value);
+            self.state = ControlState::Manual;
             Some(())
         } else {
             None
@@ -378,7 +410,8 @@ pub struct ControlValue {
     auto_adjust_min_value: i32,
     auto_adjust_max_value: i32,
     step_value: i32,
-    wire_scale_factor: i32, //
+    wire_scale_factor: i32,
+    wire_offset: i32,
     unit: Option<String>,
     names: Option<Vec<String>>,
     read_only: bool,
@@ -408,6 +441,7 @@ pub enum ControlType {
     // MainBangSize,
     // MainBangSuppression,
     Mode,
+    ModelName,
     NoTransmitEnd1,
     NoTransmitEnd2,
     NoTransmitEnd3,
@@ -463,6 +497,7 @@ impl Display for ControlType {
             // ControlType::MainBangSize => "Main bang size",
             // ControlType::MainBangSuppression => "Main bang suppression",
             ControlType::Mode => "Mode",
+            ControlType::ModelName => "Model name",
             ControlType::NoTransmitEnd1 => "No Transmit end",
             ControlType::NoTransmitEnd2 => "No Transmit end (2)",
             ControlType::NoTransmitEnd3 => "No Transmit end (3)",
