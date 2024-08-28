@@ -21,6 +21,13 @@ use crate::protos::RadarMessage::RadarMessage;
 /// structures in Rust.
 ///
 
+#[derive(Clone, Copy, Debug, Serialize)]
+pub enum ControlState {
+    Off,
+    Manual,
+    Auto, // TODO: radar_pi had multiple for Garmin, lets see if we can do this better
+}
+
 pub struct Controls {
     pub controls: HashMap<ControlType, Control>,
     update_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
@@ -81,11 +88,11 @@ impl Controls {
         &mut self,
         control_type: &ControlType,
         value: i32,
-    ) -> Result<Option<()>, ControlError> {
+    ) -> Result<Option<i32>, ControlError> {
         if let Some(control) = self.controls.get_mut(control_type) {
             if control.set(value)?.is_some() {
                 Self::broadcast(&self.update_tx, control);
-                return Ok(Some(()));
+                return Ok(Some(control.value));
             }
             Ok(None)
         } else {
@@ -97,11 +104,11 @@ impl Controls {
         control_type: &ControlType,
         auto: bool,
         value: i32,
-    ) -> Result<Option<()>, ControlError> {
+    ) -> Result<Option<i32>, ControlError> {
         if let Some(control) = self.controls.get_mut(control_type) {
             if control.set_auto(auto, value)?.is_some() {
                 Self::broadcast(&self.update_tx, control);
-                return Ok(Some(()));
+                return Ok(Some(control.value));
             }
             Ok(None)
         } else {
@@ -132,98 +139,6 @@ pub struct Control {
     value_string: Option<String>,
     auto: Option<bool>,
     pub state: ControlState,
-}
-
-impl Control {
-    /// Read-only access to the definition of the control
-    pub fn item(&self) -> &ControlValue {
-        &self.item
-    }
-
-    pub fn value(&self) -> i32 {
-        self.value
-    }
-
-    pub fn auto(&self) -> Option<bool> {
-        self.auto
-    }
-
-    pub fn set(&mut self, value: i32) -> Result<Option<()>, ControlError> {
-        self.state = ControlState::Manual;
-
-        let value = if self.item.wire_scale_factor != self.item.max_value {
-            (value as i64 * self.item.max_value as i64 / self.item.wire_scale_factor as i64) as i32
-        } else {
-            value
-        };
-
-        if value < self.item.min_value {
-            Err(ControlError::TooLow(
-                self.item.control_type,
-                value,
-                self.item.min_value,
-            ))
-        } else if value > self.item.max_value {
-            Err(ControlError::TooHigh(
-                self.item.control_type,
-                value,
-                self.item.max_value,
-            ))
-        } else if self.value != value {
-            self.value = value;
-            Ok(Some(()))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn set_auto(&mut self, auto: bool, value: i32) -> Result<Option<()>, ControlError> {
-        self.state = if auto {
-            ControlState::Auto
-        } else {
-            ControlState::Manual
-        };
-
-        let value = value * self.item.wire_scale_factor;
-
-        if value < self.item.min_value {
-            Err(ControlError::TooLow(
-                self.item.control_type,
-                value,
-                self.item.min_value,
-            ))
-        } else if value > self.item.max_value {
-            Err(ControlError::TooHigh(
-                self.item.control_type,
-                value,
-                self.item.max_value,
-            ))
-        } else if !self.item.has_auto {
-            Err(ControlError::NoAuto(self.item.control_type))
-        } else if self.value != value || self.auto != Some(auto) {
-            self.value = value;
-            self.auto = Some(auto);
-            Ok(Some(()))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn set_string(&mut self, value: String) -> Option<()> {
-        if self.value_string.is_none() || self.value_string.as_ref().unwrap() != &value {
-            self.value_string = Some(value);
-            Some(())
-        } else {
-            None
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Serialize)]
-pub enum ControlState {
-    Off,
-    Manual,
-    Auto, // TODO: radar_pi had multiple for Garmin, lets see if we can do this better
 }
 
 impl Control {
@@ -350,6 +265,93 @@ impl Control {
             string_value: true,
         });
         control
+    }
+
+    /// Read-only access to the definition of the control
+    pub fn item(&self) -> &ControlValue {
+        &self.item
+    }
+
+    pub fn value(&self) -> i32 {
+        self.value
+    }
+
+    pub fn auto(&self) -> Option<bool> {
+        self.auto
+    }
+
+    pub fn set(&mut self, value: i32) -> Result<Option<()>, ControlError> {
+        self.state = ControlState::Manual;
+
+        let value = if self.item.wire_scale_factor != self.item.max_value {
+            (value as i64 * self.item.max_value as i64 / self.item.wire_scale_factor as i64) as i32
+        } else {
+            value
+        };
+
+        if value < self.item.min_value {
+            Err(ControlError::TooLow(
+                self.item.control_type,
+                value,
+                self.item.min_value,
+            ))
+        } else if value > self.item.max_value {
+            Err(ControlError::TooHigh(
+                self.item.control_type,
+                value,
+                self.item.max_value,
+            ))
+        } else if self.value != value {
+            self.value = value;
+            Ok(Some(()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn set_auto(&mut self, auto: bool, value: i32) -> Result<Option<()>, ControlError> {
+        self.state = if auto {
+            ControlState::Auto
+        } else {
+            ControlState::Manual
+        };
+
+        let value = if self.item.wire_scale_factor != self.item.max_value {
+            (value as i64 * self.item.max_value as i64 / self.item.wire_scale_factor as i64) as i32
+        } else {
+            value
+        };
+
+        if value < self.item.min_value {
+            Err(ControlError::TooLow(
+                self.item.control_type,
+                value,
+                self.item.min_value,
+            ))
+        } else if value > self.item.max_value {
+            Err(ControlError::TooHigh(
+                self.item.control_type,
+                value,
+                self.item.max_value,
+            ))
+        } else if !self.item.has_auto {
+            Err(ControlError::NoAuto(self.item.control_type))
+        } else if self.value != value || self.auto != Some(auto) {
+            self.value = value;
+            self.auto = Some(auto);
+            Ok(Some(()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn set_string(&mut self, value: String) -> Option<()> {
+        if self.value_string.is_none() || self.value_string.as_ref().unwrap() != &value {
+            self.value_string = Some(value);
+            Some(())
+        } else {
+            None
+        }
     }
 }
 

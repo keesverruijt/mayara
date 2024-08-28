@@ -262,7 +262,7 @@ impl NavicoReportReceiver {
     }
 
     pub async fn run(mut self, subsys: SubsystemHandle) -> Result<(), RadarError> {
-        self.start_socket().await.map_err(RadarError::Io)?;
+        self.start_socket().await?;
         loop {
             if self.sock.is_some() {
                 match self.socket_loop(&subsys).await {
@@ -276,7 +276,7 @@ impl NavicoReportReceiver {
                 self.sock = None;
             } else {
                 sleep(Duration::from_millis(1000)).await;
-                self.start_socket().await.map_err(RadarError::Io)?;
+                self.start_socket().await?;
             }
         }
     }
@@ -293,8 +293,8 @@ impl NavicoReportReceiver {
                 Err(e) => {
                     error!("{}: {}", self.key, e.to_string());
                 }
-                Ok(Some(())) => {
-                    debug!("{}: Control '{}' new value {}", self.key, control, value);
+                Ok(Some(v)) => {
+                    debug!("{}: Control '{}' new value {}", self.key, control, v);
                 }
                 Ok(None) => {}
             }
@@ -313,10 +313,10 @@ impl NavicoReportReceiver {
                 Err(e) => {
                     error!("{}: {}", self.key, e.to_string());
                 }
-                Ok(Some(())) => {
+                Ok(Some(v)) => {
                     debug!(
                         "{}: Control '{}' new value {} auto {}",
-                        self.key, control, value, auto
+                        self.key, control, v, auto
                     );
                 }
                 Ok(None) => {}
