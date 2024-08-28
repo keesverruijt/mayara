@@ -19,8 +19,23 @@ use crate::Cli;
 mod command;
 mod data;
 mod report;
+mod settings;
 
 const NAVICO_SPOKES: usize = 2048;
+
+// Length of a spoke in pixels. Every pixel is 4 bits (one nibble.)
+const NAVICO_SPOKE_LEN: usize = 1024;
+
+// Spoke numbers go from [0..4096>, but only half of them are used.
+// The actual image is 2048 x 1024 x 4 bits
+const NAVICO_SPOKES_RAW: u16 = 4096;
+const NAVICO_BITS_PER_PIXEL: usize = BITS_PER_NIBBLE;
+
+const SPOKES_PER_FRAME: usize = 32;
+const BITS_PER_BYTE: usize = 8;
+const BITS_PER_NIBBLE: usize = 4;
+const NAVICO_PIXELS_PER_BYTE: usize = BITS_PER_BYTE / NAVICO_BITS_PER_PIXEL;
+const RADAR_LINE_DATA_LENGTH: usize = NAVICO_SPOKE_LEN / NAVICO_PIXELS_PER_BYTE;
 
 const NAVICO_BEACON_ADDRESS: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(236, 6, 7, 5)), 6878);
@@ -210,7 +225,7 @@ struct BR24Beacon {
 }
 
 #[derive(Copy, Clone, PartialEq, Debug, Primitive)]
-enum Model {
+pub enum Model {
     Unknown = 0xff,
     BR24 = 0x0f,
     Gen3 = 0x08,
@@ -258,6 +273,14 @@ fn found(info: RadarInfo, radars: &Arc<RwLock<Radars>>, subsys: &SubsystemHandle
         let info_clone = info.clone();
         let navico_settings_clone = navico_settings.clone();
 
+        if args.output {
+            let info_clone2 = info.clone();
+
+            subsys.start(SubsystemBuilder::new("stdout", move |s| {
+                info_clone2.forward_output(s)
+            }));
+        }
+
         let data_receiver = data::NavicoDataReceiver::new(info, rx_data, args.clone());
         let report_receiver = report::NavicoReportReceiver::new(
             info_clone,
@@ -266,9 +289,10 @@ fn found(info: RadarInfo, radars: &Arc<RwLock<Radars>>, subsys: &SubsystemHandle
             tx_data,
         );
 
-        subsys.start(SubsystemBuilder::new(data_name, move |s| {
-            data_receiver.run(s)
-        }));
+        subsys.start(SubsystemBuilder::new(
+            data_name,
+            move |s: SubsystemHandle| data_receiver.run(s),
+        ));
         subsys.start(SubsystemBuilder::new(report_name, |s| {
             report_receiver.run(s)
         }));
@@ -343,8 +367,8 @@ fn process_beacon_report(
                         Some(serial_no),
                         Some("A"),
                         16,
-                        2048,
-                        1024,
+                        NAVICO_SPOKES,
+                        NAVICO_SPOKE_LEN,
                         radar_addr.into(),
                         via.clone(),
                         radar_data.into(),
@@ -363,8 +387,8 @@ fn process_beacon_report(
                         Some(serial_no),
                         Some("B"),
                         16,
-                        2048,
-                        1024,
+                        NAVICO_SPOKES,
+                        NAVICO_SPOKE_LEN,
                         radar_addr.into(),
                         via.clone(),
                         radar_data.into(),
@@ -397,8 +421,8 @@ fn process_beacon_report(
                         Some(serial_no),
                         None,
                         16,
-                        2048,
-                        1024,
+                        NAVICO_SPOKES,
+                        NAVICO_SPOKE_LEN,
                         radar_addr.into(),
                         via.clone(),
                         radar_data.into(),
@@ -431,8 +455,8 @@ fn process_beacon_report(
                         Some(serial_no),
                         None,
                         16,
-                        2048,
-                        1024,
+                        NAVICO_SPOKES,
+                        NAVICO_SPOKE_LEN,
                         radar_addr.into(),
                         via.clone(),
                         radar_data.into(),

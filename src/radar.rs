@@ -2,7 +2,6 @@ use enum_primitive_derive::Primitive;
 use log::info;
 use serde::ser::{SerializeMap, Serializer};
 use serde::Serialize;
-use std::io;
 use std::{
     collections::HashMap,
     fmt::{self, Display, Write},
@@ -10,6 +9,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 use thiserror::Error;
+use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::locator::LocatorId;
 use crate::Cli;
@@ -17,7 +17,7 @@ use crate::Cli;
 #[derive(Error, Debug)]
 pub enum RadarError {
     #[error("Socket operation failed")]
-    Io(#[from] io::Error),
+    Io(#[from] std::io::Error),
     #[error("Interface '{0}' is not available")]
     InterfaceNotFound(String),
     #[error("Interface '{0}' has no valid IPv4 address")]
@@ -126,8 +126,8 @@ impl RadarInfo {
         serial_no: Option<&str>,
         which: Option<&str>,
         pixel_values: u8, // How many values per pixel, 0..220 or so
-        spokes: u16,
-        max_spoke_len: u16,
+        spokes: usize,
+        max_spoke_len: usize,
         addr: SocketAddrV4,
         nic_addr: Ipv4Addr,
         spoke_data_addr: SocketAddrV4,
@@ -160,8 +160,8 @@ impl RadarInfo {
             serial_no: serial_no.map(String::from),
             which: which.map(String::from),
             pixel_values,
-            spokes,
-            max_spoke_len,
+            spokes: spokes as u16,
+            max_spoke_len: max_spoke_len as u16,
             addr,
             nic_addr,
             spoke_data_addr,
@@ -178,6 +178,41 @@ impl RadarInfo {
 
     pub fn set_legend(&mut self, doppler: bool) {
         self.legend = Some(default_legend(doppler, self.pixel_values));
+    }
+
+    ///
+    ///  forward_output is activated in all starts of radars when cli args.output
+    ///  is true:
+    ///  
+    ///  if args.output {
+    ///      subsys.start(SubsystemBuilder::new(data_name, move |s| {
+    ///          info.forward_output(s)
+    ///      }));
+    ///  }
+    ///
+
+    pub async fn forward_output(self, subsys: SubsystemHandle) -> Result<(), RadarError> {
+        use std::io::Write;
+
+        let mut rx = self.radar_message_tx.subscribe();
+
+        loop {
+            tokio::select! { biased;
+                _ = subsys.on_shutdown_requested() => {
+                    return Ok(());
+                },
+                r = rx.recv() => {
+                    match r {
+                        Ok(r) => {
+                            std::io::stdout().write_all(&r).unwrap_or_else(|_| { subsys.request_shutdown(); });
+                        },
+                        Err(_) => {
+                            subsys.request_shutdown();
+                        }
+                    };
+                },
+            };
+        }
     }
 }
 

@@ -15,6 +15,7 @@ mod locator;
 mod navico;
 mod protos;
 mod radar;
+mod settings;
 mod util;
 mod web;
 
@@ -33,9 +34,9 @@ pub struct Cli {
     #[arg(short, long)]
     interface: Option<String>,
 
-    /// Record first n revolutions of first radar to stdout
-    #[arg(long, default_value_t = 0)]
-    record: usize,
+    /// Write RadarMessage data to stdout
+    #[arg(long, default_value_t = false)]
+    output: bool,
 
     /// Replay or dev mode; draw circle at extreme range
     #[arg(long, default_value_t = false)]
@@ -58,15 +59,12 @@ async fn main() -> Result<()> {
         warn!(" * Timestamp on each spoke is as if received now");
         warn!(" * Any 4G/HALO secondary radar B is ignored and not reported");
     }
-    if args.record > 0 {
-        warn!(
-            "Record mode activated; the first {} revolutions of spokes will be written",
-            args.record
-        );
-        warn!("to stdout. The data is in 'protobuf' format and consists of RadarMessages.");
+
+    if args.output {
+        warn!("Output mode activated; 'protobuf' formatted RadarMessage sent to stdout");
     }
 
-    let radars = Radars::new(args.clone()); // TODO args moet hier in
+    let radars = Radars::new(args.clone());
     let radars_clone1 = radars.clone();
 
     let web = Web::new(args.port, radars_clone1);

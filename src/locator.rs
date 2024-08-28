@@ -26,6 +26,8 @@ use tokio_graceful_shutdown::SubsystemHandle;
 use crate::radar::{RadarError, Radars};
 use crate::{navico, util, Cli};
 
+const LOCATOR_PACKET_BUFFER_LEN: usize = 300; // Long enough for any location packet
+
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Debug)]
 pub enum LocatorId {
     GenBR24,
@@ -231,7 +233,7 @@ fn spawn_receive(
     socket: LocatorInfo,
 ) {
     set.spawn(async move {
-        let mut buf: Vec<u8> = Vec::with_capacity(2048);
+        let mut buf: Vec<u8> = Vec::with_capacity(LOCATOR_PACKET_BUFFER_LEN);
         let res = socket.sock.recv_buf_from(&mut buf).await;
 
         match res {

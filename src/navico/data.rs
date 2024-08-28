@@ -2,7 +2,6 @@ use bincode::deserialize;
 use log::{debug, trace, warn};
 use protobuf::Message;
 use serde::Deserialize;
-use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{io, time::Duration};
 use tokio::net::UdpSocket;
@@ -11,25 +10,16 @@ use tokio::time::sleep;
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::locator::LocatorId;
+use crate::navico::NAVICO_SPOKE_LEN;
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
 use crate::util::{create_multicast, PrintableSpoke};
 use crate::{radar::*, Cli};
 
-use super::{DataUpdate, NAVICO_SPOKES};
+use super::{
+    DataUpdate, NAVICO_SPOKES, NAVICO_SPOKES_RAW, RADAR_LINE_DATA_LENGTH, SPOKES_PER_FRAME,
+};
 
-// Length of a spoke in pixels. Every pixel is 4 bits (one nibble.)
-const NAVICO_SPOKE_LEN: usize = 1024;
-
-// Spoke numbers go from [0..4096>, but only half of them are used.
-// The actual image is 2048 x 1024 x 4 bits
-const NAVICO_SPOKES_RAW: u16 = 4096;
-
-const SPOKES_PER_FRAME: usize = 32;
-const BITS_PER_BYTE: usize = 8;
-const BITS_PER_NIBBLE: usize = 4;
-const NIBBLES_PER_BYTE: usize = BITS_PER_BYTE / BITS_PER_NIBBLE;
-const RADAR_LINE_DATA_LENGTH: usize = NAVICO_SPOKE_LEN / NIBBLES_PER_BYTE;
 const BYTE_LOOKUP_LENGTH: usize = u8::MAX as usize + 1;
 
 /*
@@ -129,15 +119,13 @@ pub struct NavicoDataReceiver {
     rx: tokio::sync::mpsc::Receiver<DataUpdate>,
     doppler: DopplerMode,
     legend: Option<Legend>,
-    pixel_to_blob: Option<[[u8; BYTE_LOOKUP_LENGTH]; 6]>,
+    pixel_to_blob: Option<[[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH]>,
     args: Cli,
-    record_spokes: usize,
 }
 
 impl NavicoDataReceiver {
     pub fn new(info: RadarInfo, rx: Receiver<DataUpdate>, args: Cli) -> NavicoDataReceiver {
         let key = info.key();
-        let record_spokes = args.record * NAVICO_SPOKES;
 
         NavicoDataReceiver {
             key,
@@ -150,7 +138,6 @@ impl NavicoDataReceiver {
             legend: None,
             pixel_to_blob: None,
             args,
-            record_spokes,
         }
     }
 
@@ -324,17 +311,13 @@ impl NavicoDataReceiver {
         message
             .write_to_vec(&mut bytes)
             .expect("Cannot write RadarMessage to vec");
-        if self.record_spokes > 0 {
-            io::stdout().write_all(&bytes).unwrap();
-            self.record_spokes -= 1;
-        }
 
         match self.info.radar_message_tx.send(bytes) {
             Err(e) => {
-                debug!("{}: Dropping received spoke: {}", self.key, e);
+                trace!("{}: Dropping received spoke: {}", self.key, e);
             }
             Ok(count) => {
-                debug!("{}: sent to {} receivers", self.key, count);
+                trace!("{}: sent to {} receivers", self.key, count);
             }
         }
     }
@@ -433,7 +416,7 @@ impl NavicoDataReceiver {
         spoke: &[u8],
     ) -> Spoke {
         // Convert the spoke data to bytes
-        let mut generic_spoke: Vec<u8> = Vec::with_capacity(1024);
+        let mut generic_spoke: Vec<u8> = Vec::with_capacity(NAVICO_SPOKE_LEN);
         let low_nibble_index = match self.doppler {
             DopplerMode::None => LookupSpokeEnum::LowNormal,
             DopplerMode::Both => LookupSpokeEnum::LowBoth,

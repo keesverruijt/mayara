@@ -11,9 +11,11 @@ use tokio::time::{sleep, sleep_until, Instant};
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::radar::{DopplerMode, Legend, RadarError, RadarInfo};
+use crate::settings::ControlType;
 use crate::util::{c_wide_string, create_multicast};
 
 use super::command::{self, Command};
+use super::settings::NavicoControls;
 use super::{DataUpdate, Model, NavicoSettings};
 
 pub struct NavicoReportReceiver {
@@ -26,6 +28,7 @@ pub struct NavicoReportReceiver {
     data_tx: Sender<DataUpdate>,
     subtype_timeout: Instant,
     subtype_repeat: Duration,
+    controls: Option<NavicoControls>,
 }
 
 #[derive(Primitive, Debug)]
@@ -63,6 +66,42 @@ impl RadarReport1_18 {
 const REPORT_01_C4_18: u8 = 0x01;
 
 #[repr(packed)]
+struct RadarReport2_99 {
+    _what: u8,
+    _command: u8,
+    range: [u8; 4],             // 2..6 = range
+    _u00: [u8; 1],              // 6
+    mode: u8, // 7 = mode, 0 = custom, 1 = harbor, 2 = offshore, 3 = ?, 4 = bird, 5 = weather
+    _u01: [u8; 4], // 8..12
+    gain: u8, // 12
+    sea_auto: u8, // 13 = sea_auto, 0 = off, 1 = harbor, 2 = offshore
+    _u02: [u8; 3], // 14..17
+    sea: [u8; 4], // 17..21
+    _u03: u8, // 21
+    rain: u8, // 22
+    _u04: [u8; 11], // 23..34
+    interference_rejection: u8, // 34
+    _u05: [u8; 3], // 35..38
+    target_expansion: u8, // 38
+    _u06: [u8; 3], // 39..42
+    target_boost: u8, // 42
+    _u07: [u8; 56], // 43..99
+}
+
+impl RadarReport2_99 {
+    fn transmute(bytes: &[u8]) -> Result<Self, anyhow::Error> {
+        // This is safe as the struct's bits are always all valid representations,
+        // or we convert them using a fail safe function
+        Ok(unsafe {
+            let report: [u8; 99] = bytes.try_into()?;
+            transmute(report)
+        })
+    }
+}
+
+const REPORT_02_C4_99: u8 = 0x02;
+
+#[repr(packed)]
 struct RadarReport3_129 {
     _what: u8,
     _command: u8,
@@ -91,23 +130,23 @@ const REPORT_03_C4_129: u8 = 0x03;
 #[repr(packed)]
 struct RadarReport8_18 {
     // 08 c4  length 18
-    _what: u8,                        // 0  0x08
-    _command: u8,                     // 1  0xC4
-    sea_state: u8,                    // 2
-    local_interference_rejection: u8, // 3
-    scan_speed: u8,                   // 4
-    sls_auto: u8,                     // 5 installation: sidelobe suppression auto
-    _field6: u8,                      // 6
-    _field7: u8,                      // 7
-    _field8: u8,                      // 8
-    side_lobe_suppression: u8,        // 9 installation: sidelobe suppression
-    _field10: u16,                    // 10-11
-    noise_rejection: u8,              // 12    noise rejection
-    target_sep: u8,                   // 13
-    sea_clutter: u8,                  // 14 sea clutter on Halo
-    auto_sea_clutter: i8,             // 15 auto sea clutter on Halo
-    _field13: u8,                     // 16
-    _field14: u8,                     // 17
+    _what: u8,                  // 0  0x08
+    _command: u8,               // 1  0xC4
+    sea_state: u8,              // 2
+    interference_rejection: u8, // 3
+    scan_speed: u8,             // 4
+    sls_auto: u8,               // 5 installation: sidelobe suppression auto
+    _field6: u8,                // 6
+    _field7: u8,                // 7
+    _field8: u8,                // 8
+    side_lobe_suppression: u8,  // 9 installation: sidelobe suppression
+    _field10: u16,              // 10-11
+    noise_rejection: u8,        // 12    noise rejection
+    target_sep: u8,             // 13
+    sea_clutter: u8,            // 14 sea clutter on Halo
+    auto_sea_clutter: i8,       // 15 auto sea clutter on Halo
+    _field13: u8,               // 16
+    _field14: u8,               // 17
 }
 
 struct RadarReport8_21 {
@@ -121,7 +160,7 @@ impl RadarReport8_18 {
         // This is safe as the struct's bits are always all valid representations,
         // or we convert them using a fail safe function
         Ok(unsafe {
-            let report: [u8; 18] = bytes.try_into()?;
+            let report: [u8; size_of::<RadarReport8_18>()] = bytes.try_into()?;
             transmute(report)
         })
     }
@@ -132,7 +171,7 @@ impl RadarReport8_21 {
         // This is safe as the struct's bits are always all valid representations,
         // or we convert them using a fail safe function
         Ok(unsafe {
-            let report: [u8; 21] = bytes.try_into()?;
+            let report: [u8; size_of::<RadarReport8_21>()] = bytes.try_into()?;
             transmute(report)
         })
     }
@@ -151,13 +190,14 @@ impl NavicoReportReceiver {
         NavicoReportReceiver {
             key: key,
             info: info,
-            buf: Vec::with_capacity(1024),
+            buf: Vec::with_capacity(500),
             sock: None,
             settings,
             command_sender,
             subtype_timeout: Instant::now(),
             subtype_repeat: Duration::from_millis(5000),
             data_tx,
+            controls: None,
         }
     }
 
@@ -222,7 +262,7 @@ impl NavicoReportReceiver {
     }
 
     pub async fn run(mut self, subsys: SubsystemHandle) -> Result<(), RadarError> {
-        self.start_socket().await?;
+        self.start_socket().await.map_err(RadarError::Io)?;
         loop {
             if self.sock.is_some() {
                 match self.socket_loop(&subsys).await {
@@ -236,9 +276,77 @@ impl NavicoReportReceiver {
                 self.sock = None;
             } else {
                 sleep(Duration::from_millis(1000)).await;
-                self.start_socket().await?;
+                self.start_socket().await.map_err(RadarError::Io)?;
             }
         }
+    }
+
+    fn set(&mut self, control: &ControlType, value: i32) {
+        let model = self.settings.model.load();
+
+        if model != Model::Unknown {
+            let controls = self.controls.get_or_insert_with(|| {
+                NavicoControls::new2(model, self.info.radar_message_tx.clone())
+            });
+
+            match controls.set(control, value) {
+                Err(e) => {
+                    error!("{}: {}", self.key, e.to_string());
+                }
+                Ok(Some(())) => {
+                    debug!("{}: Control '{}' new value {}", self.key, control, value);
+                }
+                Ok(None) => {}
+            }
+        };
+    }
+
+    fn set_auto(&mut self, control: &ControlType, value: i32, auto: u8) {
+        let model = self.settings.model.load();
+
+        if model != Model::Unknown {
+            let controls = self.controls.get_or_insert_with(|| {
+                NavicoControls::new2(model, self.info.radar_message_tx.clone())
+            });
+
+            match controls.set_auto(control, auto > 0, value) {
+                Err(e) => {
+                    error!("{}: {}", self.key, e.to_string());
+                }
+                Ok(Some(())) => {
+                    debug!(
+                        "{}: Control '{}' new value {} auto {}",
+                        self.key, control, value, auto
+                    );
+                }
+                Ok(None) => {}
+            }
+        };
+    }
+
+    fn set_string(&mut self, control: &ControlType, value: String) {
+        let model = self.settings.model.load();
+
+        if model != Model::Unknown {
+            let controls = self.controls.get_or_insert_with(|| {
+                NavicoControls::new2(model, self.info.radar_message_tx.clone())
+            });
+
+            let value_clone = value.clone();
+
+            match controls.set_string(control, value) {
+                Err(e) => {
+                    error!("{}: {}", self.key, e.to_string());
+                }
+                Ok(Some(())) => {
+                    debug!(
+                        "{}: Control '{}' new value {}",
+                        self.key, control, value_clone
+                    );
+                }
+                Ok(None) => {}
+            }
+        };
     }
 
     async fn process_report(&mut self) -> Result<(), Error> {
@@ -257,6 +365,9 @@ impl NavicoReportReceiver {
         match report_identification {
             REPORT_01_C4_18 => {
                 return self.process_report_01().await;
+            }
+            REPORT_02_C4_99 => {
+                return self.process_report_02().await;
             }
             REPORT_03_C4_129 => {
                 return self.process_report_03().await;
@@ -285,6 +396,41 @@ impl NavicoReportReceiver {
         Ok(())
     }
 
+    async fn process_report_02(&mut self) -> Result<(), Error> {
+        let data = &self.buf;
+
+        if data.len() != size_of::<RadarReport2_99>() {
+            bail!("{}: Report 0x02C4 invalid length {}", self.key, data.len());
+        }
+
+        let report = RadarReport2_99::transmute(&data)?;
+
+        let mode = report.mode as i32;
+        let range = i32::from_le_bytes(report.range);
+        let gain = report.gain as i32;
+        let sea_auto = report.sea_auto;
+        let sea = i32::from_le_bytes(report.sea);
+        let rain = report.rain as i32;
+        let interference_rejection = report.interference_rejection as i32;
+        let target_expansion = report.target_expansion as i32;
+        let target_boost = report.target_boost as i32;
+
+        debug!("{}: range={} mode={} gain={} sea={} sea_auto={} rain={} interference_rejection={} target_expansion={} \
+                target_boost={}",
+                self.key, range, mode, gain, sea, sea_auto, rain, interference_rejection, target_expansion, target_boost);
+
+        self.set(&ControlType::Range, range);
+        self.set(&ControlType::Mode, mode);
+        self.set(&ControlType::Gain, gain);
+        self.set_auto(&ControlType::Sea, sea, sea_auto);
+        self.set(&ControlType::Rain, rain);
+        self.set(&ControlType::InterferenceRejection, interference_rejection);
+        self.set(&ControlType::TargetExpansion, target_expansion);
+        self.set(&ControlType::TargetBoost, target_boost);
+
+        Ok(())
+    }
+
     async fn process_report_03(&mut self) -> Result<(), Error> {
         let report = RadarReport3_129::transmute(&self.buf)?;
         let model = report.model;
@@ -305,7 +451,7 @@ impl NavicoReportReceiver {
                     info!("{}: Radar is model {}", self.key, model);
                     self.settings.model.store(model);
 
-                    match self.update_info_state(model) {
+                    match self.generate_legend(model) {
                         Some(legend) => {
                             self.data_tx.send(DataUpdate::Legend(legend)).await?;
                         }
@@ -317,21 +463,25 @@ impl NavicoReportReceiver {
             }
         }
 
+        let firmware = format!("{} {}", firmware_date, firmware_time);
+        self.set_string(&ControlType::FirmwareVersion, firmware);
         self.subtype_repeat = Duration::from_secs(600);
 
         Ok(())
     }
 
     ///
+    /// Generate a legend to all byte values stored in the spokes.
+    ///
     /// Separate function so we don't lock radars longer than necessary
     /// Once we return the lock is gone, and the legend can be sent to
     /// the data thread.
     ///
-    fn update_info_state(&mut self, model: Model) -> Option<Legend> {
+    fn generate_legend(&mut self, model: Model) -> Option<Legend> {
         match self.settings.radars.write() {
             Ok(mut radars) => {
                 if let Some(info) = radars.info.get_mut(&self.key) {
-                    info.model = Some(format!("{}", model));
+                    info.model = Some(model.to_string());
                     info.set_legend(model == Model::HALO);
                     if let Some(legend) = &info.legend {
                         return Some(legend.clone());
@@ -348,14 +498,15 @@ impl NavicoReportReceiver {
     async fn process_report_08(&mut self) -> Result<(), Error> {
         let data = &self.buf;
 
-        if data.len() != 18 && data.len() != 21 {
+        if data.len() != size_of::<RadarReport8_18>() && data.len() != size_of::<RadarReport8_21>()
+        {
             bail!("{}: Report 0x08C4 invalid length {}", self.key, data.len());
         }
 
-        let report = RadarReport8_18::transmute(&data[0..18])?;
+        let report = RadarReport8_18::transmute(&data[0..size_of::<RadarReport8_18>()])?;
 
         let sea_state = report.sea_state;
-        let local_interference_rejection = report.local_interference_rejection;
+        let interference_rejection = report.interference_rejection;
         let scan_speed = report.scan_speed;
         let sidelobe_suppression_auto = report.sls_auto;
         let sidelobe_suppression = report.side_lobe_suppression;
@@ -364,13 +515,13 @@ impl NavicoReportReceiver {
         let sea_clutter = report.sea_clutter;
         let auto_sea_clutter = report.auto_sea_clutter;
 
-        debug!("{}: sea_state={} local_interference_rej={} scan_speed={} \
+        debug!("{}: sea_state={} interference_rej={} scan_speed={} \
                 sidelobe_suppression={} (auto {}) noise_reduction={} target_sep={} sea_clutter={} (auto {})",
-                self.key, sea_state, local_interference_rejection, scan_speed,
+                self.key, sea_state, interference_rejection, scan_speed,
                 sidelobe_suppression, sidelobe_suppression_auto, noise_reduction, target_sep, sea_clutter, auto_sea_clutter);
 
-        if data.len() == 21 {
-            let report = RadarReport8_21::transmute(&data[0..21])?;
+        if data.len() == size_of::<RadarReport8_21>() {
+            let report = RadarReport8_21::transmute(&data)?;
 
             let doppler_speed = u16::from_le_bytes(report.doppler_speed);
             let doppler_state = report.doppler_state;
@@ -393,6 +544,14 @@ impl NavicoReportReceiver {
                 }
             }
         }
+
+        self.set(&ControlType::SeaState, sea_state as i32);
+        self.set(
+            &ControlType::InterferenceRejection,
+            interference_rejection as i32,
+        );
+        self.set(&ControlType::ScanSpeed, scan_speed as i32);
+
         Ok(())
     }
 }
