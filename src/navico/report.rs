@@ -28,6 +28,7 @@ pub struct NavicoReportReceiver {
     subtype_timeout: Instant,
     subtype_repeat: Duration,
     controls: Option<NavicoControls>,
+    reported_unknown: [bool; 256],
 }
 
 #[derive(Primitive, Debug)]
@@ -287,6 +288,7 @@ impl NavicoReportReceiver {
             subtype_repeat: Duration::from_millis(5000),
             data_tx,
             controls: None,
+            reported_unknown: [false; 256],
         }
     }
 
@@ -494,14 +496,18 @@ impl NavicoReportReceiver {
                 return self.process_report_08().await;
             }
             _ => {
-                bail!(
-                    "Unknown report identification {} len {} data {:02X?} dropped",
-                    report_identification,
-                    data.len(),
-                    data
-                );
+                if !self.reported_unknown[report_identification as usize] {
+                    self.reported_unknown[report_identification as usize] = true;
+                    bail!(
+                        "Unknown report identification {} len {} data {:02X?} dropped",
+                        report_identification,
+                        data.len(),
+                        data
+                    );
+                }
             }
         };
+        Ok(())
     }
 
     async fn process_report_01(&mut self) -> Result<(), Error> {
@@ -637,6 +643,9 @@ impl NavicoReportReceiver {
         ),
     ];
 
+    ///
+    /// Blanking (No Transmit) report as seen on HALO 2006
+    ///
     async fn process_report_06_68(&mut self) -> Result<(), Error> {
         let report = RadarReport6_68::transmute(&self.buf)?;
 
@@ -661,6 +670,9 @@ impl NavicoReportReceiver {
         Ok(())
     }
 
+    ///
+    /// Blanking (No Transmit) report as seen on HALO 24 (Firmware 2023)
+    ///
     async fn process_report_06_74(&mut self) -> Result<(), Error> {
         let report = RadarReport6_74::transmute(&self.buf)?;
 
