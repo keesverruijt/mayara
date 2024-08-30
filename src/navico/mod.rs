@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use bincode::deserialize;
-use crossbeam::atomic::AtomicCell;
 use enum_primitive_derive::Primitive;
 use log::{debug, error, log_enabled, trace};
 use serde::Deserialize;
@@ -80,44 +79,6 @@ Not definitive list for
 4G radars only send the C4 data.
 */
 
-//
-// The following is the received radar state. It sends this regularly
-// but especially after something sends it a state change.
-//
-
-/*
-
- BR24:   N/A
- 3G:     N/A
-             Serial______________            Addr____Port                        Addr____Port        Addr____Port Addr____Port
-Addr____Port                    Addr____Port        Addr____Port        Addr____Port                    Addr____Port Addr____Port
-Addr____Port                    Addr____Port        Addr____Port        Addr____Port                    Addr____Port Addr____Port
-Addr____Port 4G:
-01B2313430333330323030300000000000000A0043D901010600FDFF20010200100000000A0043D9176011000000EC0607161A261F002001020010000000EC0607171A1C11000000EC0607181A1D10002001030010000000EC0607081A1611000000EC06070A1A1812000000EC0607091A1710002002030010000000EC06070D1A0111000000EC06070E1A0212000000EC06070F1A0312002001030010000000EC0607121A2011000000EC0607141A2212000000EC0607131A2112002002030010000000EC06070C1A0411000000EC06070D1A0512000000EC06070E1A06
- HALO:
-01B231353039303332303030000000000000C0A800F014300600FDFF2001020010000000EC06076117F111000000EC0607161A261F002001020010000000EC06076217F211000000EC06076317F310002001030010000000EC06076417F411000000EC06076517F512000000EC06076617F610002002030010000000EC06076717F711000000EC06076817F812000000EC06076917F912002001030010000000EC06076A17FA11000000EC06076B17FB12000000EC06076C17FC12002002030010000000EC06076D17FD11000000EC06076E17FE12000000EC06076F17FF
- HALO24:
-01B2313930323530313030300000000000000A0043C620310600FDFF2001020010000000EC060820197011000000EC0607161A261F002001020010000000EC060821197111000000EC060822197210002001030010000000EC060823197311000000EC060824197412000000EC060823197510002002030010000000EC060825197611000000EC060826197712000000EC060825197812002001030010000000EC060823197911000000EC060827197A12000000EC060823197B12002002030010000000EC060825197C11000000EC060828197D12000000EC060825197E
-
-0A 00 43 D9 01 01 06 00 FD FF 20 01 02 00 10 00 00 00
-0A 00 43 D9 17 60 11 00 00 00
-EC 06 07 16 1A 26 1F 00 20 01 02 00 10 00 00 00
-EC 06 07 17 1A 1C 11 00 00 00
-EC 06 07 18 1A 1D 10 00 20 01 03 00 10 00 00 00
-EC 06 07 08 1A 16 11 00 00 00
-EC 06 07 0A 1A 18 12 00 00 00
-EC 06 07 09 1A 17 10 00 20 02 03 00 10 00 00 00
-EC 06 07 0D 1A 01 11 00 00 00
-EC 06 07 0E 1A 02 12 00 00 00
-EC 06 07 0F 1A 03 12 00 20 01 03 00 10 00 00 00
-EC 06 07 12 1A 20 11 00 00 00
-EC 06 07 14 1A 22 12 00 00 00
-EC 06 07 13 1A 21 12 00 20 02 03 00 10 00 00 00
-EC 06 07 0C 1A 04 11 00 00 00
-EC 06 07 0D 1A 05 12 00 00 00
-EC 06 07 0E 1A 06
-*/
-
 const NAVICO_ADDRESS_REQUEST_PACKET: [u8; 2] = [0x01, 0xB1];
 
 #[derive(Deserialize, Debug, Copy, Clone)]
@@ -183,25 +144,6 @@ struct NavicoBeaconDual {
 const NAVICO_BR24_BEACON_ADDRESS: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(236, 6, 7, 4)), 6768);
 
-/*  The following beacon package has been seen:
-    1, 178, // 0: id =
-    49, 48, 52, 55, 51, 48, 48, 48, 52, 51, 0, 0, 0, 0, 0, 0, // 2: Serial Nr
-    169, 254, 210, 23, 1, 1 // 18: Radar IP address
-    2, 0, 18, 0, 32, 1, 3, 0, 18, 0, 0, 0, //
-    236, 6, 7, 19, 26, 33,
-    17, 0, 0, 0,
-    236, 6, 7, 20, 26, 34,
-    16, 0, 0, 0,
-    236, 6, 7, 18, 26, 32,
-    16, 0, 32, 1, 3, 0, 18, 0, 0, 0,
-    236, 6, 7, 9, 26, 23, // Report addr
-    17, 0, 0, 0,
-    236, 6, 7, 10, 26, 24,  // Send command addr
-    16, 0, 0, 0,
-    236, 6, 7, 8, 26, 22 // Data addr
-
-*/
-
 // The beacon message from BR24 (and first gen 3G) is _slightly_ different,
 // so it needs a different structure. It is also sent to a different MultiCast address!
 #[derive(Deserialize, Debug, Copy, Clone)]
@@ -233,11 +175,13 @@ pub enum Model {
     HALO = 0x00,
 }
 
+const BR24_MODEL_NAME: &str = "BR24";
+
 impl fmt::Display for Model {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let s = match self {
             Model::Unknown => "",
-            Model::BR24 => "BR24",
+            Model::BR24 => BR24_MODEL_NAME,
             Model::Gen3 => "3G",
             Model::Gen4 => "4G",
             Model::HALO => "HALO",
@@ -249,7 +193,7 @@ impl fmt::Display for Model {
 #[derive(Debug)]
 pub struct NavicoSettings {
     radars: Arc<RwLock<Radars>>,
-    model: AtomicCell<Model>,
+    model: Model,
 }
 
 const NAVICO_BEACON_SINGLE_SIZE: usize = size_of::<NavicoBeaconSingle>();
@@ -259,19 +203,21 @@ const NAVICO_BEACON_BR24_SIZE: usize = size_of::<BR24Beacon>();
 fn found(info: RadarInfo, radars: &Arc<RwLock<Radars>>, subsys: &SubsystemHandle, args: &Cli) {
     if let Some(info) = Radars::located(info, radars) {
         // It's new, start the RadarProcessor thread
-        let navico_settings = Arc::new(NavicoSettings {
+        let navico_settings = NavicoSettings {
             radars: radars.clone(),
-            model: AtomicCell::new(Model::Unknown),
-        });
+            model: if info.model == Some(BR24_MODEL_NAME.to_string()) {
+                Model::BR24
+            } else {
+                Model::Unknown
+            },
+        };
 
         let (tx_data, rx_data) = mpsc::channel(10);
-        let command_sender = command::Command::new(info.clone(), navico_settings.clone());
 
         // Clone everything moved into future twice or more
         let data_name = info.key() + " data";
         let report_name = info.key() + " reports";
         let info_clone = info.clone();
-        let navico_settings_clone = navico_settings.clone();
 
         if args.output {
             let info_clone2 = info.clone();
@@ -282,12 +228,8 @@ fn found(info: RadarInfo, radars: &Arc<RwLock<Radars>>, subsys: &SubsystemHandle
         }
 
         let data_receiver = data::NavicoDataReceiver::new(info, rx_data, args.clone());
-        let report_receiver = report::NavicoReportReceiver::new(
-            info_clone,
-            navico_settings_clone,
-            command_sender,
-            tx_data,
-        );
+        let report_receiver =
+            report::NavicoReportReceiver::new(info_clone, navico_settings, tx_data);
 
         subsys.start(SubsystemBuilder::new(
             data_name,
@@ -322,7 +264,7 @@ fn process_locator_report(
     }
 
     if report == NAVICO_ADDRESS_REQUEST_PACKET {
-        debug!("Radar address request packet from {}", from);
+        trace!("Radar address request packet from {}", from);
         return Ok(());
     }
     if report[0] == 0x1 && report[1] == 0xB2 {
@@ -451,7 +393,7 @@ fn process_beacon_report(
                     let location_info: RadarInfo = RadarInfo::new(
                         LocatorId::GenBR24,
                         "Navico",
-                        Some("BR24"),
+                        Some(BR24_MODEL_NAME),
                         Some(serial_no),
                         None,
                         16,

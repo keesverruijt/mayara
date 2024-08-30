@@ -1,12 +1,9 @@
 use log::{debug, trace};
 use std::io;
-use std::sync::Arc;
 use tokio::net::UdpSocket;
 
 use crate::radar::RadarInfo;
 use crate::util::create_multicast_send;
-
-use super::NavicoSettings;
 
 pub const REQUEST_03_REPORT: [u8; 2] = [0x04, 0xc2]; // This causes the radar to report Report 3
 pub const REQUEST_MANY2_REPORT: [u8; 2] = [0x01, 0xc2]; // This causes the radar to report Report 02, 03, 04, 07 and 08
@@ -17,16 +14,14 @@ pub struct Command {
     key: String,
     info: RadarInfo,
     sock: Option<UdpSocket>,
-    settings: Arc<NavicoSettings>,
 }
 
 impl Command {
-    pub fn new(info: RadarInfo, settings: Arc<NavicoSettings>) -> Self {
+    pub fn new(info: RadarInfo) -> Self {
         Command {
             key: info.key(),
             info: info,
             sock: None,
-            settings,
         }
     }
 
@@ -38,7 +33,6 @@ impl Command {
                     self.key, &self.info.send_command_addr, &self.info.nic_addr
                 );
                 self.sock = Some(sock);
-                debug!("{}: Settings {:?}", self.key, self.settings);
 
                 Ok(())
             }

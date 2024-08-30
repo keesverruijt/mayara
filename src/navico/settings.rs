@@ -146,7 +146,7 @@ impl NavicoControls {
         );
         controls.insert(
             ControlType::SideLobeSuppression,
-            Control::new_auto(ControlType::SideLobeSuppression, 0, 100),
+            Control::new_auto(ControlType::SideLobeSuppression, 0, 100).wire_scale_factor(255),
         );
         controls.insert(
             ControlType::TargetBoost,
@@ -189,8 +189,8 @@ impl NavicoControls {
                 Control::new_list(ControlType::Doppler, &["Off", "Normal", "Approaching"]),
             );
             controls.insert(
-                ControlType::DopplerSpeedTreshold,
-                Control::new_numeric(ControlType::DopplerSpeedTreshold, 0, 1594)
+                ControlType::DopplerSpeedThreshold,
+                Control::new_numeric(ControlType::DopplerSpeedThreshold, 0, 1594)
                     .wire_scale_factor(1594 * 16)
                     .unit("cm/s"),
             );
@@ -224,18 +224,3 @@ impl NavicoControls {
         Controls::new(controls, update_tx)
     }
 }
-
-/*     control_type: ControlType,
-   auto_values: i32,
-   auto_names: Option<Vec<String>>,
-   has_off: bool,
-   has_auto_adjustable: bool,
-   default_value: i32,
-   min_value: i32,
-   max_value: i32,
-   min_adjust_value: i32,
-   max_adjust_value: i32,
-   step_value: i32,
-   unit: Option<String>,
-   names: Option<Vec<String>>,
-*/

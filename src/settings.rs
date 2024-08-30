@@ -194,11 +194,11 @@ impl Control {
         }
     }
 
-    pub fn step(mut self, step: i32) -> Self {
-        self.item.step_value = step;
+    // pub fn step(mut self, step: i32) -> Self {
+    //     self.item.step_value = step;
 
-        self
-    }
+    //     self
+    // }
 
     pub fn read_only(mut self) -> Self {
         self.item.read_only = true;
@@ -319,9 +319,9 @@ impl Control {
     }
 
     /// Read-only access to the definition of the control
-    // pub fn item(&self) -> &ControlValue {
-    //     &self.item
-    // }
+    pub fn item(&self) -> &ControlValue {
+        &self.item
+    }
 
     // pub fn value(&self) -> i32 {
     //     self.value
@@ -412,7 +412,7 @@ pub struct ControlValue {
     step_value: i32,
     wire_scale_factor: i32,
     wire_offset: i32,
-    unit: Option<String>,
+    pub unit: Option<String>,
     names: Option<Vec<String>>,
     read_only: bool,
     string_value: bool,
@@ -432,7 +432,7 @@ pub enum ControlType {
     // DisplayTiming,
     Doppler,
     // DopplerAutoTrack,
-    DopplerSpeedTreshold,
+    DopplerSpeedThreshold,
     // Ftc,
     FirmwareVersion,
     Gain,
@@ -488,7 +488,7 @@ impl Display for ControlType {
             // ControlType::DisplayTiming => "Display timing",
             ControlType::Doppler => "Doppler",
             // ControlType::DopplerAutoTrack => "Doppler Auto Track",
-            ControlType::DopplerSpeedTreshold => "Doppler speed threshold",
+            ControlType::DopplerSpeedThreshold => "Doppler speed threshold",
             ControlType::FirmwareVersion => "Firmware version",
             // ControlType::Ftc => "FTC",
             ControlType::Gain => "Gain",

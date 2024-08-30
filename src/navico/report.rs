@@ -2,7 +2,6 @@ use anyhow::{bail, Error};
 use enum_primitive_derive::Primitive;
 use log::{debug, error, info, trace};
 use std::mem::transmute;
-use std::sync::Arc;
 use std::time::Duration;
 use std::{fmt, io};
 use tokio::net::UdpSocket;
@@ -23,7 +22,7 @@ pub struct NavicoReportReceiver {
     key: String,
     buf: Vec<u8>,
     sock: Option<UdpSocket>,
-    settings: Arc<NavicoSettings>,
+    settings: NavicoSettings,
     command_sender: Command,
     data_tx: Sender<DataUpdate>,
     subtype_timeout: Instant,
@@ -44,6 +43,7 @@ impl fmt::Display for Status {
     }
 }
 
+#[derive(Debug)]
 #[repr(packed)]
 struct RadarReport1_18 {
     _what: u8,
@@ -57,7 +57,7 @@ impl RadarReport1_18 {
         // This is safe as the struct's bits are always all valid representations,
         // or we convert them using a fail safe function
         Ok(unsafe {
-            let report: [u8; 18] = bytes.try_into()?;
+            let report: [u8; 18] = bytes.try_into()?; // Hardwired length on purpose to verify length
             transmute(report)
         })
     }
@@ -65,6 +65,7 @@ impl RadarReport1_18 {
 
 const REPORT_01_C4_18: u8 = 0x01;
 
+#[derive(Debug)]
 #[repr(packed)]
 struct RadarReport2_99 {
     _what: u8,
@@ -101,6 +102,7 @@ impl RadarReport2_99 {
 
 const REPORT_02_C4_99: u8 = 0x02;
 
+#[derive(Debug)]
 #[repr(packed)]
 struct RadarReport3_129 {
     _what: u8,
@@ -119,7 +121,7 @@ impl RadarReport3_129 {
         // This is safe as the struct's bits are always all valid representations,
         // or we convert them using a fail safe function
         Ok(unsafe {
-            let report: [u8; 129] = bytes.try_into()?;
+            let report: [u8; 129] = bytes.try_into()?; // Hardwired length on purpose to verify length
             transmute(report)
         })
     }
@@ -127,6 +129,7 @@ impl RadarReport3_129 {
 
 const REPORT_03_C4_129: u8 = 0x03;
 
+#[derive(Debug)]
 #[repr(packed)]
 struct RadarReport4_66 {
     _what: u8,
@@ -153,6 +156,7 @@ impl RadarReport4_66 {
 
 const REPORT_04_C4_66: u8 = 0x04;
 
+#[derive(Debug, Copy, Clone)]
 #[repr(packed)]
 struct SectorBlankingReport {
     enabled: u8,
@@ -160,6 +164,7 @@ struct SectorBlankingReport {
     end_angle: [u8; 2],
 }
 
+#[derive(Debug)]
 #[repr(packed)]
 struct RadarReport6_68 {
     _what: u8,
@@ -176,11 +181,12 @@ impl RadarReport6_68 {
         // This is safe as the struct's bits are always all valid representations,
         // or we convert them using a fail safe function
         Ok(unsafe {
-            let report: [u8; 68] = bytes.try_into()?;
+            let report: [u8; 68] = bytes.try_into()?; // Hardwired length on purpose to verify length
             transmute(report)
         })
     }
 }
+#[derive(Debug)]
 #[repr(packed)]
 struct RadarReport6_74 {
     _what: u8,
@@ -205,6 +211,7 @@ impl RadarReport6_74 {
 
 const REPORT_06_C4_68: u8 = 0x06;
 
+#[derive(Debug, Copy, Clone)]
 #[repr(packed)]
 struct RadarReport8_18 {
     // 08 c4  length 18
@@ -222,11 +229,13 @@ struct RadarReport8_18 {
     noise_rejection: u8,        // 12    noise rejection
     target_sep: u8,             // 13
     sea_clutter: u8,            // 14 sea clutter on Halo
-    auto_sea_clutter: i8,       // 15 auto sea clutter on Halo
+    auto_sea_clutter: u8,       // 15 auto sea clutter on Halo
     _field13: u8,               // 16
     _field14: u8,               // 17
 }
 
+#[derive(Debug)]
+#[repr(packed)]
 struct RadarReport8_21 {
     _old: RadarReport8_18,
     doppler_state: u8,
@@ -238,7 +247,7 @@ impl RadarReport8_18 {
         // This is safe as the struct's bits are always all valid representations,
         // or we convert them using a fail safe function
         Ok(unsafe {
-            let report: [u8; size_of::<RadarReport8_18>()] = bytes.try_into()?;
+            let report: [u8; 18] = bytes.try_into()?; // Hardwired length on purpose to verify length
             transmute(report)
         })
     }
@@ -249,26 +258,28 @@ impl RadarReport8_21 {
         // This is safe as the struct's bits are always all valid representations,
         // or we convert them using a fail safe function
         Ok(unsafe {
-            let report: [u8; size_of::<RadarReport8_21>()] = bytes.try_into()?;
+            let report: [u8; 21] = bytes.try_into()?; // Hardwired length on purpose to verify length
             transmute(report)
         })
     }
 }
 
-const REPORT_08_C4_18_OR_21: u8 = 0x08;
+const REPORT_08_C4_18_OR_21_OR_22: u8 = 0x08;
 
 impl NavicoReportReceiver {
     pub fn new(
         info: RadarInfo,
-        settings: Arc<NavicoSettings>,
-        command_sender: Command,
+        settings: NavicoSettings,
         data_tx: Sender<DataUpdate>,
     ) -> NavicoReportReceiver {
         let key = info.key();
+
+        let command_sender = Command::new(info.clone());
+
         NavicoReportReceiver {
             key: key,
             info: info,
-            buf: Vec::with_capacity(500),
+            buf: Vec::with_capacity(1000),
             sock: None,
             settings,
             command_sender,
@@ -314,8 +325,7 @@ impl NavicoReportReceiver {
               },
               r = self.sock.as_ref().unwrap().recv_buf_from(&mut self.buf)  => {
                     match r {
-                        Ok((len, addr)) => {
-                            debug!("{}: received {} bytes from {}", self.key, len, addr);
+                        Ok((_len, _addr)) => {
                             if let Err(e) = self.process_report().await {
                                 error!("{}: {}", self.key, e);
                             }
@@ -400,10 +410,11 @@ impl NavicoReportReceiver {
                     if log::log_enabled!(log::Level::Debug) {
                         let control = controls.controls.get(control_type).unwrap();
                         debug!(
-                            "{}: Control '{}' new value {}",
+                            "{}: Control '{}' new value {} {}",
                             self.key,
                             control_type,
-                            control.value_string()
+                            control.value_string(),
+                            control.item().unit.as_deref().unwrap_or(""),
                         );
                     }
                 }
@@ -452,8 +463,6 @@ impl NavicoReportReceiver {
     async fn process_report(&mut self) -> Result<(), Error> {
         let data = &self.buf;
 
-        trace!("{}: report received: {:02X?}", self.key, data);
-
         if data.len() < 2 {
             bail!("UDP report len {} dropped", data.len());
         }
@@ -481,13 +490,14 @@ impl NavicoReportReceiver {
                 }
                 return self.process_report_06_74().await;
             }
-            REPORT_08_C4_18_OR_21 => {
+            REPORT_08_C4_18_OR_21_OR_22 => {
                 return self.process_report_08().await;
             }
             _ => {
                 bail!(
-                    "Unknown report identification {} {:02X?} dropped",
+                    "Unknown report identification {} len {} data {:02X?} dropped",
                     report_identification,
+                    data.len(),
                     data
                 );
             }
@@ -496,6 +506,8 @@ impl NavicoReportReceiver {
 
     async fn process_report_01(&mut self) -> Result<(), Error> {
         let report = RadarReport1_18::transmute(&self.buf)?;
+
+        trace!("{}: report {:?}", self.key, report);
 
         let status: Result<Status, _> = report.status.try_into();
         if status.is_err() {
@@ -507,13 +519,9 @@ impl NavicoReportReceiver {
     }
 
     async fn process_report_02(&mut self) -> Result<(), Error> {
-        let data = &self.buf;
+        let report = RadarReport2_99::transmute(&self.buf)?;
 
-        if data.len() != size_of::<RadarReport2_99>() {
-            bail!("{}: Report 0x02C4 invalid length {}", self.key, data.len());
-        }
-
-        let report = RadarReport2_99::transmute(&data)?;
+        trace!("{}: report {:?}", self.key, report);
 
         let mode = report.mode as i32;
         let range = i32::from_le_bytes(report.range);
@@ -525,12 +533,10 @@ impl NavicoReportReceiver {
         let target_expansion = report.target_expansion as i32;
         let target_boost = report.target_boost as i32;
 
-        debug!("{}: range={} mode={} gain={} sea={} sea_auto={} rain={} interference_rejection={} target_expansion={} \
-                target_boost={}",
-                self.key, range, mode, gain, sea, sea_auto, rain, interference_rejection, target_expansion, target_boost);
-
         self.set(&ControlType::Range, range);
-        self.set(&ControlType::Mode, mode);
+        if self.settings.model == Model::HALO {
+            self.set(&ControlType::Mode, mode);
+        }
         self.set(&ControlType::Gain, gain);
         self.set_auto(&ControlType::Sea, sea, sea_auto);
         self.set(&ControlType::Rain, rain);
@@ -543,27 +549,22 @@ impl NavicoReportReceiver {
 
     async fn process_report_03(&mut self) -> Result<(), Error> {
         let report = RadarReport3_129::transmute(&self.buf)?;
+
+        trace!("{}: report {:?}", self.key, report);
+
         let model = report.model;
         let hours = i32::from_le_bytes(report.hours);
         let firmware_date = c_wide_string(&report.firmware_date);
         let firmware_time = c_wide_string(&report.firmware_time);
-        trace!(
-            "{}: model={} hours={} firmware: {:?} {:?}",
-            self.key,
-            model,
-            hours,
-            firmware_date,
-            firmware_time
-        );
         let model: Result<Model, _> = model.try_into();
         match model {
             Err(_) => {
                 bail!("{}: Unknown model # {}", self.key, report.model);
             }
             Ok(model) => {
-                if self.settings.model.load() != model {
+                if self.settings.model != model {
                     info!("{}: Radar is model {}", self.key, model);
-                    self.settings.model.store(model);
+                    self.settings.model = model;
 
                     match self.generate_legend(model) {
                         Some(legend) => {
@@ -594,21 +595,21 @@ impl NavicoReportReceiver {
     }
 
     async fn process_report_04(&mut self) -> Result<(), Error> {
-        let data = &self.buf;
+        let report = RadarReport4_66::transmute(&self.buf)?;
 
-        if data.len() != size_of::<RadarReport4_66>() {
-            bail!("{}: Report 0x04C4 invalid length {}", self.key, data.len());
+        trace!("{}: report {:?}", self.key, report);
+
+        self.set(
+            &ControlType::BearingAlignment,
+            i16::from_le_bytes(report.bearing_alignment) as i32,
+        );
+        self.set(
+            &ControlType::AntennaHeight,
+            u16::from_le_bytes(report.antenna_height) as i32,
+        );
+        if self.settings.model == Model::HALO {
+            self.set(&ControlType::AccentLight, report.accent_light as i32);
         }
-
-        let report = RadarReport4_66::transmute(&data)?;
-
-        let bearing_alignment = i16::from_le_bytes(report.bearing_alignment) as i32;
-        let antenna_height = u16::from_le_bytes(report.antenna_height) as i32;
-        let accent_light = report.accent_light as i32;
-
-        self.set(&ControlType::BearingAlignment, bearing_alignment);
-        self.set(&ControlType::AntennaHeight, antenna_height);
-        self.set(&ControlType::AccentLight, accent_light);
 
         Ok(())
     }
@@ -637,13 +638,9 @@ impl NavicoReportReceiver {
     ];
 
     async fn process_report_06_68(&mut self) -> Result<(), Error> {
-        let data = &self.buf;
+        let report = RadarReport6_68::transmute(&self.buf)?;
 
-        if data.len() != size_of::<RadarReport6_68>() {
-            bail!("{}: Report 0x06C4 invalid length {}", self.key, data.len());
-        }
-
-        let report = RadarReport6_68::transmute(&data)?;
+        trace!("{}: report {:?}", self.key, report);
 
         let name = c_string(&report.name);
         self.set_string(&ControlType::ModelName, name.unwrap_or("").to_string());
@@ -665,13 +662,9 @@ impl NavicoReportReceiver {
     }
 
     async fn process_report_06_74(&mut self) -> Result<(), Error> {
-        let data = &self.buf;
+        let report = RadarReport6_74::transmute(&self.buf)?;
 
-        if data.len() != size_of::<RadarReport6_74>() {
-            bail!("{}: Report 0x06C4 invalid length {}", self.key, data.len());
-        }
-
-        let report = RadarReport6_74::transmute(&data)?;
+        trace!("{}: report {:?}", self.key, report);
 
         let name = c_string(&report.name);
         self.set_string(&ControlType::ModelName, name.unwrap_or("").to_string());
@@ -720,30 +713,32 @@ impl NavicoReportReceiver {
     async fn process_report_08(&mut self) -> Result<(), Error> {
         let data = &self.buf;
 
-        if data.len() != size_of::<RadarReport8_18>() && data.len() != size_of::<RadarReport8_21>()
+        if data.len() != size_of::<RadarReport8_18>()
+            && data.len() != size_of::<RadarReport8_21>()
+            && data.len() != size_of::<RadarReport8_21>() + 1
         {
             bail!("{}: Report 0x08C4 invalid length {}", self.key, data.len());
         }
 
         let report = RadarReport8_18::transmute(&data[0..size_of::<RadarReport8_18>()])?;
 
-        let sea_state = report.sea_state;
-        let interference_rejection = report.interference_rejection;
-        let scan_speed = report.scan_speed;
+        trace!("{}: report {:?}", self.key, report);
+
+        let sea_state = report.sea_state as i32;
+        let interference_rejection = report.interference_rejection as i32;
+        let scan_speed = report.scan_speed as i32;
         let sidelobe_suppression_auto = report.sls_auto;
-        let sidelobe_suppression = report.side_lobe_suppression;
-        let noise_reduction = report.noise_rejection;
-        let target_sep = report.target_sep;
-        let sea_clutter = report.sea_clutter;
+        let sidelobe_suppression = report.side_lobe_suppression as i32;
+        let noise_reduction = report.noise_rejection as i32;
+        let target_sep = report.target_sep as i32;
+        let sea_clutter = report.sea_clutter as i32;
         let auto_sea_clutter = report.auto_sea_clutter;
 
-        debug!("{}: sea_state={} interference_rej={} scan_speed={} \
-                sidelobe_suppression={} (auto {}) noise_reduction={} target_sep={} sea_clutter={} (auto {})",
-                self.key, sea_state, interference_rejection, scan_speed,
-                sidelobe_suppression, sidelobe_suppression_auto, noise_reduction, target_sep, sea_clutter, auto_sea_clutter);
+        // There are reports of size 21, but also 22. HALO new firmware sends 22. The last byte content is unknown.
+        if data.len() >= size_of::<RadarReport8_21>() {
+            let report = RadarReport8_21::transmute(&data[0..size_of::<RadarReport8_21>()])?;
 
-        if data.len() == size_of::<RadarReport8_21>() {
-            let report = RadarReport8_21::transmute(&data)?;
+            trace!("{}: report {:?}", self.key, report);
 
             let doppler_speed = u16::from_le_bytes(report.doppler_speed);
             let doppler_state = report.doppler_state;
@@ -765,6 +760,8 @@ impl NavicoReportReceiver {
                     self.data_tx.send(DataUpdate::Doppler(doppler_mode)).await?;
                 }
             }
+            self.set(&ControlType::Doppler, doppler_state as i32);
+            self.set(&ControlType::DopplerSpeedThreshold, doppler_speed as i32);
         }
 
         self.set(&ControlType::SeaState, sea_state as i32);
@@ -773,6 +770,14 @@ impl NavicoReportReceiver {
             interference_rejection as i32,
         );
         self.set(&ControlType::ScanSpeed, scan_speed as i32);
+        self.set_auto(
+            &ControlType::SideLobeSuppression,
+            sidelobe_suppression,
+            sidelobe_suppression_auto,
+        );
+        self.set(&ControlType::NoiseRejection, noise_reduction);
+        self.set(&ControlType::TargetSeparation, target_sep);
+        self.set_auto(&ControlType::Sea, sea_clutter, auto_sea_clutter);
 
         Ok(())
     }
