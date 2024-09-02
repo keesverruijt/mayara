@@ -1,0 +1,24 @@
+
+html {
+  box-sizing: content-box;
+  border: none;
+  font: normal 16px/1 Verdana, Geneva, sans-serif;
+  color: rgba(255,255,255,1);
+  -o-text-overflow: ellipsis;
+  text-overflow: ellipsis;
+  background: #000000;
+}
+
+div.control {
+  display: block;
+  border: 1px;
+  border-radius: 3px;
+  border-color: lightskyblue;
+}
+
+label {
+  display: block;
+}
+input {
+  display: block;
+}

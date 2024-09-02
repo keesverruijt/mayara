@@ -1,10 +1,7 @@
 use log::trace;
 use protobuf::Message;
-use serde::Serialize;
-use std::{
-    collections::HashMap,
-    fmt::{self, Display},
-};
+use serde::{ Deserialize, Serialize };
+use std::{ collections::HashMap, fmt::{ self, Display } };
 use thiserror::Error;
 
 use crate::protos::RadarMessage::RadarMessage;
@@ -44,33 +41,62 @@ impl Display for ControlState {
 
 pub struct Controls {
     pub controls: HashMap<ControlType, Control>,
-    update_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
+    protobuf_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
+    json_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
 }
 
 impl Controls {
     pub fn new(
         controls: HashMap<ControlType, Control>,
-        update_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
+        protobuf_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
+        json_tx: tokio::sync::broadcast::Sender<Vec<u8>>
     ) -> Self {
         Controls {
             controls,
-            update_tx,
+            protobuf_tx,
+            json_tx,
         }
     }
 
-    fn broadcast(update_tx: &tokio::sync::broadcast::Sender<Vec<u8>>, control: &Control) {
+    fn get_description(control: &Control) -> Option<String> {
+        if let Some(descriptions) = &control.item.descriptions {
+            if control.value >= 0 && control.value < (descriptions.len() as i32) {
+                return Some(descriptions[control.value as usize].to_string());
+            }
+        }
+        return None;
+    }
+
+    fn broadcast_json(tx: &tokio::sync::broadcast::Sender<Vec<u8>>, control: &Control) {
+        let control_value = crate::settings::ControlValue {
+            id: control.item.control_type.to_string(),
+            value: control.value,
+            auto: control.auto,
+            description: Self::get_description(control),
+        };
+
+        let bytes = serde_json::to_string(&control_value).unwrap().into();
+        match tx.send(bytes) {
+            Err(_e) => {}
+            Ok(cnt) => {
+                trace!(
+                    "Sent control value {} value {} to {} JSON clients",
+                    control.item.control_type,
+                    &control.value,
+                    cnt
+                );
+            }
+        }
+    }
+
+    fn broadcast_protobuf(update_tx: &tokio::sync::broadcast::Sender<Vec<u8>>, control: &Control) {
         let mut control_value = crate::protos::RadarMessage::radar_message::ControlValue::new();
         control_value.id = control.item.control_type.to_string();
         control_value.value = control.value;
         control_value.auto = control.auto;
-        if let Some(descriptions) = &control.item.descriptions {
-            if control.value >= 0 && control.value < (descriptions.len() as i32) {
-                control_value.description = Some(descriptions[control.value as usize].to_string());
-            }
-        }
+        control_value.description = Self::get_description(control);
 
         let mut message = RadarMessage::new();
-        message.radar = 1;
         message.controls.push(control_value);
 
         let mut bytes = Vec::new();
@@ -105,7 +131,8 @@ impl Controls {
     ) -> Result<Option<()>, ControlError> {
         if let Some(control) = self.controls.get_mut(control_type) {
             if control.set_all(value, auto, state)?.is_some() {
-                Self::broadcast(&self.update_tx, control);
+                Self::broadcast_protobuf(&self.protobuf_tx, control);
+                Self::broadcast_json(&self.protobuf_tx, control);
                 return Ok(Some(()));
             }
             Ok(None)
@@ -122,11 +149,8 @@ impl Controls {
         value: i32,
     ) -> Result<Option<()>, ControlError> {
         if let Some(control) = self.controls.get_mut(control_type) {
-            if control
-                .set_all(value, None, ControlState::Manual)?
-                .is_some()
-            {
-                Self::broadcast(&self.update_tx, control);
+            if control.set_all(value, None, ControlState::Manual)?.is_some() {
+                Self::broadcast_protobuf(&self.protobuf_tx, control);
                 return Ok(Some(()));
             }
             Ok(None)
@@ -148,7 +172,7 @@ impl Controls {
             };
 
             if control.set_all(value, Some(auto), state)?.is_some() {
-                Self::broadcast(&self.update_tx, control);
+                Self::broadcast_protobuf(&self.protobuf_tx, control);
                 return Ok(Some(()));
             }
             Ok(None)
@@ -163,7 +187,7 @@ impl Controls {
     ) -> Result<Option<String>, ControlError> {
         if let Some(control) = self.controls.get_mut(control_type) {
             if control.set_string(value).is_some() {
-                Self::broadcast(&self.update_tx, control);
+                Self::broadcast_protobuf(&self.protobuf_tx, control);
                 return Ok(control.value_string.clone());
             }
             Ok(None)
@@ -173,9 +197,19 @@ impl Controls {
     }
 }
 
+#[derive(Deserialize, Serialize, Clone, Debug)]
+pub struct ControlValue {
+    pub id: String,
+    pub value: i32,
+    pub auto: Option<bool>,
+    pub description: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct Control {
-    item: ControlValue,
+    #[serde(flatten)]
+    item: ControlDefinition,
+    #[serde(skip)]
     value: i32,
     value_string: Option<String>,
     auto: Option<bool>,
@@ -183,7 +217,7 @@ pub struct Control {
 }
 
 impl Control {
-    fn new(item: ControlValue) -> Self {
+    fn new(item: ControlDefinition) -> Self {
         let value = item.default_value.clone();
         Control {
             item,
@@ -225,7 +259,7 @@ impl Control {
     }
 
     pub fn new_numeric(control_type: ControlType, min_value: i32, max_value: i32) -> Self {
-        let control = Self::new(ControlValue {
+        let control = Self::new(ControlDefinition {
             control_type,
             auto_values: 0,
             auto_names: None,
@@ -248,8 +282,13 @@ impl Control {
         control
     }
 
-    pub fn new_auto(control_type: ControlType, min_value: i32, max_value: i32) -> Self {
-        Self::new(ControlValue {
+    pub fn new_auto(
+        control_type: ControlType,
+        min_value: i32,
+        max_value: i32,
+        automatic: AutomaticValue
+    ) -> Self {
+        Self::new(ControlDefinition {
             control_type,
             auto_values: 0,
             auto_names: None,
@@ -272,7 +311,7 @@ impl Control {
     }
 
     pub fn new_list(control_type: ControlType, descriptions: &[&str]) -> Self {
-        Self::new(ControlValue {
+        Self::new(ControlDefinition {
             control_type,
             auto_values: 0,
             auto_names: None,
@@ -297,8 +336,8 @@ impl Control {
         })
     }
 
-    pub fn new_string(control_type: ControlType, read_only: bool) -> Self {
-        let control = Self::new(ControlValue {
+    pub fn new_string(control_type: ControlType) -> Self {
+        let control = Self::new(ControlDefinition {
             control_type,
             auto_values: 0,
             auto_names: None,
@@ -318,7 +357,7 @@ impl Control {
     }
 
     /// Read-only access to the definition of the control
-    pub fn item(&self) -> &ControlValue {
+    pub fn item(&self) -> &ControlDefinition {
         &self.item
     }
 
@@ -413,7 +452,8 @@ pub const NOT_USED: i32 = i32::MIN;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ControlValue {
+pub struct ControlDefinition {
+    #[serde(skip)]
     control_type: ControlType,
     auto_values: i32,
     auto_names: Option<Vec<String>>,
@@ -428,8 +468,7 @@ pub struct ControlValue {
     min_value: i32,
     #[serde(skip_serializing_if = "is_not_used")]
     max_value: i32,
-    auto_adjust_min_value: i32,
-    auto_adjust_max_value: i32,
+    #[serde(skip_serializing_if = "is_not_used")]
     step_value: i32,
     wire_scale_factor: i32,
     wire_offset: i32,
@@ -452,7 +491,7 @@ fn is_one(v: &i32) -> bool {
     *v == 1
 }
 
-impl ControlValue {}
+impl ControlDefinition {}
 
 #[derive(Eq, PartialEq, Hash, Copy, Clone, Debug, Serialize)]
 pub enum ControlType {

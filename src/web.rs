@@ -9,7 +9,7 @@ use axum::{
 };
 use log::debug;
 use miette::Result;
-use serde::{ Deserialize, Serialize };
+use serde::Serialize;
 use std::{
     collections::HashMap,
     io,
@@ -20,9 +20,15 @@ use std::{
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio_graceful_shutdown::SubsystemHandle;
+use rust_embed::RustEmbed;
+use axum_embed::ServeEmbed;
 
 use crate::radar::{ Legend, Radars };
 use crate::VERSION;
+
+#[derive(RustEmbed, Clone)]
+#[folder = "web/"]
+struct Assets;
 
 #[derive(Error, Debug)]
 pub enum WebError {
@@ -52,12 +58,13 @@ impl Web {
             SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), self.port)
         ).await.unwrap();
 
+        let serve_assets = ServeEmbed::<Assets>::new();
         let mut shutdown_rx = self.shutdown_tx.subscribe();
         let shutdown_tx = self.shutdown_tx.clone(); // Clone as self used in with_state() and with_graceful_shutdown() below
 
         let app = Router::new()
-            .route("/", get(root))
             .route("/v1/api/radars", get(get_radars))
+            .nest_service("/", serve_assets)
             .with_state(self)
             .into_make_service_with_connect_info::<SocketAddr>();
 

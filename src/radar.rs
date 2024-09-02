@@ -116,6 +116,7 @@ pub struct RadarInfo {
 
     // Channels
     pub radar_message_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
+    pub radar_control_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
 }
 
 impl RadarInfo {
@@ -135,6 +136,7 @@ impl RadarInfo {
         send_command_addr: SocketAddrV4,
     ) -> Self {
         let (radar_message_tx, _radar_message_rx) = tokio::sync::broadcast::channel(32);
+        let (radar_control_tx, _radar_control_rx) = tokio::sync::broadcast::channel(32);
 
         RadarInfo {
             key: {
@@ -169,6 +171,8 @@ impl RadarInfo {
             send_command_addr,
             legend: None,
             radar_message_tx,
+            radar_control_tx,
+            controls: None,
         }
     }
 

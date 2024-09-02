@@ -571,6 +571,17 @@ impl NavicoReportReceiver {
                 if self.settings.model != model {
                     info!("{}: Radar is model {}", self.key, model);
                     self.settings.model = model;
+                    self.info.controls = Some(
+                        NavicoControls::new2(
+                            model,
+                            self.info.radar_message_tx.clone(),
+                            self.info.radar_control_tx.clone()
+                        )
+                    );
+                    self.info.set_legend(model == Model::HALO);
+
+                    self.update_radar_info();
+                    self.data_tx.send(DataUpdate::Legend(self.info.legend.clone())).await?;
 
                     match self.generate_legend(model) {
                         Some(legend) => {

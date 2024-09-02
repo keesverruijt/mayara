@@ -7,7 +7,11 @@ use super::Model;
 pub type NavicoControls = Controls;
 
 impl NavicoControls {
-    pub fn new2(model: Model, update_tx: tokio::sync::broadcast::Sender<Vec<u8>>) -> Self {
+    pub fn new2(
+        model: Model,
+        protobuf_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
+        json_tx: tokio::sync::broadcast::Sender<Vec<u8>>
+    ) -> Self {
         let mut controls = HashMap::new();
 
         if model == Model::HALO {
@@ -242,6 +246,6 @@ impl NavicoControls {
             ),
         );
 
-        Controls::new(controls, update_tx)
+        Controls::new(controls, protobuf_tx, json_tx)
     }
 }
