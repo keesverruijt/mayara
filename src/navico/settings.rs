@@ -96,7 +96,14 @@ impl NavicoControls {
         );
         controls.insert(
             ControlType::Gain,
-            Control::new_auto(ControlType::Gain, 0, 100).wire_scale_factor(255),
+            Control::new_auto(ControlType::Gain, 0, 100, AutomaticValue {
+                has_auto: true,
+                auto_values: 100,
+                auto_descriptions: None,
+                has_auto_adjustable: true,
+                auto_adjust_min_value: -50,
+                auto_adjust_max_value: 50,
+            }).wire_scale_factor(255)
         );
         controls.insert(
             ControlType::InterferenceRejection,
@@ -142,11 +149,25 @@ impl NavicoControls {
         );
         controls.insert(
             ControlType::Sea,
-            Control::new_auto(ControlType::Sea, 0, 100),
+            Control::new_auto(ControlType::Sea, 0, 100, AutomaticValue {
+                has_auto: true,
+                auto_values: 100,
+                auto_descriptions: None,
+                has_auto_adjustable: true,
+                auto_adjust_min_value: -50,
+                auto_adjust_max_value: 50,
+            })
         );
         controls.insert(
             ControlType::SideLobeSuppression,
-            Control::new_auto(ControlType::SideLobeSuppression, 0, 100).wire_scale_factor(255),
+            Control::new_auto(ControlType::SideLobeSuppression, 0, 100, AutomaticValue {
+                has_auto: true,
+                auto_values: 100,
+                auto_descriptions: None,
+                has_auto_adjustable: true,
+                auto_adjust_min_value: -50,
+                auto_adjust_max_value: 50,
+            }).wire_scale_factor(255)
         );
         controls.insert(
             ControlType::TargetBoost,

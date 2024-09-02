@@ -63,9 +63,9 @@ impl Controls {
         control_value.id = control.item.control_type.to_string();
         control_value.value = control.value;
         control_value.auto = control.auto;
-        if let Some(names) = &control.item.names {
-            if control.value >= 0 && control.value < names.len() as i32 {
-                control_value.description = Some(names[control.value as usize].to_string());
+        if let Some(descriptions) = &control.item.descriptions {
+            if control.value >= 0 && control.value < (descriptions.len() as i32) {
+                control_value.description = Some(descriptions[control.value as usize].to_string());
             }
         }
 
@@ -241,9 +241,9 @@ impl Control {
             wire_scale_factor: max_value,
             wire_offset: 0,
             unit: None,
-            names: None,
-            read_only: false,
-            string_value: false,
+            descriptions: None,
+            is_read_only: false,
+            is_string_value: false,
         });
         control
     }
@@ -265,13 +265,13 @@ impl Control {
             wire_scale_factor: max_value,
             wire_offset: 0,
             unit: None,
-            names: None,
-            read_only: false,
-            string_value: false,
+            descriptions: None,
+            is_read_only: false,
+            is_string_value: false,
         })
     }
 
-    pub fn new_list(control_type: ControlType, names: &[&str]) -> Self {
+    pub fn new_list(control_type: ControlType, descriptions: &[&str]) -> Self {
         Self::new(ControlValue {
             control_type,
             auto_values: 0,
@@ -281,16 +281,19 @@ impl Control {
             has_auto_adjustable: false,
             default_value: 0,
             min_value: 0,
-            max_value: names.len() as i32 - 1,
-            auto_adjust_min_value: 0,
-            auto_adjust_max_value: 0,
+            max_value: (descriptions.len() as i32) - 1,
             step_value: 1,
-            wire_scale_factor: names.len() as i32 - 1,
+            wire_scale_factor: (descriptions.len() as i32) - 1,
             wire_offset: 0,
             unit: None,
-            names: Some(names.into_iter().map(|n| n.to_string()).collect()),
-            read_only: false,
-            string_value: false,
+            descriptions: Some(
+                descriptions
+                    .into_iter()
+                    .map(|n| n.to_string())
+                    .collect()
+            ),
+            is_read_only: false,
+            is_string_value: false,
         })
     }
 
@@ -300,20 +303,16 @@ impl Control {
             auto_values: 0,
             auto_names: None,
             has_off: false,
-            has_auto: false,
-            has_auto_adjustable: false,
-            default_value: 0,
-            min_value: 0,
-            max_value: 0,
-            auto_adjust_min_value: 0,
-            auto_adjust_max_value: 0,
-            step_value: 1,
+            default_value: NOT_USED,
+            min_value: NOT_USED,
+            max_value: NOT_USED,
+            step_value: NOT_USED,
             wire_scale_factor: 0,
             wire_offset: 0,
             unit: None,
-            names: None,
-            read_only,
-            string_value: true,
+            descriptions: None,
+            is_read_only: true,
+            is_string_value: true,
         });
         control
     }
@@ -332,8 +331,8 @@ impl Control {
     // }
 
     pub fn value_string(&self) -> String {
-        if let Some(names) = &self.item.names {
-            if let Some(v) = names.get(self.value as usize) {
+        if let Some(descriptions) = &self.item.descriptions {
+            if let Some(v) = descriptions.get(self.value as usize) {
                 return v.to_string();
             }
         }
@@ -397,15 +396,37 @@ impl Control {
 }
 
 #[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AutomaticValue {
+    #[serde(skip_serializing_if = "is_false")]
+    pub(crate) has_auto: bool,
+    #[serde(skip)]
+    pub(crate) auto_values: i32,
+    #[serde(skip)]
+    pub(crate) auto_descriptions: Option<Vec<String>>,
+    pub(crate) has_auto_adjustable: bool,
+    pub(crate) auto_adjust_min_value: i32,
+    pub(crate) auto_adjust_max_value: i32,
+}
+
+pub const NOT_USED: i32 = i32::MIN;
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ControlValue {
     control_type: ControlType,
     auto_values: i32,
     auto_names: Option<Vec<String>>,
     has_off: bool,
-    has_auto: bool,
-    has_auto_adjustable: bool,
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    automatic: Option<AutomaticValue>,
+    #[serde(skip_serializing_if = "is_false")]
+    is_string_value: bool,
+    #[serde(skip)]
     default_value: i32,
+    #[serde(skip_serializing_if = "is_not_used")]
     min_value: i32,
+    #[serde(skip_serializing_if = "is_not_used")]
     max_value: i32,
     auto_adjust_min_value: i32,
     auto_adjust_max_value: i32,
@@ -413,9 +434,22 @@ pub struct ControlValue {
     wire_scale_factor: i32,
     wire_offset: i32,
     pub unit: Option<String>,
-    names: Option<Vec<String>>,
-    read_only: bool,
-    string_value: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    descriptions: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "is_false")]
+    is_read_only: bool,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+
+fn is_not_used(v: &i32) -> bool {
+    *v == NOT_USED
+}
+
+fn is_one(v: &i32) -> bool {
+    *v == 1
 }
 
 impl ControlValue {}
