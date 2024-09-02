@@ -83,13 +83,12 @@ async fn root() -> String {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct RadarApi {
     id: String,
     name: String,
     spokes: u16,
-    #[serde(rename = "maxSpokeLen")]
     max_spoke_len: u16,
-    #[serde(rename = "streamUrl")]
     stream_url: String,
     legend: Legend,
 }
