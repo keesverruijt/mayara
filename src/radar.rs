@@ -177,7 +177,7 @@ impl RadarInfo {
     }
 
     pub fn set_legend(&mut self, doppler: bool) {
-        self.legend = Some(default_legend(doppler, self.pixel_values));
+        self.legend = default_legend(doppler, self.pixel_values);
     }
 
     ///

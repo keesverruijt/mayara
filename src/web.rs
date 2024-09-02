@@ -1,13 +1,13 @@
 use anyhow::anyhow;
 use axum::{
-    extract::{ ConnectInfo, Host, Request, State },
+    extract::{ ConnectInfo, Host, State },
     http::{ StatusCode, Uri },
     response::{ IntoResponse, Response },
     routing::get,
     Json,
     Router,
 };
-use log::{ debug, info, trace };
+use log::debug;
 use miette::Result;
 use serde::{ Deserialize, Serialize };
 use std::{
@@ -36,11 +36,6 @@ pub struct Web {
     shutdown_tx: tokio::sync::broadcast::Sender<()>,
 }
 
-#[derive(Deserialize)]
-struct WebSocketHandlerParameters {
-    key: String,
-}
-
 impl Web {
     pub fn new(port: u16, radars: Arc<RwLock<Radars>>) -> Self {
         let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
@@ -52,7 +47,7 @@ impl Web {
         }
     }
 
-    pub async fn run(mut self, subsys: SubsystemHandle) -> Result<(), WebError> {
+    pub async fn run(self, subsys: SubsystemHandle) -> Result<(), WebError> {
         let listener = TcpListener::bind(
             SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), self.port)
         ).await.unwrap();

@@ -9,9 +9,9 @@ use tokio::sync::mpsc::Sender;
 use tokio::time::{sleep, sleep_until, Instant};
 use tokio_graceful_shutdown::SubsystemHandle;
 
-use crate::radar::{DopplerMode, Legend, RadarError, RadarInfo};
-use crate::settings::{ControlState, ControlType};
-use crate::util::{c_string, c_wide_string, create_multicast};
+use crate::radar::{ DopplerMode, RadarError, RadarInfo };
+use crate::settings::{ ControlState, ControlType };
+use crate::util::{ c_string, c_wide_string, create_multicast };
 
 use super::command::{self, Command};
 use super::settings::NavicoControls;
