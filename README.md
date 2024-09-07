@@ -37,3 +37,8 @@ At the moment I intend to support the following radars:
 
 See [TODO](TODO.md)
 
+## Help us
+
+We're on Discord, here is an invite: [Discord channel](https://discord.gg/kC6h6JVxxC)
+
+
