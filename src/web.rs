@@ -147,7 +147,7 @@ async fn get_radars(
             let x = &radars.info;
             let mut api: HashMap<String, RadarApi> = HashMap::new();
             for (_key, value) in x.iter() {
-                if let Some(legend) = &value.legend {
+                let legend = &value.legend ;
                     let id = format!("radar-{}", value.id);
                     let url = format!("http://{}/v1/api/stream/{}", host, id);
                     let mut name = value.brand.to_owned();
@@ -169,7 +169,7 @@ async fn get_radars(
                     );
 
                     api.insert(id.to_owned(), v);
-                }
+                
             }
             Json(api).into_response()
         }

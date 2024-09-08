@@ -39,6 +39,7 @@ impl Display for ControlState {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct Controls {
     pub controls: HashMap<ControlType, Control>,
     protobuf_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
@@ -235,7 +236,7 @@ impl Control {
     // }
 
     pub fn read_only(mut self) -> Self {
-        self.item.read_only = true;
+        self.item.is_read_only = true;
 
         self
     }

@@ -12,6 +12,7 @@ use thiserror::Error;
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::locator::LocatorId;
+use crate::settings::Controls;
 use crate::Cli;
 
 #[derive(Error, Debug)]
@@ -112,7 +113,8 @@ pub struct RadarInfo {
     pub spoke_data_addr: SocketAddrV4,   // Where the radar will send data spokes
     pub report_addr: SocketAddrV4,       // Where the radar will send reports
     pub send_command_addr: SocketAddrV4, // Where displays will send commands to the radar
-    pub legend: Option<Legend>,          // What pixel values mean
+    pub legend: Legend,                  // What pixel values mean
+    pub controls: Option<Controls>,      // What controls this radar supports
 
     // Channels
     pub radar_message_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
@@ -169,7 +171,7 @@ impl RadarInfo {
             spoke_data_addr,
             report_addr,
             send_command_addr,
-            legend: None,
+            legend: default_legend(false, pixel_values),
             radar_message_tx,
             radar_control_tx,
             controls: None,
