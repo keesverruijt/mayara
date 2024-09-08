@@ -1,21 +1,21 @@
-use anyhow::{bail, Error};
+use anyhow::{ bail, Error };
 use enum_primitive_derive::Primitive;
-use log::{debug, error, info, trace};
+use log::{ debug, error, info, trace };
 use std::mem::transmute;
 use std::time::Duration;
-use std::{fmt, io};
+use std::{ fmt, io };
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::Sender;
-use tokio::time::{sleep, sleep_until, Instant};
+use tokio::time::{ sleep, sleep_until, Instant };
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::radar::{ DopplerMode, RadarError, RadarInfo };
-use crate::settings::{ ControlState, ControlType };
+use crate::settings::{ ControlMessage, ControlState, ControlType };
 use crate::util::{ c_string, c_wide_string, create_multicast };
 
-use super::command::{self, Command};
+use super::command::{ self, Command };
 use super::settings::NavicoControls;
-use super::{DataUpdate, Model, NavicoSettings};
+use super::{ DataUpdate, Model, NavicoSettings };
 
 pub struct NavicoReportReceiver {
     info: RadarInfo,
@@ -27,7 +27,6 @@ pub struct NavicoReportReceiver {
     data_tx: Sender<DataUpdate>,
     subtype_timeout: Instant,
     subtype_repeat: Duration,
-    controls: Option<NavicoControls>,
     reported_unknown: [bool; 256],
 }
 
@@ -71,8 +70,8 @@ const REPORT_01_C4_18: u8 = 0x01;
 struct RadarReport2_99 {
     _what: u8,
     _command: u8,
-    range: [u8; 4],             // 2..6 = range
-    _u00: [u8; 1],              // 6
+    range: [u8; 4], // 2..6 = range
+    _u00: [u8; 1], // 6
     mode: u8, // 7 = mode, 0 = custom, 1 = harbor, 2 = offshore, 3 = ?, 4 = bird, 5 = weather
     _u01: [u8; 4], // 8..12
     gain: u8, // 12
@@ -108,10 +107,10 @@ const REPORT_02_C4_99: u8 = 0x02;
 struct RadarReport3_129 {
     _what: u8,
     _command: u8,
-    model: u8,               // So far: 01 = 4G and new 3G, 08 = 3G, 0F = BR24, 00 = HALO
-    _u00: [u8; 31],          // Lots of unknown
-    hours: [u8; 4],          // Hours of operation
-    _u01: [u8; 20],          // Lots of unknown
+    model: u8, // So far: 01 = 4G and new 3G, 08 = 3G, 0F = BR24, 00 = HALO
+    _u00: [u8; 31], // Lots of unknown
+    hours: [u8; 4], // Hours of operation
+    _u01: [u8; 20], // Lots of unknown
     firmware_date: [u8; 32], // Wide chars, assumed UTF16
     firmware_time: [u8; 32], // Wide chars, assumed UTF16
     _u02: [u8; 7],
@@ -135,13 +134,13 @@ const REPORT_03_C4_129: u8 = 0x03;
 struct RadarReport4_66 {
     _what: u8,
     _command: u8,
-    _u00: [u8; 4],              // 2..6
+    _u00: [u8; 4], // 2..6
     bearing_alignment: [u8; 2], // 6..8
-    _u01: [u8; 2],              // 8..10
-    antenna_height: [u8; 2],    // 10..12 = Antenna height
-    _u02: [u8; 7],              // 12..19
-    accent_light: u8,           // 19 = Accent light
-    _u03: [u8; 46],             // 20..66
+    _u01: [u8; 2], // 8..10
+    antenna_height: [u8; 2], // 10..12 = Antenna height
+    _u02: [u8; 7], // 12..19
+    accent_light: u8, // 19 = Accent light
+    _u03: [u8; 46], // 20..66
 }
 
 impl RadarReport4_66 {
@@ -170,11 +169,11 @@ struct SectorBlankingReport {
 struct RadarReport6_68 {
     _what: u8,
     _command: u8,
-    _u00: [u8; 4],                       // 2..6
-    name: [u8; 6],                       // 6..12
-    _u01: [u8; 24],                      // 12..36
+    _u00: [u8; 4], // 2..6
+    name: [u8; 6], // 6..12
+    _u01: [u8; 24], // 12..36
     blanking: [SectorBlankingReport; 4], // 36..56
-    _u02: [u8; 12],                      // 56..68
+    _u02: [u8; 12], // 56..68
 }
 
 impl RadarReport6_68 {
@@ -192,11 +191,11 @@ impl RadarReport6_68 {
 struct RadarReport6_74 {
     _what: u8,
     _command: u8,
-    _u00: [u8; 4],                       // 2..6
-    name: [u8; 6],                       // 6..12
-    _u01: [u8; 30],                      // 12..42
+    _u00: [u8; 4], // 2..6
+    name: [u8; 6], // 6..12
+    _u01: [u8; 30], // 12..42
     blanking: [SectorBlankingReport; 4], // 42..52
-    _u0: [u8; 12],                       // 62..74
+    _u0: [u8; 12], // 62..74
 }
 
 impl RadarReport6_74 {
@@ -216,23 +215,23 @@ const REPORT_06_C4_68: u8 = 0x06;
 #[repr(packed)]
 struct RadarReport8_18 {
     // 08 c4  length 18
-    _what: u8,                  // 0  0x08
-    _command: u8,               // 1  0xC4
-    sea_state: u8,              // 2
+    _what: u8, // 0  0x08
+    _command: u8, // 1  0xC4
+    sea_state: u8, // 2
     interference_rejection: u8, // 3
-    scan_speed: u8,             // 4
-    sls_auto: u8,               // 5 installation: sidelobe suppression auto
-    _field6: u8,                // 6
-    _field7: u8,                // 7
-    _field8: u8,                // 8
-    side_lobe_suppression: u8,  // 9 installation: sidelobe suppression
-    _field10: u16,              // 10-11
-    noise_rejection: u8,        // 12    noise rejection
-    target_sep: u8,             // 13
-    sea_clutter: u8,            // 14 sea clutter on Halo
-    auto_sea_clutter: u8,       // 15 auto sea clutter on Halo
-    _field13: u8,               // 16
-    _field14: u8,               // 17
+    scan_speed: u8, // 4
+    sls_auto: u8, // 5 installation: sidelobe suppression auto
+    _field6: u8, // 6
+    _field7: u8, // 7
+    _field8: u8, // 8
+    side_lobe_suppression: u8, // 9 installation: sidelobe suppression
+    _field10: u16, // 10-11
+    noise_rejection: u8, // 12    noise rejection
+    target_sep: u8, // 13
+    sea_clutter: u8, // 14 sea clutter on Halo
+    auto_sea_clutter: u8, // 15 auto sea clutter on Halo
+    _field13: u8, // 16
+    _field14: u8, // 17
 }
 
 #[derive(Debug)]
@@ -269,9 +268,9 @@ const REPORT_08_C4_18_OR_21_OR_22: u8 = 0x08;
 
 impl NavicoReportReceiver {
     pub fn new(
-        info: RadarInfo,
+        info: RadarInfo, // Quick access to our own RadarInfo
         settings: NavicoSettings,
-        data_tx: Sender<DataUpdate>,
+        data_tx: Sender<DataUpdate>
     ) -> NavicoReportReceiver {
         let key = info.key();
 
@@ -287,7 +286,6 @@ impl NavicoReportReceiver {
             subtype_timeout: Instant::now(),
             subtype_repeat: Duration::from_millis(5000),
             data_tx,
-            controls: None,
             reported_unknown: [false; 256],
         }
     }
@@ -298,7 +296,9 @@ impl NavicoReportReceiver {
                 self.sock = Some(sock);
                 debug!(
                     "{}: {} via {}: listening for reports",
-                    self.key, &self.info.report_addr, &self.info.nic_addr
+                    self.key,
+                    &self.info.report_addr,
+                    &self.info.nic_addr
                 );
                 Ok(())
             }
@@ -306,7 +306,10 @@ impl NavicoReportReceiver {
                 sleep(Duration::from_millis(1000)).await;
                 debug!(
                     "{}: {} via {}: create multicast failed: {}",
-                    self.key, &self.info.report_addr, &self.info.nic_addr, e
+                    self.key,
+                    &self.info.report_addr,
+                    &self.info.nic_addr,
+                    e
                 );
                 Err(e)
             }
@@ -315,17 +318,19 @@ impl NavicoReportReceiver {
 
     async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
         debug!("{}: listening for reports", self.key);
+        let mut command_rx = self.info.command_tx.subscribe();
+
         loop {
             tokio::select! { biased;
-              _ = subsys.on_shutdown_requested() => {
+                _ = subsys.on_shutdown_requested() => {
                     info!("{}: shutdown", self.key);
                     return Err(RadarError::Shutdown);
-              },
-              _ = sleep_until(self.subtype_timeout) => {
+                },
+                _ = sleep_until(self.subtype_timeout) => {
                     self.send_report_requests().await?;
                     self.subtype_timeout += self.subtype_repeat;
-              },
-              r = self.sock.as_ref().unwrap().recv_buf_from(&mut self.buf)  => {
+                },
+                r = self.sock.as_ref().unwrap().recv_buf_from(&mut self.buf)  => {
                     match r {
                         Ok((_len, _addr)) => {
                             if let Err(e) = self.process_report().await {
@@ -338,18 +343,40 @@ impl NavicoReportReceiver {
                             return Err(RadarError::Io(e));
                         }
                     }
-              },
-            };
+                },
+                r = command_rx.recv() => {
+                    match r {
+                        Ok(control_message) => { 
+                            self.process_control_message(&control_message).await?;
+                        }
+                        Err(_e) => {}
+                    }
+                }
+            }
         }
     }
 
+    async fn process_control_message(
+        &self,
+        control_message: &ControlMessage
+    ) -> Result<(), RadarError> {
+        match control_message {
+            ControlMessage::NewClient => {
+                // Send all control values
+                if let Some(controls) = &self.info.controls {
+                    controls.broadcast_all_json();
+                }
+            }
+            ControlMessage::Value(v) => {
+                todo!("Handle control sent to server {:?}", v);
+            }
+        }
+        Ok(())
+    }
+
     async fn send_report_requests(&mut self) -> Result<(), io::Error> {
-        self.command_sender
-            .send(&command::REQUEST_03_REPORT)
-            .await?;
-        self.command_sender
-            .send(&command::REQUEST_MANY2_REPORT)
-            .await?;
+        self.command_sender.send(&command::REQUEST_03_REPORT).await?;
+        self.command_sender.send(&command::REQUEST_MANY2_REPORT).await?;
         Ok(())
     }
 
@@ -378,9 +405,9 @@ impl NavicoReportReceiver {
         control_type: &ControlType,
         value: i32,
         auto: Option<bool>,
-        state: ControlState,
+        state: ControlState
     ) {
-        if let Some(controls) = self.controls.as_mut() {
+        if let Some(controls) = self.info.controls.as_mut() {
             match controls.set_all(control_type, value, auto, state) {
                 Err(e) => {
                     error!("{}: {}", self.key, e.to_string());
@@ -403,7 +430,7 @@ impl NavicoReportReceiver {
     }
 
     fn set(&mut self, control_type: &ControlType, value: i32) {
-        if let Some(controls) = self.controls.as_mut() {
+        if let Some(controls) = self.info.controls.as_mut() {
             match controls.set(control_type, value) {
                 Err(e) => {
                     error!("{}: {}", self.key, e.to_string());
@@ -416,7 +443,7 @@ impl NavicoReportReceiver {
                             self.key,
                             control_type,
                             control.value_string(),
-                            control.item().unit.as_deref().unwrap_or(""),
+                            control.item().unit.as_deref().unwrap_or("")
                         );
                     }
                 }
@@ -426,7 +453,7 @@ impl NavicoReportReceiver {
     }
 
     fn set_auto(&mut self, control_type: &ControlType, value: i32, auto: u8) {
-        if let Some(controls) = self.controls.as_mut() {
+        if let Some(controls) = self.info.controls.as_mut() {
             match controls.set_auto(control_type, auto > 0, value) {
                 Err(e) => {
                     error!("{}: {}", self.key, e.to_string());
@@ -449,7 +476,7 @@ impl NavicoReportReceiver {
     }
 
     fn set_string(&mut self, control: &ControlType, value: String) {
-        if let Some(controls) = self.controls.as_mut() {
+        if let Some(controls) = self.info.controls.as_mut() {
             match controls.set_string(control, value) {
                 Err(e) => {
                     error!("{}: {}", self.key, e.to_string());
@@ -469,7 +496,7 @@ impl NavicoReportReceiver {
             bail!("UDP report len {} dropped", data.len());
         }
 
-        if data[1] != 0xC4 {
+        if data[1] != 0xc4 {
             bail!("Unknown report {:02X?} dropped", data);
         }
         let report_identification = data[0];
@@ -506,7 +533,7 @@ impl NavicoReportReceiver {
                     );
                 }
             }
-        };
+        }
         Ok(())
     }
 
@@ -574,8 +601,9 @@ impl NavicoReportReceiver {
                     self.info.controls = Some(
                         NavicoControls::new2(
                             model,
-                            self.info.radar_message_tx.clone(),
-                            self.info.radar_control_tx.clone()
+                            self.info.message_tx.clone(),
+                            self.info.control_tx.clone(),
+                            self.info.command_tx.clone()
                         )
                     );
                     self.info.set_legend(model == Model::HALO);
@@ -583,18 +611,6 @@ impl NavicoReportReceiver {
                     self.update_radar_info();
                     self.data_tx.send(DataUpdate::Legend(self.info.legend.clone())).await?;
 
-                    match self.generate_legend(model) {
-                        Some(legend) => {
-                            self.data_tx.send(DataUpdate::Legend(legend)).await?;
-                        }
-                        None => {
-                            error!("{}: Weird, no legend now", self.key);
-                        }
-                    }
-                    self.controls = Some(NavicoControls::new2(
-                        model,
-                        self.info.radar_message_tx.clone(),
-                    ));
                     if let Some(serial_number) = self.info.serial_no.as_ref() {
                         self.set_string(&ControlType::SerialNumber, serial_number.to_string());
                     }
@@ -618,12 +634,9 @@ impl NavicoReportReceiver {
 
         self.set(
             &ControlType::BearingAlignment,
-            i16::from_le_bytes(report.bearing_alignment) as i32,
+            i16::from_le_bytes(report.bearing_alignment) as i32
         );
-        self.set(
-            &ControlType::AntennaHeight,
-            u16::from_le_bytes(report.antenna_height) as i32,
-        );
+        self.set(&ControlType::AntennaHeight, u16::from_le_bytes(report.antenna_height) as i32);
         if self.settings.model == Model::HALO {
             self.set(&ControlType::AccentLight, report.accent_light as i32);
         }
@@ -632,26 +645,10 @@ impl NavicoReportReceiver {
     }
 
     const BLANKING_SETS: [(usize, ControlType, ControlType); 4] = [
-        (
-            0,
-            ControlType::NoTransmitStart1,
-            ControlType::NoTransmitEnd1,
-        ),
-        (
-            1,
-            ControlType::NoTransmitStart2,
-            ControlType::NoTransmitEnd2,
-        ),
-        (
-            2,
-            ControlType::NoTransmitStart3,
-            ControlType::NoTransmitEnd3,
-        ),
-        (
-            3,
-            ControlType::NoTransmitStart4,
-            ControlType::NoTransmitEnd4,
-        ),
+        (0, ControlType::NoTransmitStart1, ControlType::NoTransmitEnd1),
+        (1, ControlType::NoTransmitStart2, ControlType::NoTransmitEnd2),
+        (2, ControlType::NoTransmitStart3, ControlType::NoTransmitEnd3),
+        (3, ControlType::NoTransmitStart4, ControlType::NoTransmitEnd4),
     ];
 
     ///
@@ -669,11 +666,7 @@ impl NavicoReportReceiver {
             let blanking = &report.blanking[i];
             let start_angle = i16::from_le_bytes(blanking.start_angle);
             let end_angle = i16::from_le_bytes(blanking.end_angle);
-            let state = if blanking.enabled > 0 {
-                ControlState::Manual
-            } else {
-                ControlState::Off
-            };
+            let state = if blanking.enabled > 0 { ControlState::Manual } else { ControlState::Off };
             self.set_all(&start, start_angle as i32, None, state);
             self.set_all(&end, end_angle as i32, None, state);
         }
@@ -696,11 +689,7 @@ impl NavicoReportReceiver {
             let blanking = &report.blanking[i];
             let start_angle = i16::from_le_bytes(blanking.start_angle);
             let end_angle = i16::from_le_bytes(blanking.end_angle);
-            let state = if blanking.enabled > 0 {
-                ControlState::Manual
-            } else {
-                ControlState::Off
-            };
+            let state = if blanking.enabled > 0 { ControlState::Manual } else { ControlState::Off };
             self.set_all(&start, start_angle as i32, None, state);
             self.set_all(&end, end_angle as i32, None, state);
         }
@@ -709,23 +698,12 @@ impl NavicoReportReceiver {
     }
 
     ///
-    /// Generate a legend to all byte values stored in the spokes.
+    /// Store the updated in our own RadarInfo struct in the shared map of RadarInfos./
     ///
-    /// Separate function so we don't lock radars longer than necessary
-    /// Once we return the lock is gone, and the legend can be sent to
-    /// the data thread.
-    ///
-    fn generate_legend(&mut self, model: Model) -> Option<Legend> {
+    fn update_radar_info(&mut self) {
         match self.settings.radars.write() {
             Ok(mut radars) => {
-                if let Some(info) = radars.info.get_mut(&self.key) {
-                    info.model = Some(model.to_string());
-                    info.set_legend(model == Model::HALO);
-                    if let Some(legend) = &info.legend {
-                        return Some(legend.clone());
-                    }
-                }
-                None
+                radars.info.insert(self.key.clone(), self.info.clone());
             }
             Err(_) => {
                 panic!("Poisoned RwLock on Radars");
@@ -736,9 +714,10 @@ impl NavicoReportReceiver {
     async fn process_report_08(&mut self) -> Result<(), Error> {
         let data = &self.buf;
 
-        if data.len() != size_of::<RadarReport8_18>()
-            && data.len() != size_of::<RadarReport8_21>()
-            && data.len() != size_of::<RadarReport8_21>() + 1
+        if
+            data.len() != size_of::<RadarReport8_18>() &&
+            data.len() != size_of::<RadarReport8_21>() &&
+            data.len() != size_of::<RadarReport8_21>() + 1
         {
             bail!("{}: Report 0x08C4 invalid length {}", self.key, data.len());
         }
@@ -769,17 +748,10 @@ impl NavicoReportReceiver {
             let doppler_mode: Result<DopplerMode, _> = doppler_state.try_into();
             match doppler_mode {
                 Err(_) => {
-                    bail!(
-                        "{}: Unknown doppler state {}",
-                        self.key,
-                        report.doppler_state
-                    );
+                    bail!("{}: Unknown doppler state {}", self.key, report.doppler_state);
                 }
                 Ok(doppler_mode) => {
-                    debug!(
-                        "{}: doppler mode={} speed={}",
-                        self.key, doppler_mode, doppler_speed
-                    );
+                    debug!("{}: doppler mode={} speed={}", self.key, doppler_mode, doppler_speed);
                     self.data_tx.send(DataUpdate::Doppler(doppler_mode)).await?;
                 }
             }
@@ -788,15 +760,12 @@ impl NavicoReportReceiver {
         }
 
         self.set(&ControlType::SeaState, sea_state as i32);
-        self.set(
-            &ControlType::InterferenceRejection,
-            interference_rejection as i32,
-        );
+        self.set(&ControlType::InterferenceRejection, interference_rejection as i32);
         self.set(&ControlType::ScanSpeed, scan_speed as i32);
         self.set_auto(
             &ControlType::SideLobeSuppression,
             sidelobe_suppression,
-            sidelobe_suppression_auto,
+            sidelobe_suppression_auto
         );
         self.set(&ControlType::NoiseRejection, noise_reduction);
         self.set(&ControlType::TargetSeparation, target_sep);

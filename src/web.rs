@@ -1,15 +1,10 @@
 use anyhow::anyhow;
 use axum::{
-    extract::{ ConnectInfo, Host, State },
-    http::{ StatusCode, Uri },
-    response::{ IntoResponse, Response },
-    routing::get,
-    Json,
-    Router,
+    debug_handler, extract::{ ws::{Message, WebSocket}, ConnectInfo, Host, Path, State, WebSocketUpgrade }, http::{ StatusCode, Uri }, response::{ IntoResponse, Response }, routing::get, Json, Router
 };
-use log::debug;
-use miette::Result;
-use serde::Serialize;
+use log::{debug, trace};
+use miette::{bail, Result};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     io,
@@ -22,8 +17,9 @@ use tokio::net::TcpListener;
 use tokio_graceful_shutdown::SubsystemHandle;
 use rust_embed::RustEmbed;
 use axum_embed::ServeEmbed;
+use miette::miette;
 
-use crate::radar::{ Legend, Radars };
+use crate::{radar::{ Legend, RadarInfo, Radars }, settings::{Control, ControlMessage, ControlType, ControlValue, Controls}};
 use crate::VERSION;
 
 #[derive(RustEmbed, Clone)]
@@ -64,6 +60,8 @@ impl Web {
 
         let app = Router::new()
             .route("/v1/api/radars", get(get_radars))
+            .route("/v1/api/spokes/:key", get(spokes_handler))
+            .route("/v1/api/control/:key", get(control_handler))
             .nest_service("/", serve_assets)
             .with_state(self)
             .into_make_service_with_connect_info::<SocketAddr>();
@@ -85,9 +83,6 @@ impl Web {
     }
 }
 
-async fn root() -> String {
-    "Mayara v".to_string() + VERSION
-}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -97,7 +92,9 @@ struct RadarApi {
     spokes: u16,
     max_spoke_len: u16,
     stream_url: String,
+    control_url: String,
     legend: Legend,
+    controls: HashMap<ControlType, Control>,
 }
 
 impl RadarApi {
@@ -107,7 +104,9 @@ impl RadarApi {
         spokes: u16,
         max_spoke_len: u16,
         stream_url: String,
-        legend: Legend
+        control_url: String,
+        legend: Legend,
+        controls: HashMap<ControlType, Control>,
     ) -> Self {
         RadarApi {
             id: id,
@@ -115,7 +114,9 @@ impl RadarApi {
             spokes,
             max_spoke_len,
             stream_url,
+            control_url,
             legend,
+            controls,
         }
     }
 }
@@ -137,7 +138,7 @@ async fn get_radars(
             Ok(uri) => uri.host().unwrap_or("localhost").to_string(),
             Err(_) => "localhost".to_string(),
         },
-        state.port + 1
+        state.port
     );
 
     debug!("target host = '{}'", host);
@@ -147,9 +148,11 @@ async fn get_radars(
             let x = &radars.info;
             let mut api: HashMap<String, RadarApi> = HashMap::new();
             for (_key, value) in x.iter() {
-                let legend = &value.legend ;
+                if let Some(controls) = &value.controls { 
+                    let legend = &value.legend ;
                     let id = format!("radar-{}", value.id);
-                    let url = format!("http://{}/v1/api/stream/{}", host, id);
+                    let stream_url = format!("ws://{}/v1/api/stream/{}", host, id);
+                    let control_url = format!("ws://{}/v1/api/control/{}", host, id);
                     let mut name = value.brand.to_owned();
                     if value.model.is_some() {
                         name.push(' ');
@@ -164,12 +167,13 @@ async fn get_radars(
                         &name,
                         value.spokes,
                         value.max_spoke_len,
-                        url,
-                        legend.clone()
+                        stream_url, control_url,
+                        legend.clone(),
+                        controls.controls.clone(),
                     );
 
                     api.insert(id.to_owned(), v);
-                
+                }
             }
             Json(api).into_response()
         }
@@ -195,5 +199,195 @@ impl IntoResponse for AppError {
 impl<E> From<E> for AppError where E: Into<anyhow::Error> {
     fn from(err: E) -> Self {
         Self(err.into())
+    }
+}
+
+
+#[derive(Deserialize)]
+struct WebSocketHandlerParameters {
+    key: String,
+}
+
+fn match_radar_id(
+    state: &Web,
+    key: &str,
+) -> Result<RadarInfo, AppError> {
+    match state.radars.read() {
+        Ok(radars) => {
+            let x = &radars.info;
+
+            for (_key, value) in x.iter() {
+                if value.controls.is_some() {
+                    let id = format!("radar-{}", value.id);
+                    if id == key {
+                        return Ok(value.clone());
+                    }
+                }
+            }
+        }
+        Err(_) => return Err(AppError(anyhow!("Poisoned lock"))),
+    }
+    Err(AppError(anyhow!("No such radar {}", key)))
+}
+
+#[debug_handler]
+async fn spokes_handler(
+    State(state): State<Web>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Path(params): Path<WebSocketHandlerParameters>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    debug!("stream request from {} for {}", addr, params.key);
+
+    match match_radar_id(&state, &params.key) {
+        Ok(radar) => {
+            let shutdown_rx = state.shutdown_tx.subscribe();
+            let radar_message_rx = radar.message_tx.subscribe();
+            // finalize the upgrade process by returning upgrade callback.
+            // we can customize the callback by sending additional info such as address.
+            ws.on_upgrade(move |socket| spokes_stream(socket, radar_message_rx, shutdown_rx))
+        }
+        Err(e) => e.into_response(),
+    }
+}
+
+/// Actual websocket statemachine (one will be spawned per connection)
+
+async fn spokes_stream(
+    mut socket: WebSocket,
+    mut radar_message_rx: tokio::sync::broadcast::Receiver<Vec<u8>>,
+    mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
+) {
+    loop {
+        tokio::select! {
+            _ = shutdown_rx.recv() => {
+                debug!("Shutdown of websocket");
+                break;
+            },
+            r = radar_message_rx.recv() => {
+                match r {
+                    Ok(message) => {
+                        let len = message.len();
+                        let ws_message = Message::Binary(message);
+                        if let Err(e) = socket.send(ws_message).await {
+                            debug!("Error on send to websocket: {}", e);
+                            break;
+                        }
+                        trace!("Sent radar message {} bytes", len);
+                    },
+                    Err(e) => {
+                        debug!("Error on RadarMessage channel: {}", e);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+#[debug_handler]
+async fn control_handler(
+    State(state): State<Web>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Path(params): Path<WebSocketHandlerParameters>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    debug!("control request from {} for {}", addr, params.key);
+
+    match match_radar_id(&state, &params.key) {
+        Ok(radar) => {
+            let shutdown_rx = state.shutdown_tx.subscribe();
+            
+            // finalize the upgrade process by returning upgrade callback.
+            // we can customize the callback by sending additional info such as address.
+            ws.on_upgrade(move |socket| control_stream(socket, radar, shutdown_rx))
+        }
+        Err(e) => e.into_response(),
+    }
+}
+
+/// Actual websocket statemachine (one will be spawned per connection)
+
+async fn control_stream(
+    mut socket: WebSocket,
+    radar: RadarInfo,
+    mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
+) {
+    let mut control_rx = radar.control_tx.subscribe();
+    let command_tx = radar.command_tx.clone();
+
+    const NEW_CLIENT: ControlMessage = ControlMessage::NewClient;
+    if let Err(e) = command_tx.send(NEW_CLIENT) {
+        log::error!("Unable to send error to control channel: {e}");
+        return;
+    }
+
+    debug!("Started /control websocket");
+
+    loop {
+        debug!("Loop /control websocket");
+        tokio::select! {
+                _ = shutdown_rx.recv() => {
+                    debug!("Shutdown of /control websocket");
+                    break;
+                },
+                r = control_rx.recv() => {
+                    match r {
+                        Ok(message) => {
+                            let message: String = serde_json::to_string(&message).unwrap();
+                            trace!("Sending {:?}", message);
+                            let ws_message = Message::Text(message);
+
+                            if let Err(e) = socket.send(ws_message).await {
+                                log::error!("send to websocket client: {e}");
+                                break;
+                            }
+                            
+                            
+                        },
+                        Err(e) => {
+                            log::error!("Error on Control channel: {e}");
+                            break;
+                        }
+                    }
+                },
+                r = socket.recv() => {
+                    match r {
+                        Some(Ok(message)) => {
+                            match message {
+                                Message::Text(message) => {
+                                    if let Ok(control_value) = serde_json::from_str(&message) {
+                                        trace!("Received ControlValue {:?}", control_value);
+
+                                        let control_message = ControlMessage::Value(control_value);
+
+                                        if let Err(e) = command_tx.send(control_message) {
+                                            log::error!("send to control channel: {e}");
+                                            break;
+                                        }
+                                    } else {
+                                        log::error!("Unknown JSON string '{}", message);
+                                    }
+                                    
+                                },
+                                _ => {
+                                    debug!("Dropping unexpected message {:?}", message);
+                                }
+                            }
+                            
+                        },
+                        None => {
+                            // Stream has closed
+                            log::debug!("Control websocket closed");
+                            break;
+                        }
+                        r => {
+                            log::error!("Error reading websocket: {:?}", r);
+                            break;
+                        }
+                    }
+                }
+            }
     }
 }

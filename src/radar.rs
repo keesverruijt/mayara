@@ -1,28 +1,25 @@
 use enum_primitive_derive::Primitive;
 use log::info;
-use serde::ser::{SerializeMap, Serializer};
+use serde::ser::{ SerializeMap, Serializer };
 use serde::Serialize;
 use std::{
     collections::HashMap,
-    fmt::{self, Display, Write},
-    net::{Ipv4Addr, SocketAddrV4},
-    sync::{Arc, RwLock},
+    fmt::{ self, Display, Write },
+    net::{ Ipv4Addr, SocketAddrV4 },
+    sync::{ Arc, RwLock },
 };
 use thiserror::Error;
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::locator::LocatorId;
-use crate::settings::Controls;
+use crate::settings::{ ControlMessage, ControlValue, Controls };
 use crate::Cli;
 
 #[derive(Error, Debug)]
 pub enum RadarError {
-    #[error("Socket operation failed")]
-    Io(#[from] std::io::Error),
-    #[error("Interface '{0}' is not available")]
-    InterfaceNotFound(String),
-    #[error("Interface '{0}' has no valid IPv4 address")]
-    InterfaceNoV4(String),
+    #[error("Socket operation failed")] Io(#[from] std::io::Error),
+    #[error("Interface '{0}' is not available")] InterfaceNotFound(String),
+    #[error("Interface '{0}' has no valid IPv4 address")] InterfaceNoV4(String),
     #[error("Cannot detect Ethernet devices")]
     EnumerationFailed,
     #[error("Timeout")]
@@ -50,19 +47,12 @@ struct Color {
 
 impl fmt::Display for Color {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "#{:02x}{:02x}{:02x}{:02x}",
-            self.r, self.g, self.b, self.a
-        )
+        write!(f, "#{:02x}{:02x}{:02x}{:02x}", self.r, self.g, self.b, self.a)
     }
 }
 
 impl Serialize for Color {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
         serializer.serialize_str(&self.to_string())
     }
 }
@@ -83,10 +73,7 @@ pub struct Legend {
 }
 
 impl Serialize for Legend {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
         let mut state = serializer.serialize_map(Some(self.pixels.len()))?;
         for (n, value) in self.pixels.iter().enumerate() {
             let key = n.to_string();
@@ -103,22 +90,23 @@ pub struct RadarInfo {
     pub locator_id: LocatorId,
     pub brand: String,
     pub model: Option<String>,
-    pub serial_no: Option<String>,       // Serial # for this radar
-    pub which: Option<String>,           // "A", "B" or None
-    pub pixel_values: u8,                // How many values per pixel, 0..220 or so
-    pub spokes: u16,                     // How many spokes per rotation
-    pub max_spoke_len: u16,              // Fixed for some radars, variable for others
-    pub addr: SocketAddrV4,              // The assigned IP address of the radar
-    pub nic_addr: Ipv4Addr,              // IPv4 address of NIC via which radar can be reached
-    pub spoke_data_addr: SocketAddrV4,   // Where the radar will send data spokes
-    pub report_addr: SocketAddrV4,       // Where the radar will send reports
+    pub serial_no: Option<String>, // Serial # for this radar
+    pub which: Option<String>, // "A", "B" or None
+    pub pixel_values: u8, // How many values per pixel, 0..220 or so
+    pub spokes: u16, // How many spokes per rotation
+    pub max_spoke_len: u16, // Fixed for some radars, variable for others
+    pub addr: SocketAddrV4, // The assigned IP address of the radar
+    pub nic_addr: Ipv4Addr, // IPv4 address of NIC via which radar can be reached
+    pub spoke_data_addr: SocketAddrV4, // Where the radar will send data spokes
+    pub report_addr: SocketAddrV4, // Where the radar will send reports
     pub send_command_addr: SocketAddrV4, // Where displays will send commands to the radar
-    pub legend: Legend,                  // What pixel values mean
-    pub controls: Option<Controls>,      // What controls this radar supports
+    pub legend: Legend, // What pixel values mean
+    pub controls: Option<Controls>, // Which controls there are
 
     // Channels
-    pub radar_message_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
-    pub radar_control_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
+    pub message_tx: tokio::sync::broadcast::Sender<Vec<u8>>, // Serialized RadarMessage
+    pub control_tx: tokio::sync::broadcast::Sender<ControlValue>,
+    pub command_tx: tokio::sync::broadcast::Sender<ControlMessage>,
 }
 
 impl RadarInfo {
@@ -135,10 +123,11 @@ impl RadarInfo {
         nic_addr: Ipv4Addr,
         spoke_data_addr: SocketAddrV4,
         report_addr: SocketAddrV4,
-        send_command_addr: SocketAddrV4,
+        send_command_addr: SocketAddrV4
     ) -> Self {
-        let (radar_message_tx, _radar_message_rx) = tokio::sync::broadcast::channel(32);
-        let (radar_control_tx, _radar_control_rx) = tokio::sync::broadcast::channel(32);
+        let (message_tx, _message_rx) = tokio::sync::broadcast::channel(32);
+        let (control_tx, _control_rx) = tokio::sync::broadcast::channel(32);
+        let (command_tx, _command_rx) = tokio::sync::broadcast::channel(32);
 
         RadarInfo {
             key: {
@@ -172,8 +161,9 @@ impl RadarInfo {
             report_addr,
             send_command_addr,
             legend: default_legend(false, pixel_values),
-            radar_message_tx,
-            radar_control_tx,
+            message_tx,
+            control_tx,
+            command_tx,
             controls: None,
         }
     }
@@ -189,7 +179,7 @@ impl RadarInfo {
     ///
     ///  forward_output is activated in all starts of radars when cli args.output
     ///  is true:
-    ///  
+    ///
     ///  if args.output {
     ///      subsys.start(SubsystemBuilder::new(data_name, move |s| {
     ///          info.forward_output(s)
@@ -200,7 +190,7 @@ impl RadarInfo {
     pub async fn forward_output(self, subsys: SubsystemHandle) -> Result<(), RadarError> {
         use std::io::Write;
 
-        let mut rx = self.radar_message_tx.subscribe();
+        let mut rx = self.message_tx.subscribe();
 
         loop {
             tokio::select! { biased;
@@ -217,7 +207,7 @@ impl RadarInfo {
                         }
                     };
                 },
-            };
+            }
         }
     }
 }
@@ -260,10 +250,12 @@ pub struct Radars {
 
 impl Radars {
     pub fn new(args: Cli) -> Arc<RwLock<Radars>> {
-        Arc::new(RwLock::new(Radars {
-            info: HashMap::new(),
-            args,
-        }))
+        Arc::new(
+            RwLock::new(Radars {
+                info: HashMap::new(),
+                args,
+            })
+        )
     }
 }
 impl Radars {
@@ -327,10 +319,10 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
         pixel_values = 255 - 32 - 2;
     }
 
-    const WHITE: f32 = 256.;
+    const WHITE: f32 = 256.0;
     let pixels_with_color = pixel_values - 1;
-    let start = WHITE / 3.;
-    let delta: f32 = WHITE * 2. / (pixels_with_color as f32);
+    let start = WHITE / 3.0;
+    let delta: f32 = (WHITE * 2.0) / (pixels_with_color as f32);
     let one_third = pixels_with_color / 3;
     let two_thirds = one_third * 2;
 
@@ -354,19 +346,19 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
             color: Color {
                 // red starts at 2/3 and peaks at end
                 r: if v >= two_thirds {
-                    (start + (v - two_thirds) as f32 * delta) as u8
+                    (start + ((v - two_thirds) as f32) * delta) as u8
                 } else {
                     0
                 },
                 // green starts at 1/3 and peaks at 2/3
                 g: if v >= one_third && v < two_thirds {
-                    (start + (v - one_third) as f32 * delta) as u8
+                    (start + ((v - one_third) as f32) * delta) as u8
                 } else {
                     0
                 },
                 // blue peaks at 1/3
                 b: if v < one_third {
-                    (start + v as f32 * (WHITE / pixel_values as f32)) as u8
+                    (start + (v as f32) * (WHITE / (pixel_values as f32))) as u8
                 } else {
                     0
                 },
@@ -433,7 +425,6 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
 
 #[cfg(test)]
 mod tests {
-
     use super::default_legend;
 
     #[test]

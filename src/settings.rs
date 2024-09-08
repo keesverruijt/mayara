@@ -27,15 +27,11 @@ pub enum ControlState {
 
 impl Display for ControlState {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                ControlState::Off => "Off",
-                ControlState::Manual => "Manual",
-                ControlState::Auto => "Auto",
-            }
-        )
+        write!(f, "{}", match self {
+            ControlState::Off => "Off",
+            ControlState::Manual => "Manual",
+            ControlState::Auto => "Auto",
+        })
     }
 }
 
@@ -43,19 +39,22 @@ impl Display for ControlState {
 pub struct Controls {
     pub controls: HashMap<ControlType, Control>,
     protobuf_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
-    json_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
+    control_tx: tokio::sync::broadcast::Sender<ControlValue>,
+    command_tx: tokio::sync::broadcast::Sender<ControlMessage>,
 }
 
 impl Controls {
     pub fn new(
         controls: HashMap<ControlType, Control>,
         protobuf_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
-        json_tx: tokio::sync::broadcast::Sender<Vec<u8>>
+        control_tx: tokio::sync::broadcast::Sender<ControlValue>,
+        command_tx: tokio::sync::broadcast::Sender<ControlMessage>
     ) -> Self {
         Controls {
             controls,
             protobuf_tx,
-            json_tx,
+            control_tx,
+            command_tx,
         }
     }
 
@@ -68,16 +67,27 @@ impl Controls {
         return None;
     }
 
-    fn broadcast_json(tx: &tokio::sync::broadcast::Sender<Vec<u8>>, control: &Control) {
+    pub fn broadcast_all_json(&self) {
+        for c in &self.controls {
+            Self::broadcast_json(&self.control_tx, &c.1);
+        }
+    }
+
+    fn broadcast_json(tx: &tokio::sync::broadcast::Sender<ControlValue>, control: &Control) {
         let control_value = crate::settings::ControlValue {
-            id: control.item.control_type.to_string(),
-            value: control.value,
+            id: control.item.control_type,
+            name: control.item.control_type.to_string(),
+            value: if control.value == i32::MIN {
+                None
+            } else {
+                Some(control.value)
+            },
+            string_value: control.string_value.clone(),
             auto: control.auto,
             description: Self::get_description(control),
         };
 
-        let bytes = serde_json::to_string(&control_value).unwrap().into();
-        match tx.send(bytes) {
+        match tx.send(control_value) {
             Err(_e) => {}
             Ok(cnt) => {
                 trace!(
@@ -101,9 +111,7 @@ impl Controls {
         message.controls.push(control_value);
 
         let mut bytes = Vec::new();
-        message
-            .write_to_vec(&mut bytes)
-            .expect("Cannot write RadarMessage to vec");
+        message.write_to_vec(&mut bytes).expect("Cannot write RadarMessage to vec");
         match update_tx.send(bytes) {
             Err(_e) => {
                 trace!(
@@ -128,12 +136,12 @@ impl Controls {
         control_type: &ControlType,
         value: i32,
         auto: Option<bool>,
-        state: ControlState,
+        state: ControlState
     ) -> Result<Option<()>, ControlError> {
         if let Some(control) = self.controls.get_mut(control_type) {
             if control.set_all(value, auto, state)?.is_some() {
                 Self::broadcast_protobuf(&self.protobuf_tx, control);
-                Self::broadcast_json(&self.protobuf_tx, control);
+                Self::broadcast_json(&self.control_tx, control);
                 return Ok(Some(()));
             }
             Ok(None)
@@ -147,11 +155,12 @@ impl Controls {
     pub fn set(
         &mut self,
         control_type: &ControlType,
-        value: i32,
+        value: i32
     ) -> Result<Option<()>, ControlError> {
         if let Some(control) = self.controls.get_mut(control_type) {
             if control.set_all(value, None, ControlState::Manual)?.is_some() {
                 Self::broadcast_protobuf(&self.protobuf_tx, control);
+                Self::broadcast_json(&self.control_tx, control);
                 return Ok(Some(()));
             }
             Ok(None)
@@ -163,17 +172,14 @@ impl Controls {
         &mut self,
         control_type: &ControlType,
         auto: bool,
-        value: i32,
+        value: i32
     ) -> Result<Option<()>, ControlError> {
         if let Some(control) = self.controls.get_mut(control_type) {
-            let state = if auto {
-                ControlState::Auto
-            } else {
-                ControlState::Manual
-            };
+            let state = if auto { ControlState::Auto } else { ControlState::Manual };
 
             if control.set_all(value, Some(auto), state)?.is_some() {
                 Self::broadcast_protobuf(&self.protobuf_tx, control);
+                Self::broadcast_json(&self.control_tx, control);
                 return Ok(Some(()));
             }
             Ok(None)
@@ -184,12 +190,13 @@ impl Controls {
     pub fn set_string(
         &mut self,
         control_type: &ControlType,
-        value: String,
+        value: String
     ) -> Result<Option<String>, ControlError> {
         if let Some(control) = self.controls.get_mut(control_type) {
             if control.set_string(value).is_some() {
                 Self::broadcast_protobuf(&self.protobuf_tx, control);
-                return Ok(control.value_string.clone());
+                Self::broadcast_json(&self.control_tx, control);
+                return Ok(control.string_value.clone());
             }
             Ok(None)
         } else {
@@ -198,22 +205,39 @@ impl Controls {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum ControlMessage {
+    Value(ControlValue),
+    NewClient,
+}
+
 #[derive(Deserialize, Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct ControlValue {
-    pub id: String,
-    pub value: i32,
+    pub id: ControlType,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub string_value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub auto: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Control {
     #[serde(flatten)]
     item: ControlDefinition,
     #[serde(skip)]
     value: i32,
-    value_string: Option<String>,
+    #[serde(skip)]
+    string_value: Option<String>,
+    #[serde(skip)]
     auto: Option<bool>,
+    #[serde(skip)]
     pub state: ControlState,
 }
 
@@ -225,7 +249,7 @@ impl Control {
             value,
             auto: None,
             state: ControlState::Off,
-            value_string: None,
+            string_value: None,
         }
     }
 
@@ -262,16 +286,11 @@ impl Control {
     pub fn new_numeric(control_type: ControlType, min_value: i32, max_value: i32) -> Self {
         let control = Self::new(ControlDefinition {
             control_type,
-            auto_values: 0,
-            auto_names: None,
+            automatic: None,
             has_off: false,
-            has_auto: false,
-            has_auto_adjustable: false,
             default_value: min_value,
             min_value,
             max_value,
-            auto_adjust_min_value: 0,
-            auto_adjust_max_value: 0,
             step_value: 1,
             wire_scale_factor: max_value,
             wire_offset: 0,
@@ -291,16 +310,11 @@ impl Control {
     ) -> Self {
         Self::new(ControlDefinition {
             control_type,
-            auto_values: 0,
-            auto_names: None,
+            automatic: Some(automatic),
             has_off: false,
-            has_auto: true,
-            has_auto_adjustable: false,
             default_value: min_value,
             min_value,
             max_value,
-            auto_adjust_min_value: 0,
-            auto_adjust_max_value: 0,
             step_value: 1,
             wire_scale_factor: max_value,
             wire_offset: 0,
@@ -314,11 +328,8 @@ impl Control {
     pub fn new_list(control_type: ControlType, descriptions: &[&str]) -> Self {
         Self::new(ControlDefinition {
             control_type,
-            auto_values: 0,
-            auto_names: None,
+            automatic: None,
             has_off: false,
-            has_auto: false,
-            has_auto_adjustable: false,
             default_value: 0,
             min_value: 0,
             max_value: (descriptions.len() as i32) - 1,
@@ -340,8 +351,7 @@ impl Control {
     pub fn new_string(control_type: ControlType) -> Self {
         let control = Self::new(ControlDefinition {
             control_type,
-            auto_values: 0,
-            auto_names: None,
+            automatic: None,
             has_off: false,
             default_value: NOT_USED,
             min_value: NOT_USED,
@@ -383,16 +393,18 @@ impl Control {
         &mut self,
         value: i32,
         auto: Option<bool>,
-        state: ControlState,
+        state: ControlState
     ) -> Result<Option<()>, ControlError> {
         let mut value = if self.item.wire_scale_factor != self.item.max_value {
-            (value as i64 * self.item.max_value as i64 / self.item.wire_scale_factor as i64) as i32
+            (((value as i64) * (self.item.max_value as i64)) /
+                (self.item.wire_scale_factor as i64)) as i32
         } else {
             value
         };
-        if self.item.wire_offset == -1
-            && value > self.item.max_value
-            && value <= 2 * self.item.max_value
+        if
+            self.item.wire_offset == -1 &&
+            value > self.item.max_value &&
+            value <= 2 * self.item.max_value
         {
             // debug!("{} value {} -> ", self.item.control_type, value);
             value -= 2 * self.item.max_value;
@@ -400,18 +412,10 @@ impl Control {
         }
 
         if value < self.item.min_value {
-            Err(ControlError::TooLow(
-                self.item.control_type,
-                value,
-                self.item.min_value,
-            ))
+            Err(ControlError::TooLow(self.item.control_type, value, self.item.min_value))
         } else if value > self.item.max_value {
-            Err(ControlError::TooHigh(
-                self.item.control_type,
-                value,
-                self.item.max_value,
-            ))
-        } else if auto.is_some() && !self.item.has_auto {
+            Err(ControlError::TooHigh(self.item.control_type, value, self.item.max_value))
+        } else if auto.is_some() && self.item.automatic.is_none() {
             Err(ControlError::NoAuto(self.item.control_type))
         } else if self.value != value || self.auto != auto {
             self.value = value;
@@ -425,8 +429,8 @@ impl Control {
     }
 
     pub fn set_string(&mut self, value: String) -> Option<()> {
-        if self.value_string.is_none() || self.value_string.as_ref().unwrap() != &value {
-            self.value_string = Some(value);
+        if self.string_value.is_none() || self.string_value.as_ref().unwrap() != &value {
+            self.string_value = Some(value);
             self.state = ControlState::Manual;
             Some(())
         } else {
@@ -456,8 +460,7 @@ pub const NOT_USED: i32 = i32::MIN;
 pub struct ControlDefinition {
     #[serde(skip)]
     control_type: ControlType,
-    auto_values: i32,
-    auto_names: Option<Vec<String>>,
+    #[serde(skip)]
     has_off: bool,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     automatic: Option<AutomaticValue>,
@@ -471,8 +474,11 @@ pub struct ControlDefinition {
     max_value: i32,
     #[serde(skip_serializing_if = "is_not_used")]
     step_value: i32,
+    #[serde(skip)]
     wire_scale_factor: i32,
+    #[serde(skip)]
     wire_offset: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub unit: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     descriptions: Option<Vec<String>>,
@@ -494,48 +500,23 @@ fn is_one(v: &i32) -> bool {
 
 impl ControlDefinition {}
 
-#[derive(Eq, PartialEq, Hash, Copy, Clone, Debug, Serialize)]
+#[derive(Eq, PartialEq, Hash, Copy, Clone, Debug, Serialize, Deserialize)]
 pub enum ControlType {
-    AccentLight,
+    Status,
+    Range,
+    Gain,
+    Mode,
     // AllAuto,
-    // AntennaForward,
-    AntennaHeight,
-    // AntennaStarboard,
-    BearingAlignment,
-    // ColorGain,
-    // DisplayTiming,
+    Rain,
+    Sea,
+    SeaState,
+    // Scaling,
+    ScanSpeed,
     Doppler,
     // DopplerAutoTrack,
     DopplerSpeedThreshold,
-    // Ftc,
-    FirmwareVersion,
-    Gain,
-    InterferenceRejection,
-    // LocalInterferenceRejection,
-    // MainBangSize,
-    // MainBangSuppression,
-    Mode,
-    ModelName,
-    NoTransmitEnd1,
-    NoTransmitEnd2,
-    NoTransmitEnd3,
-    NoTransmitEnd4,
-    NoTransmitStart1,
-    NoTransmitStart2,
-    NoTransmitStart3,
-    NoTransmitStart4,
-    NoiseRejection,
-    OperatingHours,
-    // Orientation,
-    Rain,
-    Range,
-    // Scaling,
-    ScanSpeed,
-    Sea,
-    SeaState,
     SerialNumber,
     SideLobeSuppression,
-    Status,
     // Stc,
     // StcCurve,
     TargetBoost,
@@ -547,6 +528,31 @@ pub enum ControlType {
     // TrailsMotion,
     // TuneCoarse,
     // TuneFine,
+    AccentLight,
+    // AntennaForward,
+    AntennaHeight,
+    // AntennaStarboard,
+    BearingAlignment,
+    // ColorGain,
+    // DisplayTiming,
+    // Ftc,
+    InterferenceRejection,
+    // LocalInterferenceRejection,
+    // MainBangSize,
+    // MainBangSuppression,
+    NoTransmitEnd1,
+    NoTransmitEnd2,
+    NoTransmitEnd3,
+    NoTransmitEnd4,
+    NoTransmitStart1,
+    NoTransmitStart2,
+    NoTransmitStart3,
+    NoTransmitStart4,
+    NoiseRejection,
+    OperatingHours,
+    FirmwareVersion,
+    ModelName,
+    // Orientation,
 }
 
 impl Display for ControlType {
@@ -611,12 +617,12 @@ impl Display for ControlType {
 
 #[derive(Error, Debug)]
 pub enum ControlError {
-    #[error("Control {0} not supported on this radar")]
-    NotSupported(ControlType),
-    #[error("Control {0} value {1} is lower than minimum value {2}")]
-    TooLow(ControlType, i32, i32),
-    #[error("Control {0} value {1} is higher than maximum value {2}")]
-    TooHigh(ControlType, i32, i32),
-    #[error("Control {0} does not support Auto")]
-    NoAuto(ControlType),
+    #[error("Control {0} not supported on this radar")] NotSupported(ControlType),
+    #[error("Control {0} value {1} is lower than minimum value {2}")] TooLow(ControlType, i32, i32),
+    #[error("Control {0} value {1} is higher than maximum value {2}")] TooHigh(
+        ControlType,
+        i32,
+        i32,
+    ),
+    #[error("Control {0} does not support Auto")] NoAuto(ControlType),
 }
