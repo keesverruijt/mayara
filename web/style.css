@@ -3,7 +3,7 @@ html {
   box-sizing: content-box;
   border: none;
   font: normal 16px/1 Verdana, Geneva, sans-serif;
-  color: rgba(255,255,255,1);
+  color: rgb(152, 217, 204);
   -o-text-overflow: ellipsis;
   text-overflow: ellipsis;
   background: #000000;
@@ -21,4 +21,6 @@ label {
 }
 input {
   display: block;
+  background-color: darkblue;
+  color: wheat;
 }

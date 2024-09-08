@@ -2,7 +2,7 @@ import van from "./van-1.5.2.debug.js";
 
 const {a, li} = van.tags
 
-const RadarEntry = (id, name) => li(a({href: "/client.html?id=" + id}, name))
+const RadarEntry = (id, name) => li(a({href: "/control.html?id=" + id}, name))
 
 function radarsLoaded(d) {
   let c = Object.keys(d).length;
