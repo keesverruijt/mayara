@@ -22,6 +22,10 @@ use miette::miette;
 use crate::{radar::{ Legend, RadarInfo, Radars }, settings::{Control, ControlMessage, ControlType, ControlValue, Controls}};
 use crate::VERSION;
 
+const RADAR_URI: &str = "/v1/api/radars";
+const SPOKES_URI: &str = "/v1/api/spokes/";
+const CONTROL_URI: &str = "/v1/api/control";
+
 #[derive(RustEmbed, Clone)]
 #[folder = "web/"]
 struct Assets;
@@ -59,9 +63,9 @@ impl Web {
         let shutdown_tx = self.shutdown_tx.clone(); // Clone as self used in with_state() and with_graceful_shutdown() below
 
         let app = Router::new()
-            .route("/v1/api/radars", get(get_radars))
-            .route("/v1/api/spokes/:key", get(spokes_handler))
-            .route("/v1/api/control/:key", get(control_handler))
+            .route(RADAR_URI, get(get_radars))
+            .route(&format!("{}{}", SPOKES_URI, ":key"), get(spokes_handler))
+            .route(&format!("{}{}", CONTROL_URI, ":key"), get(control_handler))
             .nest_service("/", serve_assets)
             .with_state(self)
             .into_make_service_with_connect_info::<SocketAddr>();
@@ -151,8 +155,8 @@ async fn get_radars(
                 if let Some(controls) = &value.controls { 
                     let legend = &value.legend ;
                     let id = format!("radar-{}", value.id);
-                    let stream_url = format!("ws://{}/v1/api/stream/{}", host, id);
-                    let control_url = format!("ws://{}/v1/api/control/{}", host, id);
+                    let stream_url = format!("ws://{}{}{}", host, SPOKES_URI, id);
+                    let control_url = format!("ws://{}{}{}", host, CONTROL_URI, id);
                     let mut name = value.brand.to_owned();
                     if value.model.is_some() {
                         name.push(' ');
