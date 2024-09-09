@@ -11,14 +11,21 @@ html {
 
 div.control {
   display: block;
+  border-style: solid;
   border: 1px;
   border-radius: 3px;
   border-color: lightskyblue;
 }
 
+div.description {
+  display: block;
+  text-align: right;
+}
+
 label {
   display: block;
 }
+
 input {
   display: block;
   background-color: darkblue;

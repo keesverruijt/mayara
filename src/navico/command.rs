@@ -1,8 +1,10 @@
 use log::{debug, trace};
+use std::cmp::min;
 use std::io;
 use tokio::net::UdpSocket;
 
-use crate::radar::RadarInfo;
+use crate::radar::{RadarError, RadarInfo};
+use crate::settings::{ControlType, ControlValue};
 use crate::util::create_multicast_send;
 
 pub const REQUEST_03_REPORT: [u8; 2] = [0x04, 0xc2]; // This causes the radar to report Report 3
@@ -25,7 +27,7 @@ impl Command {
         }
     }
 
-    async fn start_socket(&mut self) -> io::Result<()> {
+    async fn start_socket(&mut self) -> Result<(), RadarError> {
         match create_multicast_send(&self.info.send_command_addr, &self.info.nic_addr) {
             Ok(sock) => {
                 debug!(
@@ -41,20 +43,32 @@ impl Command {
                     "{} {} via {}: create multicast failed: {}",
                     self.key, &self.info.send_command_addr, &self.info.nic_addr, e
                 );
-                Err(e)
+                Err(RadarError::Io(e))
             }
         }
     }
 
-    pub async fn send(&mut self, message: &[u8]) -> io::Result<()> {
+    pub async fn send(&mut self, message: &[u8]) -> Result<(), RadarError> {
         if self.sock.is_none() {
             self.start_socket().await?;
         }
         if let Some(sock) = &self.sock {
-            sock.send(message).await?;
+            sock.send(message).await.map_err(RadarError::Io)?;
             trace!("{}: sent {:02X?}", self.key, message);
         }
 
         Ok(())
+    }
+
+    pub async fn set_control(&mut self, cv: &ControlValue) -> Result<(), RadarError> {
+        match cv.id {
+            ControlType::Gain => { 
+                let v: i32 = min((cv.value.unwrap_or(0) + 1) * 255 / 100, 255);
+                let auto: u8 = if cv.auto.unwrap_or(false) { 1 } else { 0 };
+                let cmd: [u8;11] = [ 0x06, 0xc1, 0, 0, 0, 0, auto, 0, 0, 0, v as u8];
+                self.send(&cmd).await
+            },
+            _ =>  Err(RadarError::CannotSetControlType(cv.id))
+        }
     }
 }

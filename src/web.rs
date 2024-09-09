@@ -1,26 +1,37 @@
 use anyhow::anyhow;
 use axum::{
-    debug_handler, extract::{ ws::{Message, WebSocket}, ConnectInfo, Host, Path, State, WebSocketUpgrade }, http::{ StatusCode, Uri }, response::{ IntoResponse, Response }, routing::get, Json, Router
+    debug_handler,
+    extract::{
+        ws::{Message, WebSocket},
+        ConnectInfo, Host, Path, State, WebSocketUpgrade,
+    },
+    http::{StatusCode, Uri},
+    response::{IntoResponse, Response},
+    routing::get,
+    Json, Router,
 };
+use axum_embed::ServeEmbed;
 use log::{debug, trace};
+use miette::miette;
 use miette::{bail, Result};
+use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     io,
-    net::{ IpAddr, Ipv4Addr, SocketAddr },
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     str::FromStr,
-    sync::{ Arc, RwLock },
+    sync::{Arc, RwLock},
 };
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio_graceful_shutdown::SubsystemHandle;
-use rust_embed::RustEmbed;
-use axum_embed::ServeEmbed;
-use miette::miette;
 
-use crate::{radar::{ Legend, RadarInfo, Radars }, settings::{Control, ControlMessage, ControlType, ControlValue, Controls}};
 use crate::VERSION;
+use crate::{
+    radar::{Legend, RadarInfo, Radars},
+    settings::{Control, ControlMessage, ControlType, ControlValue, Controls},
+};
 
 const RADAR_URI: &str = "/v1/api/radars";
 const SPOKES_URI: &str = "/v1/api/spokes/";
@@ -32,7 +43,8 @@ struct Assets;
 
 #[derive(Error, Debug)]
 pub enum WebError {
-    #[error("Socket operation failed")] Io(#[from] io::Error),
+    #[error("Socket operation failed")]
+    Io(#[from] io::Error),
 }
 
 #[derive(Clone, Debug)]
@@ -54,9 +66,12 @@ impl Web {
     }
 
     pub async fn run(self, subsys: SubsystemHandle) -> Result<(), WebError> {
-        let listener = TcpListener::bind(
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), self.port)
-        ).await.unwrap();
+        let listener = TcpListener::bind(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+            self.port,
+        ))
+        .await
+        .unwrap();
 
         let serve_assets = ServeEmbed::<Assets>::new();
         let mut shutdown_rx = self.shutdown_tx.subscribe();
@@ -86,7 +101,6 @@ impl Web {
         Ok(())
     }
 }
-
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -132,7 +146,7 @@ impl RadarApi {
 async fn get_radars(
     State(state): State<Web>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Host(host): Host
+    Host(host): Host,
 ) -> Response {
     debug!("Radar state request from {} for host '{}'", addr, host);
 
@@ -152,8 +166,8 @@ async fn get_radars(
             let x = &radars.info;
             let mut api: HashMap<String, RadarApi> = HashMap::new();
             for (_key, value) in x.iter() {
-                if let Some(controls) = &value.controls { 
-                    let legend = &value.legend ;
+                if let Some(controls) = &value.controls {
+                    let legend = &value.legend;
                     let id = format!("radar-{}", value.id);
                     let stream_url = format!("ws://{}{}{}", host, SPOKES_URI, id);
                     let control_url = format!("ws://{}{}{}", host, CONTROL_URI, id);
@@ -171,7 +185,8 @@ async fn get_radars(
                         &name,
                         value.spokes,
                         value.max_spoke_len,
-                        stream_url, control_url,
+                        stream_url,
+                        control_url,
                         legend.clone(),
                         controls.controls.clone(),
                     );
@@ -194,28 +209,28 @@ impl IntoResponse for AppError {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Something went wrong: {}", self.0),
-        ).into_response()
+        )
+            .into_response()
     }
 }
 
 // This enables using `?` on functions that return `Result<_, anyhow::Error>` to turn them into
 // `Result<_, AppError>`. That way you don't need to do that manually.
-impl<E> From<E> for AppError where E: Into<anyhow::Error> {
+impl<E> From<E> for AppError
+where
+    E: Into<anyhow::Error>,
+{
     fn from(err: E) -> Self {
         Self(err.into())
     }
 }
-
 
 #[derive(Deserialize)]
 struct WebSocketHandlerParameters {
     key: String,
 }
 
-fn match_radar_id(
-    state: &Web,
-    key: &str,
-) -> Result<RadarInfo, AppError> {
+fn match_radar_id(state: &Web, key: &str) -> Result<RadarInfo, AppError> {
     match state.radars.read() {
         Ok(radars) => {
             let x = &radars.info;
@@ -289,7 +304,6 @@ async fn spokes_stream(
     }
 }
 
-
 #[debug_handler]
 async fn control_handler(
     State(state): State<Web>,
@@ -302,7 +316,7 @@ async fn control_handler(
     match match_radar_id(&state, &params.key) {
         Ok(radar) => {
             let shutdown_rx = state.shutdown_tx.subscribe();
-            
+
             // finalize the upgrade process by returning upgrade callback.
             // we can customize the callback by sending additional info such as address.
             ws.on_upgrade(move |socket| control_stream(socket, radar, shutdown_rx))
@@ -332,66 +346,66 @@ async fn control_stream(
     loop {
         debug!("Loop /control websocket");
         tokio::select! {
-                _ = shutdown_rx.recv() => {
-                    debug!("Shutdown of /control websocket");
-                    break;
-                },
-                r = control_rx.recv() => {
-                    match r {
-                        Ok(message) => {
-                            let message: String = serde_json::to_string(&message).unwrap();
-                            trace!("Sending {:?}", message);
-                            let ws_message = Message::Text(message);
+            _ = shutdown_rx.recv() => {
+                debug!("Shutdown of /control websocket");
+                break;
+            },
+            r = control_rx.recv() => {
+                match r {
+                    Ok(message) => {
+                        let message: String = serde_json::to_string(&message).unwrap();
+                        trace!("Sending {:?}", message);
+                        let ws_message = Message::Text(message);
 
-                            if let Err(e) = socket.send(ws_message).await {
-                                log::error!("send to websocket client: {e}");
-                                break;
-                            }
-                            
-                            
-                        },
-                        Err(e) => {
-                            log::error!("Error on Control channel: {e}");
+                        if let Err(e) = socket.send(ws_message).await {
+                            log::error!("send to websocket client: {e}");
                             break;
                         }
+
+
+                    },
+                    Err(e) => {
+                        log::error!("Error on Control channel: {e}");
+                        break;
                     }
-                },
-                r = socket.recv() => {
-                    match r {
-                        Some(Ok(message)) => {
-                            match message {
-                                Message::Text(message) => {
-                                    if let Ok(control_value) = serde_json::from_str(&message) {
-                                        trace!("Received ControlValue {:?}", control_value);
+                }
+            },
+            r = socket.recv() => {
+                match r {
+                    Some(Ok(message)) => {
+                        match message {
+                            Message::Text(message) => {
+                                if let Ok(control_value) = serde_json::from_str(&message) {
+                                    trace!("Received ControlValue {:?}", control_value);
 
-                                        let control_message = ControlMessage::Value(control_value);
+                                    let control_message = ControlMessage::Value(control_value);
 
-                                        if let Err(e) = command_tx.send(control_message) {
-                                            log::error!("send to control channel: {e}");
-                                            break;
-                                        }
-                                    } else {
-                                        log::error!("Unknown JSON string '{}", message);
+                                    if let Err(e) = command_tx.send(control_message) {
+                                        log::error!("send to control channel: {e}");
+                                        break;
                                     }
-                                    
-                                },
-                                _ => {
-                                    debug!("Dropping unexpected message {:?}", message);
+                                } else {
+                                    log::error!("Unknown JSON string '{}", message);
                                 }
+
+                            },
+                            _ => {
+                                debug!("Dropping unexpected message {:?}", message);
                             }
-                            
-                        },
-                        None => {
-                            // Stream has closed
-                            log::debug!("Control websocket closed");
-                            break;
                         }
-                        r => {
-                            log::error!("Error reading websocket: {:?}", r);
-                            break;
-                        }
+
+                    },
+                    None => {
+                        // Stream has closed
+                        log::debug!("Control websocket closed");
+                        break;
+                    }
+                    r => {
+                        log::error!("Error reading websocket: {:?}", r);
+                        break;
                     }
                 }
             }
+        }
     }
 }

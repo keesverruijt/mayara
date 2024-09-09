@@ -1,31 +1,36 @@
 use enum_primitive_derive::Primitive;
 use log::info;
-use serde::ser::{ SerializeMap, Serializer };
+use serde::ser::{SerializeMap, Serializer};
 use serde::Serialize;
 use std::{
     collections::HashMap,
-    fmt::{ self, Display, Write },
-    net::{ Ipv4Addr, SocketAddrV4 },
-    sync::{ Arc, RwLock },
+    fmt::{self, Display, Write},
+    net::{Ipv4Addr, SocketAddrV4},
+    sync::{Arc, RwLock},
 };
 use thiserror::Error;
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::locator::LocatorId;
-use crate::settings::{ ControlMessage, ControlValue, Controls };
+use crate::settings::{ControlMessage, ControlType, ControlValue, Controls};
 use crate::Cli;
 
 #[derive(Error, Debug)]
 pub enum RadarError {
-    #[error("Socket operation failed")] Io(#[from] std::io::Error),
-    #[error("Interface '{0}' is not available")] InterfaceNotFound(String),
-    #[error("Interface '{0}' has no valid IPv4 address")] InterfaceNoV4(String),
+    #[error("Socket operation failed")]
+    Io(#[from] std::io::Error),
+    #[error("Interface '{0}' is not available")]
+    InterfaceNotFound(String),
+    #[error("Interface '{0}' has no valid IPv4 address")]
+    InterfaceNoV4(String),
     #[error("Cannot detect Ethernet devices")]
     EnumerationFailed,
     #[error("Timeout")]
     Timeout,
     #[error("Shutdown")]
     Shutdown,
+    #[error("Cannot set value for control '{0}'")]
+    CannotSetControlType(ControlType),
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -47,12 +52,19 @@ struct Color {
 
 impl fmt::Display for Color {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "#{:02x}{:02x}{:02x}{:02x}", self.r, self.g, self.b, self.a)
+        write!(
+            f,
+            "#{:02x}{:02x}{:02x}{:02x}",
+            self.r, self.g, self.b, self.a
+        )
     }
 }
 
 impl Serialize for Color {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
         serializer.serialize_str(&self.to_string())
     }
 }
@@ -73,7 +85,10 @@ pub struct Legend {
 }
 
 impl Serialize for Legend {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
         let mut state = serializer.serialize_map(Some(self.pixels.len()))?;
         for (n, value) in self.pixels.iter().enumerate() {
             let key = n.to_string();
@@ -90,18 +105,18 @@ pub struct RadarInfo {
     pub locator_id: LocatorId,
     pub brand: String,
     pub model: Option<String>,
-    pub serial_no: Option<String>, // Serial # for this radar
-    pub which: Option<String>, // "A", "B" or None
-    pub pixel_values: u8, // How many values per pixel, 0..220 or so
-    pub spokes: u16, // How many spokes per rotation
-    pub max_spoke_len: u16, // Fixed for some radars, variable for others
-    pub addr: SocketAddrV4, // The assigned IP address of the radar
-    pub nic_addr: Ipv4Addr, // IPv4 address of NIC via which radar can be reached
-    pub spoke_data_addr: SocketAddrV4, // Where the radar will send data spokes
-    pub report_addr: SocketAddrV4, // Where the radar will send reports
+    pub serial_no: Option<String>,       // Serial # for this radar
+    pub which: Option<String>,           // "A", "B" or None
+    pub pixel_values: u8,                // How many values per pixel, 0..220 or so
+    pub spokes: u16,                     // How many spokes per rotation
+    pub max_spoke_len: u16,              // Fixed for some radars, variable for others
+    pub addr: SocketAddrV4,              // The assigned IP address of the radar
+    pub nic_addr: Ipv4Addr,              // IPv4 address of NIC via which radar can be reached
+    pub spoke_data_addr: SocketAddrV4,   // Where the radar will send data spokes
+    pub report_addr: SocketAddrV4,       // Where the radar will send reports
     pub send_command_addr: SocketAddrV4, // Where displays will send commands to the radar
-    pub legend: Legend, // What pixel values mean
-    pub controls: Option<Controls>, // Which controls there are
+    pub legend: Legend,                  // What pixel values mean
+    pub controls: Option<Controls>,      // Which controls there are
 
     // Channels
     pub message_tx: tokio::sync::broadcast::Sender<Vec<u8>>, // Serialized RadarMessage
@@ -123,7 +138,7 @@ impl RadarInfo {
         nic_addr: Ipv4Addr,
         spoke_data_addr: SocketAddrV4,
         report_addr: SocketAddrV4,
-        send_command_addr: SocketAddrV4
+        send_command_addr: SocketAddrV4,
     ) -> Self {
         let (message_tx, _message_rx) = tokio::sync::broadcast::channel(32);
         let (control_tx, _control_rx) = tokio::sync::broadcast::channel(32);
@@ -250,12 +265,10 @@ pub struct Radars {
 
 impl Radars {
     pub fn new(args: Cli) -> Arc<RwLock<Radars>> {
-        Arc::new(
-            RwLock::new(Radars {
-                info: HashMap::new(),
-                args,
-            })
-        )
+        Arc::new(RwLock::new(Radars {
+            info: HashMap::new(),
+            args,
+        }))
     }
 }
 impl Radars {

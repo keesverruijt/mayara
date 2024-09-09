@@ -6,17 +6,24 @@ var radar;
 var controls;
 var webSocket;
 
-const StringValue = (id) =>
+const StringValue = (id, name) =>
   div({class: 'control'},
-    label({ for: id }, id),
+    label({ for: id }, name),
     input({ type: 'text', id: id, size: 20, readonly: true })
   )
 
-const NumericValue = (id) =>
+const NumericValue = (id, name) =>
   div({class: 'control'},
-    label({ for: id }, id),
-    input({ type: 'number', id: id, readonly: false })
-    )
+    label({ for: id }, name),
+    input({ type: 'number', id: id, onchange: e => change(e) })
+  )
+    
+const RangeValue = (id, name, min, max, def, descriptions) =>
+  div({ class: 'control' },
+    label({ for: id }, name),
+    (descriptions) ? div({ class: 'description' }) : null,
+    input({ type: 'range', id, min, max, value: def, onchange: e => change(e)})
+  )
   
 window.onload = function () {
   const urlParams = new URLSearchParams(window.location.search);
@@ -42,6 +49,7 @@ function radarsLoaded(id, d) {
     return;
   }
   controls = radar.controls;
+  
   buildControls();
 
   webSocket = new WebSocket(radar.controlUrl);
@@ -56,14 +64,10 @@ function radarsLoaded(id, d) {
     console.log("websocket message: " + e.data);
     let v = JSON.parse(e.data);
     let d = document.getElementById(v.id);
-    if (d) {
-      if ('stringValue' in v) {
-        d.setAttribute('value', v.stringValue);
-      } else if ('description' in v) {
-        d.setAttribute('value', v.stringValue);
-      } else if ('value' in v) {
-        d.setAttribute('value', v.stringValue);
-      } 
+    d.setAttribute('value', ('description' in v && d.type == 'text') ? v.description : v.value);
+    if ('descriptions' in controls[v.id] && d.type == 'range') {
+      let desc = d.parentNode.querySelector('.description');
+      if (desc) desc.innerHTML = v.description;
     }
   }
 
@@ -75,11 +79,18 @@ function buildControls() {
   van.add(c, div(radar.name + " Controls"));
 
   for (const [k, v] of Object.entries(controls)) {
-    if ('isStringValue' in v) {
-      van.add(c, StringValue(k));
-    } else {
-      van.add(c, NumericValue(k));
-    }
+    van.add(c, ('isStringValue' in v)
+      ? StringValue(k, v.name)
+      : ('maxValue' in v && v.maxValue <= 100)
+        ? RangeValue(k, v.name, v.minValue, v.maxValue, 0, 'descriptions' in v)
+        : NumericValue(k, v.name));
   }
   console.log(controls);
+}
+
+function change(e) {
+  console.log("change " + e + " " + e.target.id + "=" + e.target.value);
+  let cv = JSON.stringify({ id: e.target.id, value: e.target.value });
+  webSocket.send(cv);
+  console.log(controls[e.target.id].name + "-> " + cv);
 }
