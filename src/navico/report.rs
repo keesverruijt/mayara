@@ -1,6 +1,8 @@
 use anyhow::{bail, Error};
 use enum_primitive_derive::Primitive;
 use log::{debug, error, info, trace};
+use std::cmp::{max, min};
+use std::collections::btree_map::Range;
 use std::mem::transmute;
 use std::time::Duration;
 use std::{fmt, io};
@@ -9,8 +11,8 @@ use tokio::sync::mpsc::Sender;
 use tokio::time::{sleep, sleep_until, Instant};
 use tokio_graceful_shutdown::SubsystemHandle;
 
-use crate::radar::{DopplerMode, RadarError, RadarInfo};
-use crate::settings::{ControlMessage, ControlState, ControlType};
+use crate::radar::{DopplerMode, RadarError, RadarInfo, Radars, RangeDetection};
+use crate::settings::{ControlMessage, ControlState, ControlType, ControlValue};
 use crate::util::{c_string, c_wide_string, create_multicast};
 
 use super::command::{self, Command};
@@ -25,6 +27,7 @@ pub struct NavicoReportReceiver {
     settings: NavicoSettings,
     command_sender: Command,
     data_tx: Sender<DataUpdate>,
+    range_timeout: Option<Instant>,
     subtype_timeout: Instant,
     subtype_repeat: Duration,
     reported_unknown: [bool; 256],
@@ -283,6 +286,7 @@ impl NavicoReportReceiver {
             sock: None,
             settings,
             command_sender,
+            range_timeout: None,
             subtype_timeout: Instant::now(),
             subtype_repeat: Duration::from_millis(5000),
             data_tx,
@@ -316,15 +320,28 @@ impl NavicoReportReceiver {
         let mut command_rx = self.info.command_tx.subscribe();
 
         loop {
+            let mut is_range_timeout = false;
+            let mut timeout = self.subtype_timeout;
+            if let Some(t) = self.range_timeout {
+                if t < timeout {
+                    timeout = t;
+                    is_range_timeout = true;
+                }
+            }
             tokio::select! { biased;
                 _ = subsys.on_shutdown_requested() => {
                     info!("{}: shutdown", self.key);
                     return Err(RadarError::Shutdown);
                 },
-                _ = sleep_until(self.subtype_timeout) => {
+                _ = sleep_until(timeout) => {
+                    if is_range_timeout {
+                        self.process_range(0).await?;
+                    } else                    {
                     self.send_report_requests().await?;
                     self.subtype_timeout += self.subtype_repeat;
+                    }
                 },
+
                 r = self.sock.as_ref().unwrap().recv_buf_from(&mut self.buf)  => {
                     match r {
                         Ok((_len, _addr)) => {
@@ -488,6 +505,148 @@ impl NavicoReportReceiver {
         };
     }
 
+    // If range detection is in progress, go to the next range
+    async fn process_range(&mut self, range: i32) -> Result<(), RadarError> {
+        if self.info.range_detection.is_none() {
+            if let Some(controls) = &self.info.controls {
+                if let Some(control) = controls.controls.get(&ControlType::Range) {
+                    self.info.range_detection = Some(RangeDetection::new(
+                        control.item().min_value.unwrap(),
+                        control.item().max_value.unwrap(),
+                    ));
+                }
+            }
+        }
+
+        if let Some(range_detection) = &mut self.info.range_detection {
+            if range_detection.complete {
+                return Ok(());
+            }
+            let mut complete = false;
+
+            let range = range / 10; // Raw value is in decimeters
+
+            if !range_detection.complete {
+                let mut next_range = Self::next_range(max(
+                    range_detection.min_range,
+                    max(range, range_detection.commanded_range),
+                ));
+                log::debug!(
+                    "{}: Range detected range={}m commanded={}m -> next {}",
+                    self.key,
+                    range,
+                    range_detection.commanded_range,
+                    next_range
+                );
+
+                if range
+                    > *range_detection
+                        .ranges
+                        .last()
+                        .unwrap_or(&(range_detection.min_range - 1))
+                {
+                    range_detection.ranges.push(range);
+                    log::debug!(
+                        "{}: Range detection ranges: {:?}",
+                        self.key,
+                        range_detection.ranges
+                    );
+                }
+                if next_range > range_detection.max_range {
+                    range_detection.complete = true;
+                    next_range = range_detection.saved_range;
+                    complete = true;
+                    log::info!(
+                        "{}: Range detection complete, ranges: {:?}",
+                        self.key,
+                        range_detection.ranges
+                    );
+                } else {
+                    // Set a timer to pick up the range if it doesn't do anything, so we are called again...
+                    self.range_timeout = Some(Instant::now() + Duration::from_secs(2));
+                }
+                log::info!(
+                    "{}: Range detection ask for range {}m",
+                    self.key,
+                    next_range
+                );
+                range_detection.commanded_range = next_range;
+                let cv = ControlValue::new(ControlType::Range, next_range);
+                self.command_sender.set_control(&cv).await?;
+            }
+
+            if complete {
+                if let Some(controls) = &mut self.info.controls {
+                    if let Some(control) = controls.controls.get_mut(&ControlType::Range) {
+                        control.set_valid_values(range_detection.ranges.clone());
+                    }
+                }
+                self.update_radar_info();
+                Radars::save(&self.key, &self.settings.radars);
+            }
+        }
+
+        Ok(())
+    }
+
+    ///
+    /// Come up with a next range where the result > input and result
+    /// is some nice "round" number, either in NM or meters.
+    ///
+    fn next_range(r: i32) -> i32 {
+        let metric = match r {
+            i32::MIN..75 => 75,
+            75..100 => 100,
+            100..150 => 150,
+            150..400 => r / 100 * 100 + 100,
+            400..1000 => r / 200 * 200 + 200,
+            1000..1500 => 1500,
+            1500..4000 => r / 1000 * 1000 + 1000,
+            4000.. => {
+                1000 * match r / 1000 {
+                    i32::MIN..6 => 6,
+                    6..8 => 8,
+                    8..12 => 12,
+                    12..16 => 16,
+                    16..24 => 24,
+                    24..36 => 36,
+                    36..48 => 48,
+                    48..72 => 72,
+                    72..96 => 96,
+                    96.. => r * 96 / 64,
+                }
+            }
+        };
+        let nautical = match r {
+            i32::MIN..57 => 57, // 1/32 nm
+            57..114 => 114,     // 1/16 nm
+            114..231 => 231,    // 1/8 nm
+            231..463 => 463,    // 1/4 nm
+            463..926 => 926,    // 1/2 nm
+            926..1389 => 1389,  // 3/4 nm
+            1389..1852 => 1852, // 1 nm
+            1852..2778 => 2778, // 1,5 nm
+            2778.. => {
+                1852 * match r / 1852 {
+                    i32::MIN..3 => 3,
+                    3 => 4,
+                    4..6 => 6,
+                    6..8 => 8,
+                    8..12 => 12,
+                    12..16 => 16,
+                    16..24 => 24,
+                    24..36 => 36,
+                    36..48 => 48,
+                    48..64 => 64,
+                    64..72 => 72,
+                    72.. => r * 72 / 48,
+                }
+            }
+        };
+        log::debug!("compute next {}: metric {} nautic {}", r, metric, nautical);
+        min(metric, nautical)
+    }
+
     async fn process_report(&mut self) -> Result<(), Error> {
         let data = &self.buf;
 
@@ -576,6 +735,8 @@ impl NavicoReportReceiver {
         self.set(&ControlType::TargetExpansion, target_expansion);
         self.set(&ControlType::TargetBoost, target_boost);
 
+        self.process_range(range).await?;
+
         Ok(())
     }
 
@@ -599,9 +760,9 @@ impl NavicoReportReceiver {
                     self.settings.model = model;
                     self.info.controls = Some(NavicoControls::new2(
                         model,
+                        &self.info,
                         self.info.message_tx.clone(),
                         self.info.control_tx.clone(),
-                        self.info.command_tx.clone(),
                     ));
                     self.info.set_legend(model == Model::HALO);
 

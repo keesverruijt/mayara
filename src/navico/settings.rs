@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
-use crate::settings::{
-    AutomaticValue, Control, ControlMessage, ControlType, ControlValue, Controls,
+use crate::{
+    radar::RadarInfo,
+    settings::{AutomaticValue, Control, ControlType, ControlValue, Controls},
 };
 
 use super::Model;
@@ -11,11 +12,16 @@ pub type NavicoControls = Controls;
 impl NavicoControls {
     pub fn new2(
         model: Model,
+        radar_info: &RadarInfo,
         protobuf_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
         control_tx: tokio::sync::broadcast::Sender<ControlValue>,
-        command_tx: tokio::sync::broadcast::Sender<ControlMessage>,
     ) -> Self {
         let mut controls = HashMap::new();
+
+        controls.insert(
+            ControlType::UserName,
+            Control::new_string(ControlType::UserName).read_only(false),
+        );
 
         if model == Model::HALO {
             controls.insert(
@@ -137,12 +143,15 @@ impl NavicoControls {
             Model::Gen4 => 48,
             Model::HALO => 96,
         }) * 1852;
-        controls.insert(
-            ControlType::Range,
-            Control::new_numeric(ControlType::Range, 0, max_value)
-                .unit("m")
-                .wire_scale_factor(10 * max_value), // Radar sends and receives in decimeters
-        );
+        let mut range_control = Control::new_numeric(ControlType::Range, 0, max_value)
+            .unit("m")
+            .wire_scale_factor(10 * max_value); // Radar sends and receives in decimeters
+        if let Some(range_detection) = &radar_info.range_detection {
+            if range_detection.complete {
+                range_control.set_valid_values(range_detection.ranges.clone());
+            }
+        };
+        controls.insert(ControlType::Range, range_control);
 
         controls.insert(
             ControlType::ScanSpeed,
@@ -244,7 +253,7 @@ impl NavicoControls {
         controls.insert(
             ControlType::OperatingHours,
             Control::new_numeric(ControlType::OperatingHours, 0, i32::MAX)
-                .read_only()
+                .read_only(true)
                 .unit("h"),
         );
 
@@ -266,6 +275,6 @@ impl NavicoControls {
             ),
         );
 
-        Controls::new(controls, protobuf_tx, control_tx, command_tx)
+        Controls::new(controls, protobuf_tx, control_tx)
     }
 }

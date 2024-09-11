@@ -6,10 +6,10 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_repr::*;
 use std::{
     collections::HashMap,
-    fmt::{self, Display}, str::FromStr,
+    fmt::{self, Display},
+    str::FromStr,
 };
 use thiserror::Error;
-
 
 use crate::protos::RadarMessage::RadarMessage;
 
@@ -51,7 +51,6 @@ pub struct Controls {
     pub controls: HashMap<ControlType, Control>,
     protobuf_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
     control_tx: tokio::sync::broadcast::Sender<ControlValue>,
-    command_tx: tokio::sync::broadcast::Sender<ControlMessage>,
 }
 
 impl Controls {
@@ -59,13 +58,11 @@ impl Controls {
         controls: HashMap<ControlType, Control>,
         protobuf_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
         control_tx: tokio::sync::broadcast::Sender<ControlValue>,
-        command_tx: tokio::sync::broadcast::Sender<ControlMessage>,
     ) -> Self {
         Controls {
             controls,
             protobuf_tx,
             control_tx,
-            command_tx,
         }
     }
 
@@ -88,7 +85,7 @@ impl Controls {
         let control_value = crate::settings::ControlValue {
             id: control.item.control_type,
             value: control.value,
-            description: control.value(),
+            description: Some(control.value()),
             auto: control.auto,
         };
 
@@ -230,14 +227,28 @@ pub enum ControlMessage {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlValue {
-    #[serde( deserialize_with = "deserialize_enum_from_string")]
+    #[serde(deserialize_with = "deserialize_enum_from_string")]
     pub id: ControlType,
-    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_option_number_from_string")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_option_number_from_string"
+    )]
     pub value: Option<i32>,
     #[serde(default)]
-    pub description: String,
+    pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto: Option<bool>,
+}
+
+impl ControlValue {
+    pub fn new(id: ControlType, value: i32) -> Self {
+        ControlValue {
+            id,
+            value: Some(value),
+            description: None,
+            auto: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -273,8 +284,8 @@ impl Control {
     //     self
     // }
 
-    pub fn read_only(mut self) -> Self {
-        self.item.is_read_only = true;
+    pub fn read_only(mut self, is_read_only: bool) -> Self {
+        self.item.is_read_only = is_read_only;
 
         self
     }
@@ -313,6 +324,7 @@ impl Control {
             wire_offset: Some(0),
             unit: None,
             descriptions: None,
+            valid_values: None,
             is_read_only: false,
             is_string_value: false,
         });
@@ -340,6 +352,7 @@ impl Control {
             wire_offset: Some(0),
             unit: None,
             descriptions: None,
+            valid_values: None,
             is_read_only: false,
             is_string_value: false,
         })
@@ -359,6 +372,7 @@ impl Control {
             wire_offset: Some(0),
             unit: None,
             descriptions: Some(descriptions.into_iter().map(|n| n.to_string()).collect()),
+            valid_values: None,
             is_read_only: false,
             is_string_value: false,
         })
@@ -378,6 +392,7 @@ impl Control {
             wire_offset: None,
             unit: None,
             descriptions: None,
+            valid_values: None,
             is_read_only: true,
             is_string_value: true,
         });
@@ -387,6 +402,10 @@ impl Control {
     /// Read-only access to the definition of the control
     pub fn item(&self) -> &ControlDefinition {
         &self.item
+    }
+
+    pub fn set_valid_values(&mut self, values: Vec<i32>) {
+        self.item.valid_values = Some(values);
     }
 
     // pub fn auto(&self) -> Option<bool> {
@@ -483,11 +502,9 @@ pub(crate) struct AutomaticValue {
     pub(crate) auto_adjust_max_value: i32,
 }
 
-pub const NOT_USED: i32 = i32::MIN;
-
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ControlDefinition {
+pub(crate) struct ControlDefinition {
     #[serde(skip)]
     control_type: ControlType,
     name: String,
@@ -500,9 +517,9 @@ pub struct ControlDefinition {
     #[serde(skip)]
     default_value: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    min_value: Option<i32>,
+    pub(crate) min_value: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    max_value: Option<i32>,
+    pub(crate) max_value: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     step_value: Option<i32>,
     #[serde(skip)]
@@ -513,6 +530,8 @@ pub struct ControlDefinition {
     pub unit: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     descriptions: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) valid_values: Option<Vec<i32>>,
     #[serde(skip_serializing_if = "is_false")]
     is_read_only: bool,
 }
@@ -521,17 +540,11 @@ fn is_false(v: &bool) -> bool {
     !*v
 }
 
-fn is_not_used(v: &i32) -> bool {
-    *v == NOT_USED
-}
-
-fn is_one(v: &i32) -> bool {
-    *v == 1
-}
-
 impl ControlDefinition {}
 
-#[derive(Eq, PartialEq, Hash, Copy, Clone, Debug, Serialize_repr, Deserialize_repr, FromPrimitive)]
+#[derive(
+    Eq, PartialEq, Hash, Copy, Clone, Debug, Serialize_repr, Deserialize_repr, FromPrimitive,
+)]
 #[repr(u8)]
 pub enum ControlType {
     Status,
@@ -584,6 +597,7 @@ pub enum ControlType {
     ModelName,
     FirmwareVersion,
     SerialNumber,
+    UserName,
     // Orientation,
 }
 
@@ -641,6 +655,7 @@ impl Display for ControlType {
             // ControlType::TrailsMotion => "Target trails motion",
             // ControlType::TuneCoarse => "Coarse tune",
             // ControlType::TuneFine => "Fine tune",
+            ControlType::UserName => "Custom name",
         };
 
         write!(f, "{}", s)
@@ -718,13 +733,12 @@ where
 
     match T::from_usize(n) {
         Some(ct) => Ok(ct),
-        None => Err(serde::de::Error::custom("Invalid valid for enum"))
+        None => Err(serde::de::Error::custom("Invalid valid for enum")),
     }
 }
 
 #[cfg(test)]
-mod test
-{
+mod test {
     use super::*;
 
     #[test]
@@ -732,7 +746,7 @@ mod test
         let json = r#"{"id":"2","value":"49"}"#;
 
         match serde_json::from_str::<ControlValue>(&json) {
-            Ok(cv) => { 
+            Ok(cv) => {
                 assert_eq!(cv.id, ControlType::Gain);
                 assert_eq!(cv.value, Some(49));
             }
@@ -740,7 +754,5 @@ mod test
                 panic!("Error {e}");
             }
         }
-
-
     }
 }

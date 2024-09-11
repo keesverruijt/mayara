@@ -10,6 +10,8 @@ use std::time::Duration;
 use tokio_graceful_shutdown::{SubsystemBuilder, Toplevel};
 use web::Web;
 
+
+mod config;
 // mod garmin;
 mod locator;
 mod navico;

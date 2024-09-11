@@ -11,6 +11,7 @@ use std::{
 use thiserror::Error;
 use tokio_graceful_shutdown::SubsystemHandle;
 
+use crate::config::Persistence;
 use crate::locator::LocatorId;
 use crate::settings::{ControlMessage, ControlType, ControlValue, Controls};
 use crate::Cli;
@@ -97,7 +98,39 @@ impl Serialize for Legend {
         state.end()
     }
 }
+#[derive(Clone, Debug)]
+pub struct RangeDetection {
+    pub complete: bool,
+    pub saved_range: i32,
+    pub commanded_range: i32,
+    pub min_range: i32,
+    pub max_range: i32,
+    pub ranges: Vec<i32>,
+}
 
+impl RangeDetection {
+    pub fn new(min_range: i32, max_range: i32) -> Self {
+        RangeDetection {
+            complete: false,
+            saved_range: 0,
+            commanded_range: 0,
+            min_range,
+            max_range,
+            ranges: Vec::new(),
+        }
+    }
+
+    fn restore(ranges: &Vec<i32>) -> Self {
+        RangeDetection {
+            complete: true,
+            saved_range: 0,
+            commanded_range: 0,
+            min_range: *ranges.first().unwrap_or(&0),
+            max_range: *ranges.last().unwrap_or(&0),
+            ranges: ranges.clone(),
+        }
+    }
+}
 #[derive(Clone, Debug)]
 pub struct RadarInfo {
     key: String,
@@ -116,7 +149,8 @@ pub struct RadarInfo {
     pub report_addr: SocketAddrV4,       // Where the radar will send reports
     pub send_command_addr: SocketAddrV4, // Where displays will send commands to the radar
     pub legend: Legend,                  // What pixel values mean
-    pub controls: Option<Controls>,      // Which controls there are
+    pub range_detection: Option<RangeDetection>, // if Some, then ranges are flexible, detected and persisted
+    pub controls: Option<Controls>,              // Which controls there are
 
     // Channels
     pub message_tx: tokio::sync::broadcast::Sender<Vec<u8>>, // Serialized RadarMessage
@@ -179,6 +213,7 @@ impl RadarInfo {
             message_tx,
             control_tx,
             command_tx,
+            range_detection: None,
             controls: None,
         }
     }
@@ -261,6 +296,7 @@ impl Display for RadarInfo {
 pub struct Radars {
     pub info: HashMap<String, RadarInfo>,
     pub args: Cli,
+    pub persistent_data: Persistence,
 }
 
 impl Radars {
@@ -268,12 +304,14 @@ impl Radars {
         Arc::new(RwLock::new(Radars {
             info: HashMap::new(),
             args,
+            persistent_data: Persistence::new(),
         }))
     }
 }
+
 impl Radars {
     // A radar has been found
-    pub fn located(new_info: RadarInfo, radars: &Arc<RwLock<Radars>>) -> Option<RadarInfo> {
+    pub fn located(mut new_info: RadarInfo, radars: &Arc<RwLock<Radars>>) -> Option<RadarInfo> {
         let key = new_info.key.to_owned();
         let mut radars = radars.write().unwrap();
         let count = radars.info.len();
@@ -282,16 +320,43 @@ impl Radars {
         if radars.args.replay && key.ends_with("-B") {
             return None;
         }
-        let entry = radars.info.entry(key).or_insert(new_info);
+
+        // Set any previously detected model and ranges
+        if let Some(p) = radars.persistent_data.config.radars.get(&key) {
+            if new_info.model.is_none() {
+                new_info.model = Some(p.model_name.clone());
+            }
+            if let Some(ranges) = &p.ranges {
+                if ranges.len() > 0 {
+                    new_info.range_detection = Some(RangeDetection::restore(ranges));
+                }
+            }
+        }
+        let entry = radars.info.entry(key.clone()).or_insert(new_info);
 
         if entry.id == usize::MAX {
             entry.id = count;
 
-            info!("Located a new radar: {}", &entry);
+            info!("Located a new radar: {:?}", &entry);
             Some(entry.clone())
         } else {
             None
         }
+    }
+
+    fn store(&mut self, key: &str) {
+        if let Some(radar_info) = self.info.get(key) {
+            log::debug!("{}: Storing updated {:?}", key, radar_info);
+            self.persistent_data.store(radar_info);
+        }
+    }
+
+    ///
+    /// The radar detection is complete, and persistent storage should be stored
+    ///
+    pub fn save(key: &str, radars: &Arc<RwLock<Radars>>) {
+        let mut radars = radars.write().unwrap();
+        radars.store(key);
     }
 }
 

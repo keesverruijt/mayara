@@ -1,5 +1,5 @@
 use log::{debug, trace};
-use std::cmp::min;
+use std::cmp::{max, min};
 use std::io;
 use tokio::net::UdpSocket;
 
@@ -62,13 +62,21 @@ impl Command {
 
     pub async fn set_control(&mut self, cv: &ControlValue) -> Result<(), RadarError> {
         match cv.id {
-            ControlType::Gain => { 
+            ControlType::Range => {
+                let decimeters: i32 = max(cv.value.unwrap_or(0), 50) * 10;
+                let mut cmd = Vec::with_capacity(6);
+                cmd.push(0x03);
+                cmd.push(0xc1);
+                cmd.extend_from_slice(&decimeters.to_le_bytes());
+                self.send(&cmd).await
+            }
+            ControlType::Gain => {
                 let v: i32 = min((cv.value.unwrap_or(0) + 1) * 255 / 100, 255);
                 let auto: u8 = if cv.auto.unwrap_or(false) { 1 } else { 0 };
-                let cmd: [u8;11] = [ 0x06, 0xc1, 0, 0, 0, 0, auto, 0, 0, 0, v as u8];
+                let cmd: [u8; 11] = [0x06, 0xc1, 0, 0, 0, 0, auto, 0, 0, 0, v as u8];
                 self.send(&cmd).await
-            },
-            _ =>  Err(RadarError::CannotSetControlType(cv.id))
+            }
+            _ => Err(RadarError::CannotSetControlType(cv.id)),
         }
     }
 }

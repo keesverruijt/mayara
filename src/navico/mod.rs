@@ -190,6 +190,18 @@ impl fmt::Display for Model {
     }
 }
 
+impl Model {
+    pub fn new(s: &str) -> Self {
+        match s {
+            BR24_MODEL_NAME => Model::BR24,
+            "3G" => Model::Gen3,
+            "4G" => Model::Gen4,
+            "HALO" => Model::HALO,
+            _ => Model::Unknown,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct NavicoSettings {
     radars: Arc<RwLock<Radars>>,
@@ -205,11 +217,7 @@ fn found(info: RadarInfo, radars: &Arc<RwLock<Radars>>, subsys: &SubsystemHandle
         // It's new, start the RadarProcessor thread
         let navico_settings = NavicoSettings {
             radars: radars.clone(),
-            model: if info.model == Some(BR24_MODEL_NAME.to_string()) {
-                Model::BR24
-            } else {
-                Model::Unknown
-            },
+            model: Model::new(info.model.as_ref().unwrap_or(&"".to_string()).as_str()),
         };
 
         let (tx_data, rx_data) = mpsc::channel(10);
