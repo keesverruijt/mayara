@@ -1,6 +1,6 @@
 use log::trace;
-use num_derive::FromPrimitive;
-use num_traits::FromPrimitive;
+use num_derive::{FromPrimitive, ToPrimitive};
+use num_traits::{FromPrimitive, ToPrimitive};
 use protobuf::Message;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_repr::*;
@@ -543,7 +543,16 @@ fn is_false(v: &bool) -> bool {
 impl ControlDefinition {}
 
 #[derive(
-    Eq, PartialEq, Hash, Copy, Clone, Debug, Serialize_repr, Deserialize_repr, FromPrimitive,
+    Eq,
+    PartialEq,
+    Hash,
+    Copy,
+    Clone,
+    Debug,
+    Serialize_repr,
+    Deserialize_repr,
+    FromPrimitive,
+    ToPrimitive,
 )]
 #[repr(u8)]
 pub enum ControlType {
@@ -577,7 +586,7 @@ pub enum ControlType {
     // Ftc,
     InterferenceRejection,
     NoiseRejection,
-    // LocalInterferenceRejection,
+    LocalInterferenceRejection,
     // MainBangSize,
     // MainBangSuppression,
     NoTransmitEnd1,
@@ -619,7 +628,7 @@ impl Display for ControlType {
             // ControlType::Ftc => "FTC",
             ControlType::Gain => "Gain",
             ControlType::InterferenceRejection => "Interference rejection",
-            // ControlType::LocalInterferenceRejection => "Local interference rejection",
+            ControlType::LocalInterferenceRejection => "Local interference rejection",
             // ControlType::MainBangSize => "Main bang size",
             // ControlType::MainBangSuppression => "Main bang suppression",
             ControlType::Mode => "Mode",

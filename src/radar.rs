@@ -32,6 +32,8 @@ pub enum RadarError {
     Shutdown,
     #[error("Cannot set value for control '{0}'")]
     CannotSetControlType(ControlType),
+    #[error("Missing value for control '{0}'")]
+    MissingValue(ControlType),
 }
 
 #[derive(Serialize, Clone, Debug)]

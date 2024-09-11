@@ -1,11 +1,14 @@
 use log::{debug, trace};
+use num_derive::ToPrimitive;
+use num_traits::ToPrimitive;
 use std::cmp::{max, min};
-use std::io;
 use tokio::net::UdpSocket;
 
 use crate::radar::{RadarError, RadarInfo};
 use crate::settings::{ControlType, ControlValue};
 use crate::util::create_multicast_send;
+
+use super::Model;
 
 pub const REQUEST_03_REPORT: [u8; 2] = [0x04, 0xc2]; // This causes the radar to report Report 3
 pub const REQUEST_MANY2_REPORT: [u8; 2] = [0x01, 0xc2]; // This causes the radar to report Report 02, 03, 04, 07 and 08
@@ -15,14 +18,16 @@ pub const _REQUEST_02_08_REPORT: [u8; 2] = [0x03, 0xc2]; // This causes the rada
 pub struct Command {
     key: String,
     info: RadarInfo,
+    model: Model,
     sock: Option<UdpSocket>,
 }
 
 impl Command {
-    pub fn new(info: RadarInfo) -> Self {
+    pub fn new(info: RadarInfo, model: Model) -> Self {
         Command {
             key: info.key(),
-            info: info,
+            info,
+            model,
             sock: None,
         }
     }
@@ -60,23 +65,148 @@ impl Command {
         Ok(())
     }
 
+    fn mod_degrees(a: i32) -> i32 {
+        (a + 720) % 360
+    }
+
     pub async fn set_control(&mut self, cv: &ControlValue) -> Result<(), RadarError> {
+        let value = cv.value.ok_or_else(|| RadarError::MissingValue(cv.id))?;
+        let auto: u8 = if cv.auto.unwrap_or(false) { 1 } else { 0 };
+
+        let mut cmd = Vec::with_capacity(6);
+
         match cv.id {
             ControlType::Range => {
-                let decimeters: i32 = max(cv.value.unwrap_or(0), 50) * 10;
-                let mut cmd = Vec::with_capacity(6);
-                cmd.push(0x03);
-                cmd.push(0xc1);
+                let decimeters: i32 = max(value, 50) * 10;
+
+                cmd.extend_from_slice(&[0x03, 0xc1]);
                 cmd.extend_from_slice(&decimeters.to_le_bytes());
-                self.send(&cmd).await
+            }
+            ControlType::BearingAlignment => {
+                let value: i16 = Self::mod_degrees(value) as i16 * 10;
+
+                cmd.extend_from_slice(&[0x05, 0xc1]);
+                cmd.extend_from_slice(&value.to_le_bytes());
             }
             ControlType::Gain => {
-                let v: i32 = min((cv.value.unwrap_or(0) + 1) * 255 / 100, 255);
-                let auto: u8 = if cv.auto.unwrap_or(false) { 1 } else { 0 };
-                let cmd: [u8; 11] = [0x06, 0xc1, 0, 0, 0, 0, auto, 0, 0, 0, v as u8];
-                self.send(&cmd).await
+                let v: i32 = min((value + 1) * 255 / 100, 255);
+                let auto = auto as u32;
+
+                cmd.extend_from_slice(&[0x06, 0xc1, 0x00]);
+                cmd.extend_from_slice(&auto.to_le_bytes());
+                cmd.extend_from_slice(&v.to_le_bytes());
             }
-            _ => Err(RadarError::CannotSetControlType(cv.id)),
-        }
+            ControlType::Sea => {
+                if self.model == Model::HALO {
+                    // Capture data:
+                    // Data: 11c101000004 = Auto
+                    // Data: 11c10100ff04 = Auto-1
+                    // Data: 11c10100ce04 = Auto-50
+                    // Data: 11c101323204 = Auto+50
+                    // Data: 11c100646402 = 100
+                    // Data: 11c100000002 = 0
+                    // Data: 11c100000001 = Mode manual
+                    // Data: 11c101000001 = Mode auto
+
+                    cmd.extend_from_slice(&[0x11, 0xc1]);
+                    if auto == 0 {
+                        cmd.extend_from_slice(&0x00000001u32.to_le_bytes());
+                        self.send(&cmd).await?;
+                        cmd.clear();
+                        cmd.extend_from_slice(&[0x11, 0xc1, 0x00, value as u8, value as u8, 0x02]);
+                    } else {
+                        cmd.extend_from_slice(&0x01000001u32.to_le_bytes());
+                        self.send(&cmd).await?;
+                        cmd.clear();
+                        cmd.extend_from_slice(&[0x11, 0xc1, 0x01, 0x00, value as i8 as u8, 0x04]);
+                    }
+                } else {
+                    let v: i32 = min((value + 1) * 255 / 100, 255);
+                    let auto = auto as u32;
+
+                    cmd.extend_from_slice(&[0x06, 0xc1, 0x02]);
+                    cmd.extend_from_slice(&auto.to_le_bytes());
+                    cmd.extend_from_slice(&v.to_le_bytes());
+                }
+            }
+            ControlType::Rain => {
+                let v = min((value + 1) * 255 / 100, 255) as u8;
+                cmd.extend_from_slice(&[0x06, 0xc1, 0x04, 0, 0, 0, 0, 0, 0, 0, v]);
+            }
+            ControlType::SideLobeSuppression => {
+                let v = min((value + 1) * 255 / 100, 255) as u8;
+
+                cmd.extend_from_slice(&[0x06, 0xc1, 0x05, 0, 0, 0, auto, 0, 0, 0, v]);
+            }
+            ControlType::InterferenceRejection => {
+                cmd.extend_from_slice(&[0x08, 0xc1, value as u8]);
+            }
+            ControlType::TargetExpansion => {
+                if self.model == Model::HALO {
+                    cmd.extend_from_slice(&[0x12, 0xc1, value as u8]);
+                } else {
+                    cmd.extend_from_slice(&[0x09, 0xc1, value as u8]);
+                }
+            }
+            ControlType::TargetBoost => {
+                cmd.extend_from_slice(&[0x0a, 0xc1, value as u8]);
+            }
+            ControlType::SeaState => {
+                cmd.extend_from_slice(&[0x0b, 0xc1, value as u8]);
+            }
+            ControlType::NoTransmitStart1
+            | ControlType::NoTransmitStart2
+            | ControlType::NoTransmitStart3
+            | ControlType::NoTransmitStart4 => {
+                let sector: u8 =
+                    cv.id.to_u8().unwrap() - ControlType::NoTransmitStart1.to_u8().unwrap();
+                cmd.extend_from_slice(&[0x0d, 0xc1, sector, 0, 0, 0, auto]);
+                todo!();
+            }
+            ControlType::NoTransmitEnd1
+            | ControlType::NoTransmitEnd2
+            | ControlType::NoTransmitEnd3
+            | ControlType::NoTransmitEnd4 => {
+                let sector: u8 =
+                    cv.id.to_u8().unwrap() - ControlType::NoTransmitEnd1.to_u8().unwrap();
+                cmd.extend_from_slice(&[0x0d, 0xc1, sector, 0, 0, 0, auto]);
+                todo!();
+            }
+            ControlType::LocalInterferenceRejection => {
+                cmd.extend_from_slice(&[0x0e, 0xc1, value as u8]);
+            }
+            ControlType::ScanSpeed => {
+                cmd.extend_from_slice(&[0x0f, 0xc1, value as u8]);
+            }
+            ControlType::Mode => {
+                cmd.extend_from_slice(&[0x10, 0xc1, value as u8]);
+            }
+            ControlType::NoiseRejection => {
+                cmd.extend_from_slice(&[0x21, 0xc1, value as u8]);
+            }
+            ControlType::TargetSeparation => {
+                cmd.extend_from_slice(&[0x22, 0xc1, value as u8]);
+            }
+            ControlType::Doppler => {
+                cmd.extend_from_slice(&[0x23, 0xc1, value as u8]);
+            }
+            ControlType::DopplerSpeedThreshold => {
+                let value = value as u16;
+                cmd.extend_from_slice(&[0x24, 0xc1]);
+                cmd.extend_from_slice(&value.to_le_bytes());
+            }
+            ControlType::AntennaHeight => {
+                let value = value as u16 * 10;
+                cmd.extend_from_slice(&[0x30, 0xc1, 0x01, 0, 0, 0]);
+                cmd.extend_from_slice(&value.to_le_bytes());
+                cmd.extend_from_slice(&[0, 0]);
+            }
+            ControlType::AccentLight => {
+                cmd.extend_from_slice(&[0x31, 0xc1, value as u8]);
+            }
+            _ => return Err(RadarError::CannotSetControlType(cv.id)),
+        };
+
+        self.send(&cmd).await
     }
 }
