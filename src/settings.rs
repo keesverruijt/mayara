@@ -1,7 +1,5 @@
-use log::trace;
 use num_derive::{FromPrimitive, ToPrimitive};
-use num_traits::{FromPrimitive, ToPrimitive};
-use protobuf::Message;
+use num_traits::FromPrimitive;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_repr::*;
 use std::{
@@ -10,8 +8,6 @@ use std::{
     str::FromStr,
 };
 use thiserror::Error;
-
-use crate::protos::RadarMessage::RadarMessage;
 
 ///
 /// Radars have settings. There are some common ones that every radar supports:
@@ -49,171 +45,11 @@ impl Display for ControlState {
 #[derive(Clone, Debug)]
 pub struct Controls {
     pub controls: HashMap<ControlType, Control>,
-    protobuf_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
-    control_tx: tokio::sync::broadcast::Sender<ControlValue>,
 }
 
 impl Controls {
-    pub fn new(
-        controls: HashMap<ControlType, Control>,
-        protobuf_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
-        control_tx: tokio::sync::broadcast::Sender<ControlValue>,
-    ) -> Self {
-        Controls {
-            controls,
-            protobuf_tx,
-            control_tx,
-        }
-    }
-
-    fn get_description(control: &Control) -> Option<String> {
-        if let (Some(value), Some(descriptions)) = (control.value, &control.item.descriptions) {
-            if value >= 0 && value < (descriptions.len() as i32) {
-                return Some(descriptions[value as usize].to_string());
-            }
-        }
-        return None;
-    }
-
-    pub fn broadcast_all_json(&self) {
-        for c in &self.controls {
-            Self::broadcast_json(&self.control_tx, &c.1);
-        }
-    }
-
-    fn broadcast_json(tx: &tokio::sync::broadcast::Sender<ControlValue>, control: &Control) {
-        let control_value = crate::settings::ControlValue {
-            id: control.item.control_type,
-            value: control.value,
-            description: Some(control.value()),
-            auto: control.auto,
-        };
-
-        match tx.send(control_value) {
-            Err(_e) => {}
-            Ok(cnt) => {
-                trace!(
-                    "Sent control value {} to {} JSON clients",
-                    control.item.control_type,
-                    cnt
-                );
-            }
-        }
-    }
-
-    fn broadcast_protobuf(update_tx: &tokio::sync::broadcast::Sender<Vec<u8>>, control: &Control) {
-        if let Some(value) = control.value {
-            let mut control_value = crate::protos::RadarMessage::radar_message::ControlValue::new();
-            control_value.id = control.item.control_type.to_string();
-            control_value.value = value;
-            control_value.auto = control.auto;
-            control_value.description = Self::get_description(control);
-
-            let mut message = RadarMessage::new();
-            message.controls.push(control_value);
-
-            let mut bytes = Vec::new();
-            message
-                .write_to_vec(&mut bytes)
-                .expect("Cannot write RadarMessage to vec");
-            match update_tx.send(bytes) {
-                Err(_e) => {
-                    trace!(
-                        "Stored control value {} value {}",
-                        control.item.control_type,
-                        &value
-                    );
-                }
-                Ok(cnt) => {
-                    trace!(
-                        "Stored control value {} value {} and sent to {} clients",
-                        control.item.control_type,
-                        &value,
-                        cnt
-                    );
-                }
-            }
-        }
-    }
-
-    pub fn set_all(
-        &mut self,
-        control_type: &ControlType,
-        value: i32,
-        auto: Option<bool>,
-        state: ControlState,
-    ) -> Result<Option<()>, ControlError> {
-        if let Some(control) = self.controls.get_mut(control_type) {
-            if control.set_all(value, auto, state)?.is_some() {
-                Self::broadcast_protobuf(&self.protobuf_tx, control);
-                Self::broadcast_json(&self.control_tx, control);
-                return Ok(Some(()));
-            }
-            Ok(None)
-        } else {
-            Err(ControlError::NotSupported(*control_type))
-        }
-    }
-
-    /// Set a control value, and if it is changed then broadcast the control
-    /// to all listeners.
-    pub fn set(
-        &mut self,
-        control_type: &ControlType,
-        value: i32,
-    ) -> Result<Option<()>, ControlError> {
-        if let Some(control) = self.controls.get_mut(control_type) {
-            if control
-                .set_all(value, None, ControlState::Manual)?
-                .is_some()
-            {
-                Self::broadcast_protobuf(&self.protobuf_tx, control);
-                Self::broadcast_json(&self.control_tx, control);
-                return Ok(Some(()));
-            }
-            Ok(None)
-        } else {
-            Err(ControlError::NotSupported(*control_type))
-        }
-    }
-    pub fn set_auto(
-        &mut self,
-        control_type: &ControlType,
-        auto: bool,
-        value: i32,
-    ) -> Result<Option<()>, ControlError> {
-        if let Some(control) = self.controls.get_mut(control_type) {
-            let state = if auto {
-                ControlState::Auto
-            } else {
-                ControlState::Manual
-            };
-
-            if control.set_all(value, Some(auto), state)?.is_some() {
-                Self::broadcast_protobuf(&self.protobuf_tx, control);
-                Self::broadcast_json(&self.control_tx, control);
-                return Ok(Some(()));
-            }
-            Ok(None)
-        } else {
-            Err(ControlError::NotSupported(*control_type))
-        }
-    }
-    pub fn set_string(
-        &mut self,
-        control_type: &ControlType,
-        value: String,
-    ) -> Result<Option<String>, ControlError> {
-        if let Some(control) = self.controls.get_mut(control_type) {
-            if control.set_string(value).is_some() {
-                Self::broadcast_protobuf(&self.protobuf_tx, control);
-                Self::broadcast_json(&self.control_tx, control);
-                return Ok(control.description.clone());
-            }
-            Ok(None)
-        } else {
-            Err(ControlError::NotSupported(*control_type))
-        }
+    pub fn new(controls: HashMap<ControlType, Control>) -> Self {
+        Controls { controls }
     }
 }
 
@@ -257,11 +93,11 @@ pub struct Control {
     #[serde(flatten)]
     item: ControlDefinition,
     #[serde(skip)]
-    value: Option<i32>,
+    pub value: Option<i32>,
     #[serde(skip)]
-    description: Option<String>,
+    pub description: Option<String>,
     #[serde(skip)]
-    auto: Option<bool>,
+    pub auto: Option<bool>,
     #[serde(skip)]
     pub state: ControlState,
 }
@@ -506,7 +342,7 @@ pub(crate) struct AutomaticValue {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ControlDefinition {
     #[serde(skip)]
-    control_type: ControlType,
+    pub(crate) control_type: ControlType,
     name: String,
     #[serde(skip)]
     has_off: bool,
@@ -527,9 +363,9 @@ pub(crate) struct ControlDefinition {
     #[serde(skip)]
     wire_offset: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub unit: Option<String>,
+    pub(crate) unit: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    descriptions: Option<Vec<String>>,
+    pub(crate) descriptions: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) valid_values: Option<Vec<i32>>,
     #[serde(skip_serializing_if = "is_false")]

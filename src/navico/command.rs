@@ -1,5 +1,4 @@
 use log::{debug, trace};
-use num_derive::ToPrimitive;
 use num_traits::ToPrimitive;
 use std::cmp::{max, min};
 use tokio::net::UdpSocket;
@@ -203,6 +202,15 @@ impl Command {
             }
             ControlType::AccentLight => {
                 cmd.extend_from_slice(&[0x31, 0xc1, value as u8]);
+            }
+
+            // Non-hardware settings
+            ControlType::UserName => {
+                if let Some(user_name) = &cv.description {
+                    self.info
+                        .set_string(&ControlType::UserName, user_name.clone())
+                        .unwrap();
+                }
             }
             _ => return Err(RadarError::CannotSetControlType(cv.id)),
         };

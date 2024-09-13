@@ -1,5 +1,6 @@
 use enum_primitive_derive::Primitive;
 use log::info;
+use protobuf::Message;
 use serde::ser::{SerializeMap, Serializer};
 use serde::Serialize;
 use std::{
@@ -13,7 +14,10 @@ use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::config::Persistence;
 use crate::locator::LocatorId;
-use crate::settings::{ControlMessage, ControlType, ControlValue, Controls};
+use crate::protos::RadarMessage::RadarMessage;
+use crate::settings::{
+    Control, ControlError, ControlMessage, ControlState, ControlType, ControlValue, Controls,
+};
 use crate::Cli;
 
 #[derive(Error, Debug)]
@@ -122,7 +126,7 @@ impl RangeDetection {
         }
     }
 
-    fn restore(ranges: &Vec<i32>) -> Self {
+    pub fn restore(ranges: &Vec<i32>) -> Self {
         RangeDetection {
             complete: true,
             saved_range: 0,
@@ -139,7 +143,7 @@ pub struct RadarInfo {
     pub id: usize,
     pub locator_id: LocatorId,
     pub brand: String,
-    pub model: Option<String>,
+    pub model_name: Option<String>,
     pub serial_no: Option<String>,       // Serial # for this radar
     pub which: Option<String>,           // "A", "B" or None
     pub pixel_values: u8,                // How many values per pixel, 0..220 or so
@@ -152,12 +156,13 @@ pub struct RadarInfo {
     pub send_command_addr: SocketAddrV4, // Where displays will send commands to the radar
     pub legend: Legend,                  // What pixel values mean
     pub range_detection: Option<RangeDetection>, // if Some, then ranges are flexible, detected and persisted
-    pub controls: Option<Controls>,              // Which controls there are
+    pub controls: Controls, // Which controls there are, not complete in beginning
 
     // Channels
     pub message_tx: tokio::sync::broadcast::Sender<Vec<u8>>, // Serialized RadarMessage
     pub control_tx: tokio::sync::broadcast::Sender<ControlValue>,
     pub command_tx: tokio::sync::broadcast::Sender<ControlMessage>,
+    pub protobuf_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
 }
 
 impl RadarInfo {
@@ -175,10 +180,12 @@ impl RadarInfo {
         spoke_data_addr: SocketAddrV4,
         report_addr: SocketAddrV4,
         send_command_addr: SocketAddrV4,
+        controls: Controls,
     ) -> Self {
         let (message_tx, _message_rx) = tokio::sync::broadcast::channel(32);
         let (control_tx, _control_rx) = tokio::sync::broadcast::channel(32);
         let (command_tx, _command_rx) = tokio::sync::broadcast::channel(32);
+        let (protobuf_tx, _protobuf_rx) = tokio::sync::broadcast::channel(32);
 
         RadarInfo {
             key: {
@@ -200,7 +207,7 @@ impl RadarInfo {
             id: usize::MAX,
             locator_id,
             brand: brand.to_owned(),
-            model: model.map(String::from),
+            model_name: model.map(String::from),
             serial_no: serial_no.map(String::from),
             which: which.map(String::from),
             pixel_values,
@@ -215,8 +222,9 @@ impl RadarInfo {
             message_tx,
             control_tx,
             command_tx,
+            protobuf_tx,
             range_detection: None,
-            controls: None,
+            controls,
         }
     }
 
@@ -262,6 +270,184 @@ impl RadarInfo {
             }
         }
     }
+
+    pub fn broadcast_all_json(&self) {
+        for c in &self.controls.controls {
+            Self::broadcast_json(&self.control_tx, &c.1);
+        }
+    }
+
+    pub fn set_all(
+        &mut self,
+        control_type: &ControlType,
+        value: i32,
+        auto: Option<bool>,
+        state: ControlState,
+    ) -> Result<Option<()>, ControlError> {
+        if let Some(control) = self.controls.controls.get_mut(control_type) {
+            if control.set_all(value, auto, state)?.is_some() {
+                Self::broadcast_protobuf(&self.protobuf_tx, control);
+                Self::broadcast_json(&self.control_tx, control);
+                return Ok(Some(()));
+            }
+            Ok(None)
+        } else {
+            Err(ControlError::NotSupported(*control_type))
+        }
+    }
+
+    /// Set a control value, and if it is changed then broadcast the control
+    /// to all listeners.
+    pub fn set(
+        &mut self,
+        control_type: &ControlType,
+        value: i32,
+    ) -> Result<Option<()>, ControlError> {
+        if let Some(control) = self.controls.controls.get_mut(control_type) {
+            if control
+                .set_all(value, None, ControlState::Manual)?
+                .is_some()
+            {
+                Self::broadcast_protobuf(&self.protobuf_tx, control);
+                Self::broadcast_json(&self.control_tx, control);
+                return Ok(Some(()));
+            }
+            Ok(None)
+        } else {
+            Err(ControlError::NotSupported(*control_type))
+        }
+    }
+    pub fn set_auto(
+        &mut self,
+        control_type: &ControlType,
+        auto: bool,
+        value: i32,
+    ) -> Result<Option<()>, ControlError> {
+        if let Some(control) = self.controls.controls.get_mut(control_type) {
+            let state = if auto {
+                ControlState::Auto
+            } else {
+                ControlState::Manual
+            };
+
+            if control.set_all(value, Some(auto), state)?.is_some() {
+                Self::broadcast_protobuf(&self.protobuf_tx, control);
+                Self::broadcast_json(&self.control_tx, control);
+                return Ok(Some(()));
+            }
+            Ok(None)
+        } else {
+            Err(ControlError::NotSupported(*control_type))
+        }
+    }
+    pub fn set_string(
+        &mut self,
+        control_type: &ControlType,
+        value: String,
+    ) -> Result<Option<String>, ControlError> {
+        if let Some(control) = self.controls.controls.get_mut(control_type) {
+            if control.set_string(value).is_some() {
+                Self::broadcast_protobuf(&self.protobuf_tx, control);
+                Self::broadcast_json(&self.control_tx, control);
+                return Ok(control.description.clone());
+            }
+            Ok(None)
+        } else {
+            Err(ControlError::NotSupported(*control_type))
+        }
+    }
+
+    fn get_description(control: &Control) -> Option<String> {
+        if let (Some(value), Some(descriptions)) = (control.value, &control.item().descriptions) {
+            if value >= 0 && value < (descriptions.len() as i32) {
+                return Some(descriptions[value as usize].to_string());
+            }
+        }
+        return None;
+    }
+
+    fn broadcast_json(tx: &tokio::sync::broadcast::Sender<ControlValue>, control: &Control) {
+        let control_value = crate::settings::ControlValue {
+            id: control.item().control_type,
+            value: control.value,
+            description: Some(control.value()),
+            auto: control.auto,
+        };
+
+        match tx.send(control_value) {
+            Err(_e) => {}
+            Ok(cnt) => {
+                log::trace!(
+                    "Sent control value {} to {} JSON clients",
+                    control.item().control_type,
+                    cnt
+                );
+            }
+        }
+    }
+
+    fn broadcast_protobuf(update_tx: &tokio::sync::broadcast::Sender<Vec<u8>>, control: &Control) {
+        if let Some(value) = control.value {
+            let mut control_value = crate::protos::RadarMessage::radar_message::ControlValue::new();
+            control_value.id = control.item().control_type.to_string();
+            control_value.value = value;
+            control_value.auto = control.auto;
+            control_value.description = Self::get_description(control);
+
+            let mut message = RadarMessage::new();
+            message.controls.push(control_value);
+
+            let mut bytes = Vec::new();
+            message
+                .write_to_vec(&mut bytes)
+                .expect("Cannot write RadarMessage to vec");
+            match update_tx.send(bytes) {
+                Err(_e) => {
+                    log::trace!(
+                        "Stored control value {} value {}",
+                        control.item().control_type,
+                        &value
+                    );
+                }
+                Ok(cnt) => {
+                    log::trace!(
+                        "Stored control value {} value {} and sent to {} clients",
+                        control.item().control_type,
+                        &value,
+                        cnt
+                    );
+                }
+            }
+        }
+    }
+
+    pub fn user_name(&self) -> String {
+        if let Some(user_name) = self.controls.controls.get(&ControlType::UserName) {
+            if let Some(description) = &user_name.description {
+                return description.clone();
+            }
+        }
+        return self.key();
+    }
+
+    pub fn set_user_name(&mut self, name: String) {
+        let control = self
+            .controls
+            .controls
+            .get_mut(&ControlType::UserName)
+            .unwrap();
+        control.set_string(name);
+    }
+
+    pub fn set_model_name(&mut self, name: String) {
+        let control = self
+            .controls
+            .controls
+            .get_mut(&ControlType::ModelName)
+            .unwrap();
+        control.set_string(name.clone());
+        self.model_name = Some(name);
+    }
 }
 
 impl Display for RadarInfo {
@@ -273,7 +459,7 @@ impl Display for RadarInfo {
             &self.locator_id.as_str(),
             &self.brand
         )?;
-        if let Some(model) = &self.model {
+        if let Some(model) = &self.model_name {
             write!(f, " {}", model)?;
         }
         if let Some(which) = &self.which {
@@ -316,7 +502,16 @@ impl Radars {
     pub fn located(mut new_info: RadarInfo, radars: &Arc<RwLock<Radars>>) -> Option<RadarInfo> {
         let key = new_info.key.to_owned();
         let mut radars = radars.write().unwrap();
-        let count = radars.info.len();
+        let max_radar_id = radars.info.iter().map(|(_, i)| i.id).max().unwrap_or(0);
+        let max_persist_id = radars
+            .persistent_data
+            .config
+            .radars
+            .iter()
+            .map(|(_, i)| i.id)
+            .max()
+            .unwrap_or(0);
+        let max_id = std::cmp::max(max_radar_id, max_persist_id);
 
         // For now, drop second radar in replay Mode...
         if radars.args.replay && key.ends_with("-B") {
@@ -324,22 +519,28 @@ impl Radars {
         }
 
         // Set any previously detected model and ranges
-        if let Some(p) = radars.persistent_data.config.radars.get(&key) {
-            if new_info.model.is_none() {
-                new_info.model = Some(p.model_name.clone());
-            }
-            if let Some(ranges) = &p.ranges {
-                if ranges.len() > 0 {
-                    new_info.range_detection = Some(RangeDetection::restore(ranges));
-                }
-            }
-        }
+        radars
+            .persistent_data
+            .update_info_from_persistence(&mut new_info);
         let entry = radars.info.entry(key.clone()).or_insert(new_info);
 
         if entry.id == usize::MAX {
-            entry.id = count;
+            entry.id = max_id + 1;
 
-            info!("Located a new radar: {:?}", &entry);
+            info!(
+                "Located a new radar: key '{}' id {} name '{}'",
+                &entry.key,
+                entry.id,
+                entry
+                    .controls
+                    .controls
+                    .get(&ControlType::UserName)
+                    .as_ref()
+                    .unwrap()
+                    .description
+                    .as_ref()
+                    .unwrap()
+            );
             Some(entry.clone())
         } else {
             None
@@ -359,6 +560,15 @@ impl Radars {
     pub fn save(key: &str, radars: &Arc<RwLock<Radars>>) {
         let mut radars = radars.write().unwrap();
         radars.store(key);
+    }
+
+    ///
+    /// Return iterater over completed fully available radars
+    ///
+    pub fn iter_info(&self) -> impl Iterator<Item = &RadarInfo> {
+        self.info.iter().map(|(_k, v)| v).filter(|i| {
+            i.range_detection.is_none() || i.range_detection.as_ref().is_some_and(|r| r.complete)
+        })
     }
 }
 

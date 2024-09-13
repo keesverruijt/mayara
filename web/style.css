@@ -31,3 +31,8 @@ input {
   background-color: darkblue;
   color: wheat;
 }
+
+input:read-only {
+  background-color: #000000;
+  color: rgb(152, 217, 204);
+}

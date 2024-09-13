@@ -2,7 +2,6 @@ use anyhow::{bail, Error};
 use enum_primitive_derive::Primitive;
 use log::{debug, error, info, trace};
 use std::cmp::{max, min};
-use std::collections::btree_map::Range;
 use std::mem::transmute;
 use std::time::Duration;
 use std::{fmt, io};
@@ -16,7 +15,6 @@ use crate::settings::{ControlMessage, ControlState, ControlType, ControlValue};
 use crate::util::{c_string, c_wide_string, create_multicast};
 
 use super::command::{self, Command};
-use super::settings::NavicoControls;
 use super::{DataUpdate, Model, NavicoSettings};
 
 pub struct NavicoReportReceiver {
@@ -336,9 +334,9 @@ impl NavicoReportReceiver {
                 _ = sleep_until(timeout) => {
                     if is_range_timeout {
                         self.process_range(0).await?;
-                    } else                    {
-                    self.send_report_requests().await?;
-                    self.subtype_timeout += self.subtype_repeat;
+                    } else {
+                        self.send_report_requests().await?;
+                        self.subtype_timeout += self.subtype_repeat;
                     }
                 },
 
@@ -375,9 +373,7 @@ impl NavicoReportReceiver {
         match control_message {
             ControlMessage::NewClient => {
                 // Send all control values
-                if let Some(controls) = &self.info.controls {
-                    controls.broadcast_all_json();
-                }
+                self.info.broadcast_all_json();
             }
             ControlMessage::Value(v) => {
                 self.command_sender.set_control(v).await?;
@@ -423,98 +419,88 @@ impl NavicoReportReceiver {
         auto: Option<bool>,
         state: ControlState,
     ) {
-        if let Some(controls) = self.info.controls.as_mut() {
-            match controls.set_all(control_type, value, auto, state) {
-                Err(e) => {
-                    error!("{}: {}", self.key, e.to_string());
-                }
-                Ok(Some(())) => {
-                    if log::log_enabled!(log::Level::Debug) {
-                        let control = controls.controls.get(control_type).unwrap();
-                        debug!(
-                            "{}: Control '{}' new value {} state {}",
-                            self.key,
-                            control_type,
-                            control.value(),
-                            control.state
-                        );
-                    }
-                }
-                Ok(None) => {}
+        match self.info.set_all(control_type, value, auto, state) {
+            Err(e) => {
+                error!("{}: {}", self.key, e.to_string());
             }
+            Ok(Some(())) => {
+                if log::log_enabled!(log::Level::Debug) {
+                    let control = self.info.controls.controls.get(control_type).unwrap();
+                    debug!(
+                        "{}: Control '{}' new value {} state {}",
+                        self.key,
+                        control_type,
+                        control.value(),
+                        control.state
+                    );
+                }
+            }
+            Ok(None) => {}
         };
     }
 
     fn set(&mut self, control_type: &ControlType, value: i32) {
-        if let Some(controls) = self.info.controls.as_mut() {
-            match controls.set(control_type, value) {
-                Err(e) => {
-                    error!("{}: {}", self.key, e.to_string());
-                }
-                Ok(Some(())) => {
-                    if log::log_enabled!(log::Level::Debug) {
-                        let control = controls.controls.get(control_type).unwrap();
-                        debug!(
-                            "{}: Control '{}' new value {} {}",
-                            self.key,
-                            control_type,
-                            control.value(),
-                            control.item().unit.as_deref().unwrap_or("")
-                        );
-                    }
-                }
-                Ok(None) => {}
+        match self.info.set(control_type, value) {
+            Err(e) => {
+                error!("{}: {}", self.key, e.to_string());
             }
+            Ok(Some(())) => {
+                if log::log_enabled!(log::Level::Debug) {
+                    let control = self.info.controls.controls.get(control_type).unwrap();
+                    debug!(
+                        "{}: Control '{}' new value {} {}",
+                        self.key,
+                        control_type,
+                        control.value(),
+                        control.item().unit.as_deref().unwrap_or("")
+                    );
+                }
+            }
+            Ok(None) => {}
         };
     }
 
     fn set_auto(&mut self, control_type: &ControlType, value: i32, auto: u8) {
-        if let Some(controls) = self.info.controls.as_mut() {
-            match controls.set_auto(control_type, auto > 0, value) {
-                Err(e) => {
-                    error!("{}: {}", self.key, e.to_string());
-                }
-                Ok(Some(())) => {
-                    if log::log_enabled!(log::Level::Debug) {
-                        let control = controls.controls.get(control_type).unwrap();
-                        debug!(
-                            "{}: Control '{}' new value {} auto {}",
-                            self.key,
-                            control_type,
-                            control.value(),
-                            auto
-                        );
-                    }
-                }
-                Ok(None) => {}
+        match self.info.set_auto(control_type, auto > 0, value) {
+            Err(e) => {
+                error!("{}: {}", self.key, e.to_string());
             }
+            Ok(Some(())) => {
+                if log::log_enabled!(log::Level::Debug) {
+                    let control = self.info.controls.controls.get(control_type).unwrap();
+                    debug!(
+                        "{}: Control '{}' new value {} auto {}",
+                        self.key,
+                        control_type,
+                        control.value(),
+                        auto
+                    );
+                }
+            }
+            Ok(None) => {}
         };
     }
 
     fn set_string(&mut self, control: &ControlType, value: String) {
-        if let Some(controls) = self.info.controls.as_mut() {
-            match controls.set_string(control, value) {
-                Err(e) => {
-                    error!("{}: {}", self.key, e.to_string());
-                }
-                Ok(Some(v)) => {
-                    debug!("{}: Control '{}' new value '{}'", self.key, control, v);
-                }
-                Ok(None) => {}
+        match self.info.set_string(control, value) {
+            Err(e) => {
+                error!("{}: {}", self.key, e.to_string());
             }
+            Ok(Some(v)) => {
+                debug!("{}: Control '{}' new value '{}'", self.key, control, v);
+            }
+            Ok(None) => {}
         };
     }
 
     // If range detection is in progress, go to the next range
     async fn process_range(&mut self, range: i32) -> Result<(), RadarError> {
         if self.info.range_detection.is_none() {
-            if let Some(controls) = &self.info.controls {
-                if let Some(control) = controls.controls.get(&ControlType::Range) {
-                    self.info.range_detection = Some(RangeDetection::new(
-                        control.item().min_value.unwrap(),
-                        control.item().max_value.unwrap(),
-                    ));
-                }
+            if let Some(control) = self.info.controls.controls.get(&ControlType::Range) {
+                self.info.range_detection = Some(RangeDetection::new(
+                    control.item().min_value.unwrap(),
+                    control.item().max_value.unwrap(),
+                ));
             }
         }
 
@@ -576,13 +562,11 @@ impl NavicoReportReceiver {
             }
 
             if complete {
-                if let Some(controls) = &mut self.info.controls {
-                    if let Some(control) = controls.controls.get_mut(&ControlType::Range) {
-                        control.set_valid_values(range_detection.ranges.clone());
-                    }
+                if let Some(control) = self.info.controls.controls.get_mut(&ControlType::Range) {
+                    control.set_valid_values(range_detection.ranges.clone());
                 }
+
                 self.update_radar_info();
-                Radars::save(&self.key, &self.settings.radars);
             }
         }
 
@@ -757,23 +741,15 @@ impl NavicoReportReceiver {
             Ok(model) => {
                 if self.settings.model != model {
                     info!("{}: Radar is model {}", self.key, model);
+                    let info2 = self.info.clone();
                     self.settings.model = model;
-                    self.info.controls = Some(NavicoControls::new2(
-                        model,
-                        &self.info,
-                        self.info.message_tx.clone(),
-                        self.info.control_tx.clone(),
-                    ));
+                    self.info.controls.update_when_model_known(model, &info2);
                     self.info.set_legend(model == Model::HALO);
 
                     self.update_radar_info();
                     self.data_tx
                         .send(DataUpdate::Legend(self.info.legend.clone()))
                         .await?;
-
-                    if let Some(serial_number) = self.info.serial_no.as_ref() {
-                        self.set_string(&ControlType::SerialNumber, serial_number.to_string());
-                    }
                 }
             }
         }
@@ -896,6 +872,7 @@ impl NavicoReportReceiver {
                 panic!("Poisoned RwLock on Radars");
             }
         }
+        Radars::save(&self.key, &self.settings.radars);
     }
 
     async fn process_report_08(&mut self) -> Result<(), Error> {

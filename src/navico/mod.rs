@@ -3,6 +3,7 @@ use bincode::deserialize;
 use enum_primitive_derive::Primitive;
 use log::{debug, error, log_enabled, trace};
 use serde::Deserialize;
+use settings::NavicoControls;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::{Arc, RwLock};
 use std::{fmt, io};
@@ -212,12 +213,15 @@ const NAVICO_BEACON_SINGLE_SIZE: usize = size_of::<NavicoBeaconSingle>();
 const NAVICO_BEACON_DUAL_SIZE: usize = size_of::<NavicoBeaconDual>();
 const NAVICO_BEACON_BR24_SIZE: usize = size_of::<BR24Beacon>();
 
-fn found(info: RadarInfo, radars: &Arc<RwLock<Radars>>, subsys: &SubsystemHandle, args: &Cli) {
+fn found(mut info: RadarInfo, radars: &Arc<RwLock<Radars>>, subsys: &SubsystemHandle, args: &Cli) {
+    info.set_string(&crate::settings::ControlType::UserName, info.key())
+        .unwrap();
+
     if let Some(info) = Radars::located(info, radars) {
         // It's new, start the RadarProcessor thread
         let navico_settings = NavicoSettings {
             radars: radars.clone(),
-            model: Model::new(info.model.as_ref().unwrap_or(&"".to_string()).as_str()),
+            model: Model::new(info.model_name.as_ref().unwrap_or(&"".to_string()).as_str()),
         };
 
         let (tx_data, rx_data) = mpsc::channel(10);
@@ -324,6 +328,7 @@ fn process_beacon_report(
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
+                        NavicoControls::new_navico(),
                     );
                     found(location_info, radars, subsys, args);
 
@@ -344,6 +349,7 @@ fn process_beacon_report(
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
+                        NavicoControls::new_navico(),
                     );
                     found(location_info, radars, subsys, args);
                 }
@@ -378,6 +384,7 @@ fn process_beacon_report(
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
+                        NavicoControls::new_navico(),
                     );
                     found(location_info, radars, subsys, args);
                 }
@@ -412,6 +419,7 @@ fn process_beacon_report(
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
+                        NavicoControls::new_navico(),
                     );
                     found(location_info, radars, subsys, args);
                 }

@@ -9,7 +9,7 @@ use std::io::{BufReader, BufWriter, Write};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use crate::radar::RadarInfo;
+use crate::radar::{RadarInfo, RangeDetection};
 use crate::settings::ControlType;
 
 pub fn get_project_dirs() -> ProjectDirs {
@@ -19,12 +19,12 @@ pub fn get_project_dirs() -> ProjectDirs {
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct Radar {
-    pub id: i32,
+    pub id: usize,
     pub user_name: String,
 
     // Data that is computed and not immediately known when starting
-    pub model_name: String,       // Descriptive model name (4G, HALO)
-    pub ranges: Option<Vec<i32>>, // Detected ranges
+    pub model_name: Option<String>, // Descriptive model name (4G, HALO)
+    pub ranges: Option<Vec<i32>>,   // Detected ranges
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
@@ -145,17 +145,32 @@ impl Persistence {
             .entry(radar_info.key())
             .or_insert(Radar::default());
 
-        if let Some(controls) = &radar_info.controls {
-            if let Some(cv) = controls.controls.get(&ControlType::UserName) {
-                radar.user_name = cv.value();
-            }
-            if let Some(cv) = controls.controls.get(&ControlType::Range) {
-                if let Some(ranges) = &cv.item().valid_values {
-                    radar.ranges = Some(ranges.clone());
-                }
+        if let Some(cv) = radar_info.controls.controls.get(&ControlType::UserName) {
+            radar.user_name = cv.value();
+        }
+        if let Some(cv) = radar_info.controls.controls.get(&ControlType::Range) {
+            if let Some(ranges) = &cv.item().valid_values {
+                radar.ranges = Some(ranges.clone());
             }
         }
+        radar.model_name = radar_info.model_name.clone();
+        radar.id = radar_info.id;
 
         self.save();
+    }
+
+    pub fn update_info_from_persistence(&self, info: &mut RadarInfo) {
+        if let Some(p) = self.config.radars.get(&info.key()) {
+            if p.model_name.is_some() {
+                info.set_model_name(p.model_name.as_ref().unwrap().clone());
+            }
+            if let Some(ranges) = &p.ranges {
+                if ranges.len() > 0 {
+                    info.range_detection = Some(RangeDetection::restore(ranges));
+                }
+            }
+            info.set_user_name(p.user_name.clone());
+            info.id = p.id;
+        }
     }
 }

@@ -9,7 +9,7 @@ var webSocket;
 const StringValue = (id, name) =>
   div({class: 'control'},
     label({ for: id }, name),
-    input({ type: 'text', id: id, size: 20, readonly: true })
+    input({ type: 'text', id: id, size: 20 })
   )
 
 const NumericValue = (id, name) =>
@@ -79,11 +79,14 @@ function buildControls() {
   van.add(c, div(radar.name + " Controls"));
 
   for (const [k, v] of Object.entries(controls)) {
-    van.add(c, ('isStringValue' in v)
+    van.add(c, (v['isStringValue'])
       ? StringValue(k, v.name)
       : ('maxValue' in v && v.maxValue <= 100)
         ? RangeValue(k, v.name, v.minValue, v.maxValue, 0, 'descriptions' in v)
         : NumericValue(k, v.name));
+    if (v['isReadOnly']) {
+      document.getElementById(k).setAttribute('readonly', 'true');
+    } 
   }
   console.log(controls);
 }

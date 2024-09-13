@@ -12,8 +12,7 @@ use axum::{
 };
 use axum_embed::ServeEmbed;
 use log::{debug, trace};
-use miette::miette;
-use miette::{bail, Result};
+use miette::Result;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -27,10 +26,9 @@ use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio_graceful_shutdown::SubsystemHandle;
 
-use crate::VERSION;
 use crate::{
     radar::{Legend, RadarInfo, Radars},
-    settings::{Control, ControlMessage, ControlType, ControlValue, Controls},
+    settings::{Control, ControlMessage, ControlType},
 };
 
 const RADAR_URI: &str = "/v1/api/radars";
@@ -118,7 +116,7 @@ struct RadarApi {
 impl RadarApi {
     fn new(
         id: String,
-        name: &str,
+        name: String,
         spokes: u16,
         max_spoke_len: u16,
         stream_url: String,
@@ -128,7 +126,7 @@ impl RadarApi {
     ) -> Self {
         RadarApi {
             id: id,
-            name: name.to_owned(),
+            name: name,
             spokes,
             max_spoke_len,
             stream_url,
@@ -163,36 +161,25 @@ async fn get_radars(
 
     match state.radars.read() {
         Ok(radars) => {
-            let x = &radars.info;
             let mut api: HashMap<String, RadarApi> = HashMap::new();
-            for (_key, value) in x.iter() {
-                if let Some(controls) = &value.controls {
-                    let legend = &value.legend;
-                    let id = format!("radar-{}", value.id);
-                    let stream_url = format!("ws://{}{}{}", host, SPOKES_URI, id);
-                    let control_url = format!("ws://{}{}{}", host, CONTROL_URI, id);
-                    let mut name = value.brand.to_owned();
-                    if value.model.is_some() {
-                        name.push(' ');
-                        name.push_str(value.model.as_ref().unwrap());
-                    }
-                    if value.which.is_some() {
-                        name.push(' ');
-                        name.push_str(value.which.as_ref().unwrap());
-                    }
-                    let v = RadarApi::new(
-                        id.to_owned(),
-                        &name,
-                        value.spokes,
-                        value.max_spoke_len,
-                        stream_url,
-                        control_url,
-                        legend.clone(),
-                        controls.controls.clone(),
-                    );
+            for info in radars.iter_info() {
+                let legend = &info.legend;
+                let id = format!("radar-{}", info.id);
+                let stream_url = format!("ws://{}{}{}", host, SPOKES_URI, id);
+                let control_url = format!("ws://{}{}{}", host, CONTROL_URI, id);
+                let name = info.user_name();
+                let v = RadarApi::new(
+                    id.to_owned(),
+                    name,
+                    info.spokes,
+                    info.max_spoke_len,
+                    stream_url,
+                    control_url,
+                    legend.clone(),
+                    info.controls.controls.clone(),
+                );
 
-                    api.insert(id.to_owned(), v);
-                }
+                api.insert(id.to_owned(), v);
             }
             Json(api).into_response()
         }
@@ -233,14 +220,10 @@ struct WebSocketHandlerParameters {
 fn match_radar_id(state: &Web, key: &str) -> Result<RadarInfo, AppError> {
     match state.radars.read() {
         Ok(radars) => {
-            let x = &radars.info;
-
-            for (_key, value) in x.iter() {
-                if value.controls.is_some() {
-                    let id = format!("radar-{}", value.id);
-                    if id == key {
-                        return Ok(value.clone());
-                    }
+            for info in radars.iter_info() {
+                let id = format!("radar-{}", info.id);
+                if id == key {
+                    return Ok(info.clone());
                 }
             }
         }
