@@ -69,7 +69,10 @@ impl Command {
     }
 
     pub async fn set_control(&mut self, cv: &ControlValue) -> Result<(), RadarError> {
-        let value = cv.value.ok_or_else(|| RadarError::MissingValue(cv.id))?;
+        let value = cv
+            .value
+            .parse::<i32>()
+            .map_err(|_| RadarError::MissingValue(cv.id))?;
         let auto: u8 = if cv.auto.unwrap_or(false) { 1 } else { 0 };
 
         let mut cmd = Vec::with_capacity(6);
@@ -205,16 +208,10 @@ impl Command {
             }
 
             // Non-hardware settings
-            ControlType::UserName => {
-                if let Some(user_name) = &cv.description {
-                    self.info
-                        .set_string(&ControlType::UserName, user_name.clone())
-                        .unwrap();
-                }
-            }
             _ => return Err(RadarError::CannotSetControlType(cv.id)),
         };
 
+        log::info!("{}: Send command {:02X?}", self.info.key(), cmd);
         self.send(&cmd).await
     }
 }

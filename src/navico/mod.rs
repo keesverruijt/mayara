@@ -203,12 +203,6 @@ impl Model {
     }
 }
 
-#[derive(Debug)]
-pub struct NavicoSettings {
-    radars: Arc<RwLock<Radars>>,
-    model: Model,
-}
-
 const NAVICO_BEACON_SINGLE_SIZE: usize = size_of::<NavicoBeaconSingle>();
 const NAVICO_BEACON_DUAL_SIZE: usize = size_of::<NavicoBeaconDual>();
 const NAVICO_BEACON_BR24_SIZE: usize = size_of::<BR24Beacon>();
@@ -217,12 +211,20 @@ fn found(mut info: RadarInfo, radars: &Arc<RwLock<Radars>>, subsys: &SubsystemHa
     info.set_string(&crate::settings::ControlType::UserName, info.key())
         .unwrap();
 
-    if let Some(info) = Radars::located(info, radars) {
+    if let Some(mut info) = Radars::located(info, radars) {
         // It's new, start the RadarProcessor thread
-        let navico_settings = NavicoSettings {
-            radars: radars.clone(),
-            model: Model::new(info.model_name.as_ref().unwrap_or(&"".to_string()).as_str()),
+
+        // Load the model name afresh, it may have been modified from persisted data
+        let model = match info.model_name() {
+            Some(s) => Model::new(&s),
+            None => Model::Unknown,
         };
+        if model != Model::Unknown {
+            let info2 = info.clone();
+            info.controls.update_when_model_known(model, &info2);
+            info.set_legend(model == Model::HALO);
+            Radars::update(&radars, &info);
+        }
 
         let (tx_data, rx_data) = mpsc::channel(10);
 
@@ -241,7 +243,7 @@ fn found(mut info: RadarInfo, radars: &Arc<RwLock<Radars>>, subsys: &SubsystemHa
 
         let data_receiver = data::NavicoDataReceiver::new(info, rx_data, args.clone());
         let report_receiver =
-            report::NavicoReportReceiver::new(info_clone, navico_settings, tx_data);
+            report::NavicoReportReceiver::new(info_clone, radars.clone(), model, tx_data);
 
         subsys.start(SubsystemBuilder::new(
             data_name,
@@ -317,7 +319,6 @@ fn process_beacon_report(
                     let location_info: RadarInfo = RadarInfo::new(
                         LocatorId::Gen3Plus,
                         "Navico",
-                        None,
                         Some(serial_no),
                         Some("A"),
                         16,
@@ -328,7 +329,7 @@ fn process_beacon_report(
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
-                        NavicoControls::new_navico(),
+                        NavicoControls::new(None),
                     );
                     found(location_info, radars, subsys, args);
 
@@ -338,7 +339,6 @@ fn process_beacon_report(
                     let location_info: RadarInfo = RadarInfo::new(
                         LocatorId::Gen3Plus,
                         "Navico",
-                        None,
                         Some(serial_no),
                         Some("B"),
                         16,
@@ -349,7 +349,7 @@ fn process_beacon_report(
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
-                        NavicoControls::new_navico(),
+                        NavicoControls::new(None),
                     );
                     found(location_info, radars, subsys, args);
                 }
@@ -373,7 +373,6 @@ fn process_beacon_report(
                     let location_info: RadarInfo = RadarInfo::new(
                         LocatorId::Gen3Plus,
                         "Navico",
-                        None,
                         Some(serial_no),
                         None,
                         16,
@@ -384,7 +383,7 @@ fn process_beacon_report(
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
-                        NavicoControls::new_navico(),
+                        NavicoControls::new(None),
                     );
                     found(location_info, radars, subsys, args);
                 }
@@ -408,7 +407,6 @@ fn process_beacon_report(
                     let location_info: RadarInfo = RadarInfo::new(
                         LocatorId::GenBR24,
                         "Navico",
-                        Some(BR24_MODEL_NAME),
                         Some(serial_no),
                         None,
                         16,
@@ -419,7 +417,7 @@ fn process_beacon_report(
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
-                        NavicoControls::new_navico(),
+                        NavicoControls::new(Some(BR24_MODEL_NAME)),
                     );
                     found(location_info, radars, subsys, args);
                 }

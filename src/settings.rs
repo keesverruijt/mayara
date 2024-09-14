@@ -42,14 +42,55 @@ impl Display for ControlState {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Controls {
-    pub controls: HashMap<ControlType, Control>,
+    #[serde(flatten)]
+    controls: HashMap<ControlType, Control>,
 }
 
 impl Controls {
-    pub fn new(controls: HashMap<ControlType, Control>) -> Self {
+    pub fn get(&self, control_type: &ControlType) -> Option<&Control> {
+        self.controls.get(control_type)
+    }
+
+    pub fn get_mut(&mut self, control_type: &ControlType) -> Option<&mut Control> {
+        self.controls.get_mut(control_type)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Control> {
+        self.controls.iter().map(|(_k, v)| v)
+    }
+
+    pub fn insert(&mut self, control_type: ControlType, value: Control) {
+        self.controls.insert(control_type, value);
+    }
+
+    pub fn new_base(controls: HashMap<ControlType, Control>) -> Self {
         Controls { controls }
+    }
+
+    pub fn set_user_name(&mut self, name: String) {
+        let control = self.get_mut(&ControlType::UserName).unwrap();
+        control.set_string(name);
+    }
+
+    pub fn user_name(&self) -> Option<String> {
+        if let Some(control) = self.controls.get(&ControlType::UserName) {
+            return control.description.clone();
+        }
+        return None;
+    }
+
+    pub fn set_model_name(&mut self, name: String) {
+        let control = self.controls.get_mut(&ControlType::ModelName).unwrap();
+        control.set_string(name.clone());
+    }
+
+    pub fn model_name(&self) -> Option<String> {
+        if let Some(control) = self.controls.get(&ControlType::ModelName) {
+            return control.description.clone();
+        }
+        return None;
     }
 }
 
@@ -65,23 +106,16 @@ pub enum ControlMessage {
 pub struct ControlValue {
     #[serde(deserialize_with = "deserialize_enum_from_string")]
     pub id: ControlType,
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "deserialize_option_number_from_string"
-    )]
-    pub value: Option<i32>,
-    #[serde(default)]
-    pub description: Option<String>,
+    pub value: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto: Option<bool>,
 }
 
 impl ControlValue {
-    pub fn new(id: ControlType, value: i32) -> Self {
+    pub fn new(id: ControlType, value: String) -> Self {
         ControlValue {
             id,
-            value: Some(value),
-            description: None,
+            value,
             auto: None,
         }
     }
@@ -314,9 +348,11 @@ impl Control {
     }
 
     pub fn set_string(&mut self, value: String) -> Option<()> {
-        if self.description.is_none() || self.description.as_ref().unwrap() != &value {
-            self.description = Some(value);
+        let value = Some(value);
+        if &self.description != &value {
+            self.description = value;
             self.state = ControlState::Manual;
+            log::trace!("Set {} to {:?}", self.item.control_type, self.description);
             Some(())
         } else {
             None
@@ -519,37 +555,6 @@ pub enum ControlError {
     NoAuto(ControlType),
 }
 
-pub fn deserialize_option_number_from_string<'de, T, D>(
-    deserializer: D,
-) -> Result<Option<T>, D::Error>
-where
-    D: Deserializer<'de>,
-    T: FromStr + serde::Deserialize<'de>,
-    <T as FromStr>::Err: Display,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum NumericOrNull<'a, T> {
-        Str(&'a str),
-        String(String),
-        FromStr(T),
-        Null,
-    }
-
-    match NumericOrNull::<T>::deserialize(deserializer)? {
-        NumericOrNull::Str(s) => match s {
-            "" => Ok(None),
-            _ => T::from_str(s).map(Some).map_err(serde::de::Error::custom),
-        },
-        NumericOrNull::String(s) => match s.as_str() {
-            "" => Ok(None),
-            _ => T::from_str(&s).map(Some).map_err(serde::de::Error::custom),
-        },
-        NumericOrNull::FromStr(i) => Ok(Some(i)),
-        NumericOrNull::Null => Ok(None),
-    }
-}
-
 pub fn deserialize_number_from_string<'de, T, D>(deserializer: D) -> Result<T, D::Error>
 where
     D: Deserializer<'de>,
@@ -593,7 +598,7 @@ mod test {
         match serde_json::from_str::<ControlValue>(&json) {
             Ok(cv) => {
                 assert_eq!(cv.id, ControlType::Gain);
-                assert_eq!(cv.value, Some(49));
+                assert_eq!(cv.value, "49");
             }
             Err(e) => {
                 panic!("Error {e}");

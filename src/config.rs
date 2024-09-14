@@ -139,24 +139,42 @@ impl Persistence {
     }
 
     pub fn store(&mut self, radar_info: &RadarInfo) {
+        let mut modified = false;
+
         let radar = self
             .config
             .radars
             .entry(radar_info.key())
             .or_insert(Radar::default());
 
-        if let Some(cv) = radar_info.controls.controls.get(&ControlType::UserName) {
-            radar.user_name = cv.value();
+        let user_name = radar_info.user_name();
+        if radar.user_name != user_name {
+            radar.user_name = user_name;
+            modified = true;
         }
-        if let Some(cv) = radar_info.controls.controls.get(&ControlType::Range) {
+        if let Some(cv) = radar_info.controls.get(&ControlType::Range) {
             if let Some(ranges) = &cv.item().valid_values {
-                radar.ranges = Some(ranges.clone());
+                let ranges = Some(ranges.clone());
+                if radar.ranges != ranges {
+                    radar.ranges = ranges;
+                    modified = true;
+                }
             }
         }
-        radar.model_name = radar_info.model_name.clone();
-        radar.id = radar_info.id;
 
-        self.save();
+        let model_name = radar_info.model_name();
+        if radar.model_name != model_name {
+            radar.model_name = model_name;
+            modified = true;
+        }
+        if radar.id != radar_info.id {
+            radar.id = radar_info.id;
+            modified = true;
+        }
+
+        if modified {
+            self.save();
+        }
     }
 
     pub fn update_info_from_persistence(&self, info: &mut RadarInfo) {

@@ -10,13 +10,18 @@ use super::Model;
 pub type NavicoControls = Controls;
 
 impl NavicoControls {
-    pub fn new_navico() -> Self {
+    pub fn new(model: Option<&str>) -> Self {
         let mut controls = HashMap::new();
 
         controls.insert(
             ControlType::UserName,
             Control::new_string(ControlType::UserName).read_only(false),
         );
+        let mut control = Control::new_string(ControlType::ModelName);
+        if model.is_some() {
+            control.set_string(model.unwrap().to_string());
+        }
+        controls.insert(ControlType::ModelName, control);
 
         controls.insert(
             ControlType::AntennaHeight,
@@ -57,7 +62,7 @@ impl NavicoControls {
         );
         controls.insert(
             ControlType::Rain,
-            Control::new_numeric(ControlType::Rain, 0, 100),
+            Control::new_numeric(ControlType::Rain, 0, 100).wire_scale_factor(255),
         );
         controls.insert(
             ControlType::TargetBoost,
@@ -84,11 +89,31 @@ impl NavicoControls {
             ),
         );
 
-        Controls::new(controls)
+        controls.insert(
+            ControlType::SideLobeSuppression,
+            Control::new_auto(
+                ControlType::SideLobeSuppression,
+                0,
+                100,
+                AutomaticValue {
+                    has_auto: true,
+                    auto_values: 1,
+                    auto_descriptions: None,
+                    has_auto_adjustable: false,
+                    auto_adjust_min_value: 0,
+                    auto_adjust_max_value: 0,
+                },
+            )
+            .wire_scale_factor(255),
+        );
+
+        Controls::new_base(controls)
     }
 
     pub fn update_when_model_known(&mut self, model: Model, radar_info: &RadarInfo) {
-        let controls = &mut self.controls;
+        let controls = self;
+
+        controls.set_model_name(model.to_string());
 
         let mut control = Control::new_string(ControlType::SerialNumber);
         if let Some(serial_number) = radar_info.serial_no.as_ref() {
@@ -110,8 +135,7 @@ impl NavicoControls {
                 user_name.push(' ');
                 user_name.push_str(&radar_info.which.as_ref().unwrap());
             }
-            let control = controls.get_mut(&ControlType::UserName).unwrap();
-            control.set_string(user_name);
+            controls.set_user_name(user_name);
         }
 
         let max_value = (match model {
@@ -144,10 +168,6 @@ impl NavicoControls {
                 Control::new_list(ControlType::AccentLight, &["Off", "Low", "Medium", "High"]),
             );
 
-            controls.insert(
-                ControlType::ModelName,
-                Control::new_string(ControlType::ModelName),
-            );
             controls.insert(
                 ControlType::NoTransmitStart1,
                 Control::new_numeric(ControlType::NoTransmitStart1, -180, 180)
@@ -200,41 +220,49 @@ impl NavicoControls {
                     .wire_scale_factor(1800)
                     .wire_offset(-1),
             );
-        }
 
-        controls.insert(
-            ControlType::Sea,
-            Control::new_auto(
+            controls.insert(
+                // TODO: Investigate mapping on 4G
+                ControlType::SeaState,
+                Control::new_list(ControlType::SeaState, &["Calm", "Moderate", "Rough"]),
+            );
+
+            controls.insert(
                 ControlType::Sea,
-                0,
-                100,
-                AutomaticValue {
-                    has_auto: true,
-                    auto_values: 100,
-                    auto_descriptions: None,
-                    has_auto_adjustable: true,
-                    auto_adjust_min_value: -50,
-                    auto_adjust_max_value: 50,
-                },
-            ),
-        );
-        controls.insert(
-            ControlType::SideLobeSuppression,
-            Control::new_auto(
-                ControlType::SideLobeSuppression,
-                0,
-                100,
-                AutomaticValue {
-                    has_auto: true,
-                    auto_values: 100,
-                    auto_descriptions: None,
-                    has_auto_adjustable: true,
-                    auto_adjust_min_value: -50,
-                    auto_adjust_max_value: 50,
-                },
-            )
-            .wire_scale_factor(255),
-        );
+                Control::new_auto(
+                    ControlType::Sea,
+                    0,
+                    100,
+                    AutomaticValue {
+                        has_auto: true,
+                        auto_values: 100,
+                        auto_descriptions: None,
+                        has_auto_adjustable: true,
+                        auto_adjust_min_value: -50,
+                        auto_adjust_max_value: 50,
+                    },
+                )
+                .wire_scale_factor(255),
+            );
+        } else {
+            controls.insert(
+                ControlType::Sea,
+                Control::new_auto(
+                    ControlType::Sea,
+                    0,
+                    100,
+                    AutomaticValue {
+                        has_auto: true,
+                        auto_values: 1,
+                        auto_descriptions: None,
+                        has_auto_adjustable: false,
+                        auto_adjust_min_value: 0,
+                        auto_adjust_max_value: 0,
+                    },
+                )
+                .wire_scale_factor(255),
+            );
+        }
 
         controls.insert(
             ControlType::ScanSpeed,
@@ -246,11 +274,6 @@ impl NavicoControls {
                     &["Normal", "Fast"]
                 },
             ),
-        );
-        controls.insert(
-            // TODO: Investigate mapping on 4G
-            ControlType::SeaState,
-            Control::new_list(ControlType::SeaState, &["Calm", "Moderate", "Rough"]),
         );
         controls.insert(
             ControlType::TargetExpansion,

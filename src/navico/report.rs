@@ -3,6 +3,7 @@ use enum_primitive_derive::Primitive;
 use log::{debug, error, info, trace};
 use std::cmp::{max, min};
 use std::mem::transmute;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use std::{fmt, io};
 use tokio::net::UdpSocket;
@@ -15,14 +16,15 @@ use crate::settings::{ControlMessage, ControlState, ControlType, ControlValue};
 use crate::util::{c_string, c_wide_string, create_multicast};
 
 use super::command::{self, Command};
-use super::{DataUpdate, Model, NavicoSettings};
+use super::{DataUpdate, Model};
 
 pub struct NavicoReportReceiver {
     info: RadarInfo,
     key: String,
     buf: Vec<u8>,
     sock: Option<UdpSocket>,
-    settings: NavicoSettings,
+    radars: Arc<RwLock<Radars>>,
+    model: Model,
     command_sender: Command,
     data_tx: Sender<DataUpdate>,
     range_timeout: Option<Instant>,
@@ -270,19 +272,21 @@ const REPORT_08_C4_18_OR_21_OR_22: u8 = 0x08;
 impl NavicoReportReceiver {
     pub fn new(
         info: RadarInfo, // Quick access to our own RadarInfo
-        settings: NavicoSettings,
+        radars: Arc<RwLock<Radars>>,
+        model: Model,
         data_tx: Sender<DataUpdate>,
     ) -> NavicoReportReceiver {
         let key = info.key();
 
-        let command_sender = Command::new(info.clone(), settings.model.clone());
+        let command_sender = Command::new(info.clone(), model.clone());
 
         NavicoReportReceiver {
             key: key,
             info: info,
             buf: Vec::with_capacity(1000),
             sock: None,
-            settings,
+            radars,
+            model,
             command_sender,
             range_timeout: None,
             subtype_timeout: Instant::now(),
@@ -375,8 +379,20 @@ impl NavicoReportReceiver {
                 // Send all control values
                 self.info.broadcast_all_json();
             }
-            ControlMessage::Value(v) => {
-                self.command_sender.set_control(v).await?;
+            ControlMessage::Value(cv) => {
+                // match strings first
+                match cv.id {
+                    ControlType::UserName => {
+                        self.info
+                            .set_string(&ControlType::UserName, cv.value.clone())
+                            .unwrap();
+                        Radars::update(&self.radars, &self.info);
+                        return Ok(());
+                    }
+                    _ => {} // rest is numeric
+                }
+
+                self.command_sender.set_control(cv).await?;
             }
         }
         Ok(())
@@ -425,7 +441,7 @@ impl NavicoReportReceiver {
             }
             Ok(Some(())) => {
                 if log::log_enabled!(log::Level::Debug) {
-                    let control = self.info.controls.controls.get(control_type).unwrap();
+                    let control = self.info.controls.get(control_type).unwrap();
                     debug!(
                         "{}: Control '{}' new value {} state {}",
                         self.key,
@@ -446,7 +462,7 @@ impl NavicoReportReceiver {
             }
             Ok(Some(())) => {
                 if log::log_enabled!(log::Level::Debug) {
-                    let control = self.info.controls.controls.get(control_type).unwrap();
+                    let control = self.info.controls.get(control_type).unwrap();
                     debug!(
                         "{}: Control '{}' new value {} {}",
                         self.key,
@@ -467,7 +483,7 @@ impl NavicoReportReceiver {
             }
             Ok(Some(())) => {
                 if log::log_enabled!(log::Level::Debug) {
-                    let control = self.info.controls.controls.get(control_type).unwrap();
+                    let control = self.info.controls.get(control_type).unwrap();
                     debug!(
                         "{}: Control '{}' new value {} auto {}",
                         self.key,
@@ -496,7 +512,7 @@ impl NavicoReportReceiver {
     // If range detection is in progress, go to the next range
     async fn process_range(&mut self, range: i32) -> Result<(), RadarError> {
         if self.info.range_detection.is_none() {
-            if let Some(control) = self.info.controls.controls.get(&ControlType::Range) {
+            if let Some(control) = self.info.controls.get(&ControlType::Range) {
                 self.info.range_detection = Some(RangeDetection::new(
                     control.item().min_value.unwrap(),
                     control.item().max_value.unwrap(),
@@ -551,22 +567,22 @@ impl NavicoReportReceiver {
                     // Set a timer to pick up the range if it doesn't do anything, so we are called again...
                     self.range_timeout = Some(Instant::now() + Duration::from_secs(2));
                 }
-                log::info!(
+                log::trace!(
                     "{}: Range detection ask for range {}m",
                     self.key,
                     next_range
                 );
                 range_detection.commanded_range = next_range;
-                let cv = ControlValue::new(ControlType::Range, next_range);
+                let cv = ControlValue::new(ControlType::Range, next_range.to_string());
                 self.command_sender.set_control(&cv).await?;
             }
 
             if complete {
-                if let Some(control) = self.info.controls.controls.get_mut(&ControlType::Range) {
+                if let Some(control) = self.info.controls.get_mut(&ControlType::Range) {
                     control.set_valid_values(range_detection.ranges.clone());
                 }
 
-                self.update_radar_info();
+                Radars::update(&self.radars, &self.info);
             }
         }
 
@@ -647,7 +663,9 @@ impl NavicoReportReceiver {
                 return self.process_report_01().await;
             }
             REPORT_02_C4_99 => {
-                return self.process_report_02().await;
+                if self.model != Model::Unknown {
+                    return self.process_report_02().await;
+                }
             }
             REPORT_03_C4_129 => {
                 return self.process_report_03().await;
@@ -656,13 +674,17 @@ impl NavicoReportReceiver {
                 return self.process_report_04().await;
             }
             REPORT_06_C4_68 => {
-                if data.len() == 68 {
-                    return self.process_report_06_68().await;
+                if self.model != Model::Unknown {
+                    if data.len() == 68 {
+                        return self.process_report_06_68().await;
+                    }
+                    return self.process_report_06_74().await;
                 }
-                return self.process_report_06_74().await;
             }
             REPORT_08_C4_18_OR_21_OR_22 => {
-                return self.process_report_08().await;
+                if self.model != Model::Unknown {
+                    return self.process_report_08().await;
+                }
             }
             _ => {
                 if !self.reported_unknown[report_identification as usize] {
@@ -709,7 +731,7 @@ impl NavicoReportReceiver {
         let target_boost = report.target_boost as i32;
 
         self.set(&ControlType::Range, range);
-        if self.settings.model == Model::HALO {
+        if self.model == Model::HALO {
             self.set(&ControlType::Mode, mode);
         }
         self.set(&ControlType::Gain, gain);
@@ -739,14 +761,15 @@ impl NavicoReportReceiver {
                 bail!("{}: Unknown model # {}", self.key, report.model);
             }
             Ok(model) => {
-                if self.settings.model != model {
+                if self.model != model {
                     info!("{}: Radar is model {}", self.key, model);
                     let info2 = self.info.clone();
-                    self.settings.model = model;
+                    self.model = model;
                     self.info.controls.update_when_model_known(model, &info2);
                     self.info.set_legend(model == Model::HALO);
 
-                    self.update_radar_info();
+                    Radars::update(&self.radars, &self.info);
+
                     self.data_tx
                         .send(DataUpdate::Legend(self.info.legend.clone()))
                         .await?;
@@ -776,7 +799,7 @@ impl NavicoReportReceiver {
             &ControlType::AntennaHeight,
             u16::from_le_bytes(report.antenna_height) as i32,
         );
-        if self.settings.model == Model::HALO {
+        if self.model == Model::HALO {
             self.set(&ControlType::AccentLight, report.accent_light as i32);
         }
 
@@ -842,7 +865,12 @@ impl NavicoReportReceiver {
         trace!("{}: report {:?}", self.key, report);
 
         let name = c_string(&report.name);
-        self.set_string(&ControlType::ModelName, name.unwrap_or("").to_string());
+        // self.set_string(&ControlType::ModelName, name.unwrap_or("").to_string());
+        log::debug!(
+            "Radar name '{}' model '{}'",
+            name.unwrap_or("null"),
+            self.model
+        );
 
         for (i, start, end) in Self::BLANKING_SETS {
             let blanking = &report.blanking[i];
@@ -858,21 +886,6 @@ impl NavicoReportReceiver {
         }
 
         Ok(())
-    }
-
-    ///
-    /// Store the updated in our own RadarInfo struct in the shared map of RadarInfos./
-    ///
-    fn update_radar_info(&mut self) {
-        match self.settings.radars.write() {
-            Ok(mut radars) => {
-                radars.info.insert(self.key.clone(), self.info.clone());
-            }
-            Err(_) => {
-                panic!("Poisoned RwLock on Radars");
-            }
-        }
-        Radars::save(&self.key, &self.settings.radars);
     }
 
     async fn process_report_08(&mut self) -> Result<(), Error> {
@@ -929,7 +942,9 @@ impl NavicoReportReceiver {
             self.set(&ControlType::DopplerSpeedThreshold, doppler_speed as i32);
         }
 
-        self.set(&ControlType::SeaState, sea_state as i32);
+        if self.model == Model::HALO {
+            self.set(&ControlType::SeaState, sea_state as i32);
+        }
         self.set(
             &ControlType::InterferenceRejection,
             interference_rejection as i32,

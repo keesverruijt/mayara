@@ -28,7 +28,7 @@ use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::{
     radar::{Legend, RadarInfo, Radars},
-    settings::{Control, ControlMessage, ControlType},
+    settings::{Control, ControlMessage, ControlType, Controls},
 };
 
 const RADAR_URI: &str = "/v1/api/radars";
@@ -110,7 +110,7 @@ struct RadarApi {
     stream_url: String,
     control_url: String,
     legend: Legend,
-    controls: HashMap<ControlType, Control>,
+    controls: Controls,
 }
 
 impl RadarApi {
@@ -122,7 +122,7 @@ impl RadarApi {
         stream_url: String,
         control_url: String,
         legend: Legend,
-        controls: HashMap<ControlType, Control>,
+        controls: Controls,
     ) -> Self {
         RadarApi {
             id: id,
@@ -176,7 +176,7 @@ async fn get_radars(
                     stream_url,
                     control_url,
                     legend.clone(),
-                    info.controls.controls.clone(),
+                    info.controls.clone(),
                 );
 
                 api.insert(id.to_owned(), v);
@@ -359,7 +359,7 @@ async fn control_stream(
                         match message {
                             Message::Text(message) => {
                                 if let Ok(control_value) = serde_json::from_str(&message) {
-                                    trace!("Received ControlValue {:?}", control_value);
+                                    log::info!("Received ControlValue {:?}", control_value);
 
                                     let control_message = ControlMessage::Value(control_value);
 
@@ -368,7 +368,7 @@ async fn control_stream(
                                         break;
                                     }
                                 } else {
-                                    log::error!("Unknown JSON string '{}", message);
+                                    log::error!("Unknown JSON string '{}'", message);
                                 }
 
                             },
