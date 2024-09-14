@@ -1,11 +1,10 @@
-use anyhow::anyhow;
 use axum::{
     debug_handler,
     extract::{
         ws::{Message, WebSocket},
         ConnectInfo, Host, Path, State, WebSocketUpgrade,
     },
-    http::{StatusCode, Uri},
+    http::Uri,
     response::{IntoResponse, Response},
     routing::get,
     Json, Router,
@@ -158,77 +157,32 @@ async fn get_radars(
 
     debug!("target host = '{}'", host);
 
-    match state.radars.read() {
-        Ok(radars) => {
-            let mut api: HashMap<String, RadarApi> = HashMap::new();
-            for info in radars.iter_info() {
-                let legend = &info.legend;
-                let id = format!("radar-{}", info.id);
-                let stream_url = format!("ws://{}{}{}", host, SPOKES_URI, id);
-                let control_url = format!("ws://{}{}{}", host, CONTROL_URI, id);
-                let name = info.user_name();
-                let v = RadarApi::new(
-                    id.to_owned(),
-                    name,
-                    info.spokes,
-                    info.max_spoke_len,
-                    stream_url,
-                    control_url,
-                    legend.clone(),
-                    info.controls.clone(),
-                );
+    let mut api: HashMap<String, RadarApi> = HashMap::new();
+    for info in state.radars.get_active() {
+        let legend = &info.legend;
+        let id = format!("radar-{}", info.id);
+        let stream_url = format!("ws://{}{}{}", host, SPOKES_URI, id);
+        let control_url = format!("ws://{}{}{}", host, CONTROL_URI, id);
+        let name = info.user_name();
+        let v = RadarApi::new(
+            id.to_owned(),
+            name,
+            info.spokes,
+            info.max_spoke_len,
+            stream_url,
+            control_url,
+            legend.clone(),
+            info.controls.clone(),
+        );
 
-                api.insert(id.to_owned(), v);
-            }
-            Json(api).into_response()
-        }
-        Err(_) => AppError(anyhow!("Poisoned lock")).into_response(),
+        api.insert(id.to_owned(), v);
     }
-}
-
-// Make our own error that wraps `anyhow::Error`.
-struct AppError(anyhow::Error);
-
-// Tell axum how to convert `AppError` into a response.
-impl IntoResponse for AppError {
-    fn into_response(self) -> Response {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Something went wrong: {}", self.0),
-        )
-            .into_response()
-    }
-}
-
-// This enables using `?` on functions that return `Result<_, anyhow::Error>` to turn them into
-// `Result<_, AppError>`. That way you don't need to do that manually.
-impl<E> From<E> for AppError
-where
-    E: Into<anyhow::Error>,
-{
-    fn from(err: E) -> Self {
-        Self(err.into())
-    }
+    Json(api).into_response()
 }
 
 #[derive(Deserialize)]
 struct WebSocketHandlerParameters {
     key: String,
-}
-
-fn match_radar_id(state: &Web, key: &str) -> Result<RadarInfo, AppError> {
-    match state.radars.read() {
-        Ok(radars) => {
-            for info in radars.iter_info() {
-                let id = format!("radar-{}", info.id);
-                if id == key {
-                    return Ok(info.clone());
-                }
-            }
-        }
-        Err(_) => return Err(AppError(anyhow!("Poisoned lock"))),
-    }
-    Err(AppError(anyhow!("No such radar {}", key)))
 }
 
 #[debug_handler]
@@ -240,7 +194,7 @@ async fn spokes_handler(
 ) -> Response {
     debug!("stream request from {} for {}", addr, params.key);
 
-    match match_radar_id(&state, &params.key) {
+    match state.radars.find_radar_info(&params.key) {
         Ok(radar) => {
             let shutdown_rx = state.shutdown_tx.subscribe();
             let radar_message_rx = radar.message_tx.subscribe();
@@ -295,7 +249,7 @@ async fn control_handler(
 ) -> Response {
     debug!("control request from {} for {}", addr, params.key);
 
-    match match_radar_id(&state, &params.key) {
+    match state.radars.find_radar_info(&params.key) {
         Ok(radar) => {
             let shutdown_rx = state.shutdown_tx.subscribe();
 

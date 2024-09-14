@@ -10,7 +10,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::time::{sleep, sleep_until, Instant};
 use tokio_graceful_shutdown::SubsystemHandle;
 
-use crate::radar::{DopplerMode, RadarError, RadarInfo, Radars, RangeDetection, SharedRadars};
+use crate::radar::{DopplerMode, RadarError, RadarInfo, RangeDetection, SharedRadars};
 use crate::settings::{ControlMessage, ControlState, ControlType, ControlValue};
 use crate::util::{c_string, c_wide_string, create_multicast};
 

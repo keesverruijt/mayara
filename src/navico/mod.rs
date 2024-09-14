@@ -5,13 +5,12 @@ use log::{debug, error, log_enabled, trace};
 use serde::Deserialize;
 use settings::NavicoControls;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::sync::{Arc, RwLock};
 use std::{fmt, io};
 use tokio::sync::mpsc;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
 use crate::locator::{LocatorId, RadarListenAddress, RadarLocator};
-use crate::radar::{DopplerMode, Legend, RadarInfo, Radars, SharedRadars};
+use crate::radar::{DopplerMode, Legend, RadarInfo, SharedRadars};
 use crate::util::c_string;
 use crate::util::PrintableSlice;
 use crate::Cli;

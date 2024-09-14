@@ -1,3 +1,5 @@
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use enum_primitive_derive::Primitive;
 use log::info;
 use protobuf::Message;
@@ -39,6 +41,15 @@ pub enum RadarError {
     CannotSetControlType(ControlType),
     #[error("Missing value for control '{0}'")]
     MissingValue(ControlType),
+    #[error("No such radar with key '{0}'")]
+    NoSuchRadar(String),
+}
+
+// Tell axum how to convert `AppError` into a response.
+impl IntoResponse for RadarError {
+    fn into_response(self) -> Response {
+        (StatusCode::INTERNAL_SERVER_ERROR, self).into_response()
+    }
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -479,15 +490,6 @@ impl SharedRadars {
         }
     }
 
-    pub fn write(
-        &self,
-    ) -> Result<
-        std::sync::RwLockWriteGuard<'_, Radars>,
-        PoisonError<std::sync::RwLockWriteGuard<'_, Radars>>,
-    > {
-        self.radars.write()
-    }
-
     pub fn read(
         &self,
     ) -> Result<
@@ -541,23 +543,52 @@ impl SharedRadars {
             None
         }
     }
-    
+
     ///
     /// Update radar info in radars container
     ///
     pub fn update(&self, radar_info: &RadarInfo) {
-        let mut radars = self.radars.write().unwrap();
-
         log::info!(
             "{}: update radars list model='{}'",
             radar_info.key,
             radar_info.model_name().unwrap_or("null".to_string())
         );
+
+        let mut radars = self.radars.write().unwrap();
+
         radars
             .info
             .insert(radar_info.key.clone(), radar_info.clone());
 
         radars.persistent_data.store(radar_info);
+    }
+
+    ///
+    /// Return iterater over completed fully available radars
+    ///
+    pub fn get_active(&self) -> Vec<RadarInfo> {
+        let radars = self.radars.read().unwrap();
+        radars
+            .info
+            .iter()
+            .map(|(_k, v)| v)
+            .filter(|i| {
+                i.range_detection.is_none()
+                    || i.range_detection.as_ref().is_some_and(|r| r.complete)
+            })
+            .map(|v| v.clone())
+            .collect()
+    }
+
+    pub fn find_radar_info(&self, key: &str) -> Result<RadarInfo, RadarError> {
+        let radars = self.radars.read().unwrap();
+        for info in radars.info.iter() {
+            let id = format!("radar-{}", info.1.id);
+            if id == key {
+                return Ok(info.1.clone());
+            }
+        }
+        Err(RadarError::NoSuchRadar(key.to_string()))
     }
 }
 
@@ -566,17 +597,6 @@ pub struct Radars {
     pub info: HashMap<String, RadarInfo>,
     pub args: Cli,
     pub persistent_data: Persistence,
-}
-
-impl Radars {
-    ///
-    /// Return iterater over completed fully available radars
-    ///
-    pub fn iter_info(&self) -> impl Iterator<Item = &RadarInfo> {
-        self.info.iter().map(|(_k, v)| v).filter(|i| {
-            i.range_detection.is_none() || i.range_detection.as_ref().is_some_and(|r| r.complete)
-        })
-    }
 }
 
 pub struct Statistics {
