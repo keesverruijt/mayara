@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
 use crate::locator::{LocatorId, RadarListenAddress, RadarLocator};
-use crate::radar::{DopplerMode, Legend, RadarInfo, Radars};
+use crate::radar::{DopplerMode, Legend, RadarInfo, Radars, SharedRadars};
 use crate::util::c_string;
 use crate::util::PrintableSlice;
 use crate::Cli;
@@ -207,11 +207,11 @@ const NAVICO_BEACON_SINGLE_SIZE: usize = size_of::<NavicoBeaconSingle>();
 const NAVICO_BEACON_DUAL_SIZE: usize = size_of::<NavicoBeaconDual>();
 const NAVICO_BEACON_BR24_SIZE: usize = size_of::<BR24Beacon>();
 
-fn found(mut info: RadarInfo, radars: &Arc<RwLock<Radars>>, subsys: &SubsystemHandle, args: &Cli) {
+fn found(mut info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle, args: &Cli) {
     info.set_string(&crate::settings::ControlType::UserName, info.key())
         .unwrap();
 
-    if let Some(mut info) = Radars::located(info, radars) {
+    if let Some(mut info) = radars.located(info) {
         // It's new, start the RadarProcessor thread
 
         // Load the model name afresh, it may have been modified from persisted data
@@ -223,7 +223,7 @@ fn found(mut info: RadarInfo, radars: &Arc<RwLock<Radars>>, subsys: &SubsystemHa
             let info2 = info.clone();
             info.controls.update_when_model_known(model, &info2);
             info.set_legend(model == Model::HALO);
-            Radars::update(&radars, &info);
+            radars.update(&info);
         }
 
         let (tx_data, rx_data) = mpsc::channel(10);
@@ -259,7 +259,7 @@ fn process_locator_report(
     report: &[u8],
     from: &SocketAddr,
     via: &Ipv4Addr,
-    radars: &Arc<RwLock<Radars>>,
+    radars: &SharedRadars,
     subsys: &SubsystemHandle,
     args: &Cli,
 ) -> io::Result<()> {
@@ -293,7 +293,7 @@ fn process_beacon_report(
     report: &[u8],
     from: &SocketAddr,
     via: &Ipv4Addr,
-    radars: &Arc<RwLock<Radars>>,
+    radars: &SharedRadars,
     subsys: &SubsystemHandle,
     args: &Cli,
 ) -> Result<(), io::Error> {

@@ -3,6 +3,7 @@ use log::info;
 use protobuf::Message;
 use serde::ser::{SerializeMap, Serializer};
 use serde::Serialize;
+use std::sync::PoisonError;
 use std::{
     collections::HashMap,
     fmt::{self, Display, Write},
@@ -462,28 +463,44 @@ impl Display for RadarInfo {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct Radars {
-    pub info: HashMap<String, RadarInfo>,
-    pub args: Cli,
-    pub persistent_data: Persistence,
+#[derive(Clone)]
+pub struct SharedRadars {
+    radars: Arc<RwLock<Radars>>,
 }
 
-impl Radars {
-    pub fn new(args: Cli) -> Arc<RwLock<Radars>> {
-        Arc::new(RwLock::new(Radars {
-            info: HashMap::new(),
-            args,
-            persistent_data: Persistence::new(),
-        }))
+impl SharedRadars {
+    pub fn new(args: Cli) -> Self {
+        SharedRadars {
+            radars: Arc::new(RwLock::new(Radars {
+                info: HashMap::new(),
+                args,
+                persistent_data: Persistence::new(),
+            })),
+        }
     }
-}
 
-impl Radars {
+    pub fn write(
+        &self,
+    ) -> Result<
+        std::sync::RwLockWriteGuard<'_, Radars>,
+        PoisonError<std::sync::RwLockWriteGuard<'_, Radars>>,
+    > {
+        self.radars.write()
+    }
+
+    pub fn read(
+        &self,
+    ) -> Result<
+        std::sync::RwLockReadGuard<'_, Radars>,
+        PoisonError<std::sync::RwLockReadGuard<'_, Radars>>,
+    > {
+        self.radars.read()
+    }
+
     // A radar has been found
-    pub fn located(mut new_info: RadarInfo, radars: &Arc<RwLock<Radars>>) -> Option<RadarInfo> {
+    pub fn located(&self, mut new_info: RadarInfo) -> Option<RadarInfo> {
         let key = new_info.key.to_owned();
-        let mut radars = radars.write().unwrap();
+        let mut radars = self.radars.write().unwrap();
 
         // For now, drop second radar in replay Mode...
         if radars.args.replay && key.ends_with("-B") {
@@ -524,12 +541,12 @@ impl Radars {
             None
         }
     }
-
+    
     ///
     /// Update radar info in radars container
     ///
-    pub fn update(radars: &Arc<RwLock<Radars>>, radar_info: &RadarInfo) {
-        let mut radars = radars.write().unwrap();
+    pub fn update(&self, radar_info: &RadarInfo) {
+        let mut radars = self.radars.write().unwrap();
 
         log::info!(
             "{}: update radars list model='{}'",
@@ -542,7 +559,16 @@ impl Radars {
 
         radars.persistent_data.store(radar_info);
     }
+}
 
+#[derive(Clone, Debug)]
+pub struct Radars {
+    pub info: HashMap<String, RadarInfo>,
+    pub args: Cli,
+    pub persistent_data: Persistence,
+}
+
+impl Radars {
     ///
     /// Return iterater over completed fully available radars
     ///

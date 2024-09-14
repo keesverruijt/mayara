@@ -56,7 +56,7 @@ impl GarminLocator {
 
 async fn found(
     info: RadarLocationInfo,
-    radars: &Arc<RwLock<Radars>>,
+    radars: &SharedRadars,
     shutdown: &Shutdown,
 ) -> io::Result<()> {
     if let Some(info) = located(info, radars) {
@@ -74,7 +74,7 @@ async fn found(
 impl RadarLocator for GarminLocator {
     async fn process_beacons(
         &mut self,
-        radars: Arc<RwLock<Radars>>,
+        radars: SharedRadars,
         shutdown: Shutdown,
     ) -> io::Result<()> {
         self.start().await.unwrap();

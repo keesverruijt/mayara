@@ -20,15 +20,14 @@ use std::{
     io,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     str::FromStr,
-    sync::{Arc, RwLock},
 };
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::{
-    radar::{Legend, RadarInfo, Radars},
-    settings::{Control, ControlMessage, ControlType, Controls},
+    radar::{Legend, RadarInfo, SharedRadars},
+    settings::{ControlMessage, Controls},
 };
 
 const RADAR_URI: &str = "/v1/api/radars";
@@ -45,15 +44,15 @@ pub enum WebError {
     Io(#[from] io::Error),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Web {
-    radars: Arc<RwLock<Radars>>,
+    radars: SharedRadars,
     port: u16,
     shutdown_tx: tokio::sync::broadcast::Sender<()>,
 }
 
 impl Web {
-    pub fn new(port: u16, radars: Arc<RwLock<Radars>>) -> Self {
+    pub fn new(port: u16, radars: SharedRadars) -> Self {
         let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
 
         Web {

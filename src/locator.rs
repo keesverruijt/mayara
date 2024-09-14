@@ -10,7 +10,6 @@
 use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -23,7 +22,7 @@ use tokio::task::JoinSet;
 use tokio::time::sleep;
 use tokio_graceful_shutdown::SubsystemHandle;
 
-use crate::radar::{RadarError, Radars};
+use crate::radar::{RadarError, SharedRadars};
 use crate::{navico, util, Cli};
 
 const LOCATOR_PACKET_BUFFER_LEN: usize = 300; // Long enough for any location packet
@@ -54,7 +53,7 @@ pub struct RadarListenAddress {
         &[u8],       // message
         &SocketAddr, // from
         &Ipv4Addr,   // nic_addr
-        &Arc<RwLock<Radars>>,
+        &SharedRadars,
         &SubsystemHandle,
         &Cli,
     ) -> Result<(), io::Error>,
@@ -74,7 +73,7 @@ impl RadarListenAddress {
             &[u8],
             &SocketAddr,
             &Ipv4Addr,
-            &Arc<RwLock<Radars>>,
+            &SharedRadars,
             &SubsystemHandle,
             &Cli,
         ) -> Result<(), io::Error>,
@@ -96,7 +95,7 @@ struct LocatorInfo {
         &[u8],       // message
         &SocketAddr, // from
         &Ipv4Addr,   // nic_addr
-        &Arc<RwLock<Radars>>,
+        &SharedRadars,
         &SubsystemHandle,
         &Cli,
     ) -> Result<(), io::Error>,
@@ -120,12 +119,12 @@ struct InterfaceState {
 }
 
 pub struct Locator {
-    pub radars: Arc<RwLock<Radars>>,
+    pub radars: SharedRadars,
     pub args: Cli,
 }
 
 impl Locator {
-    pub fn new(radars: Arc<RwLock<Radars>>, args: Cli) -> Self {
+    pub fn new(radars: SharedRadars, args: Cli) -> Self {
         Locator { radars, args }
     }
 

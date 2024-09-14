@@ -3,7 +3,6 @@ use enum_primitive_derive::Primitive;
 use log::{debug, error, info, trace};
 use std::cmp::{max, min};
 use std::mem::transmute;
-use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use std::{fmt, io};
 use tokio::net::UdpSocket;
@@ -11,7 +10,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::time::{sleep, sleep_until, Instant};
 use tokio_graceful_shutdown::SubsystemHandle;
 
-use crate::radar::{DopplerMode, RadarError, RadarInfo, Radars, RangeDetection};
+use crate::radar::{DopplerMode, RadarError, RadarInfo, Radars, RangeDetection, SharedRadars};
 use crate::settings::{ControlMessage, ControlState, ControlType, ControlValue};
 use crate::util::{c_string, c_wide_string, create_multicast};
 
@@ -23,7 +22,7 @@ pub struct NavicoReportReceiver {
     key: String,
     buf: Vec<u8>,
     sock: Option<UdpSocket>,
-    radars: Arc<RwLock<Radars>>,
+    radars: SharedRadars,
     model: Model,
     command_sender: Command,
     data_tx: Sender<DataUpdate>,
@@ -272,7 +271,7 @@ const REPORT_08_C4_18_OR_21_OR_22: u8 = 0x08;
 impl NavicoReportReceiver {
     pub fn new(
         info: RadarInfo, // Quick access to our own RadarInfo
-        radars: Arc<RwLock<Radars>>,
+        radars: SharedRadars,
         model: Model,
         data_tx: Sender<DataUpdate>,
     ) -> NavicoReportReceiver {
@@ -386,7 +385,7 @@ impl NavicoReportReceiver {
                         self.info
                             .set_string(&ControlType::UserName, cv.value.clone())
                             .unwrap();
-                        Radars::update(&self.radars, &self.info);
+                        self.radars.update(&self.info);
                         return Ok(());
                     }
                     _ => {} // rest is numeric
@@ -582,7 +581,7 @@ impl NavicoReportReceiver {
                     control.set_valid_values(range_detection.ranges.clone());
                 }
 
-                Radars::update(&self.radars, &self.info);
+                self.radars.update(&self.info);
             }
         }
 
@@ -768,7 +767,7 @@ impl NavicoReportReceiver {
                     self.info.controls.update_when_model_known(model, &info2);
                     self.info.set_legend(model == Model::HALO);
 
-                    Radars::update(&self.radars, &self.info);
+                    self.radars.update(&self.info);
 
                     self.data_tx
                         .send(DataUpdate::Legend(self.info.legend.clone()))

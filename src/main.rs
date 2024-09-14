@@ -5,11 +5,10 @@ use env_logger::Env;
 use locator::Locator;
 use log::{info, warn};
 use miette::Result;
-use radar::Radars;
+use radar::SharedRadars;
 use std::time::Duration;
 use tokio_graceful_shutdown::{SubsystemBuilder, Toplevel};
 use web::Web;
-
 
 mod config;
 // mod garmin;
@@ -66,7 +65,7 @@ async fn main() -> Result<()> {
         warn!("Output mode activated; 'protobuf' formatted RadarMessage sent to stdout");
     }
 
-    let radars = Radars::new(args.clone());
+    let radars = SharedRadars::new(args.clone());
     let radars_clone1 = radars.clone();
 
     let web = Web::new(args.port, radars_clone1);
