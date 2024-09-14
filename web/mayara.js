@@ -24,5 +24,5 @@ function loadRadars() {
 }
 
 window.onload = function () {
-  setTimeout(loadRadars, 1000);
+  loadRadars();
 }

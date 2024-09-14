@@ -1,6 +1,6 @@
 import van from "./van-1.5.2.debug.js";
 
-const {div, label, input} = van.tags
+const {div, label, input, button} = van.tags
 
 var radar;
 var controls;
@@ -25,6 +25,10 @@ const RangeValue = (id, name, min, max, def, descriptions) =>
     input({ type: 'range', id, min, max, value: def, onchange: e => change(e)})
   )
   
+const SetButton = () => button({ onclick: e => set_button(e) }, 'Set')
+ 
+  
+
 window.onload = function () {
   const urlParams = new URLSearchParams(window.location.search);
   const id = urlParams.get('id');
@@ -86,14 +90,25 @@ function buildControls() {
         : NumericValue(k, v.name));
     if (v['isReadOnly']) {
       document.getElementById(k).setAttribute('readonly', 'true');
-    } 
+    } else if (v['isStringValue']) {
+      van.add(document.getElementById(k).parentNode, SetButton());
+    }
   }
   console.log(controls);
 }
 
 function change(e) {
-  console.log("change " + e + " " + e.target.id + "=" + e.target.value);
-  let cv = JSON.stringify({ id: e.target.id, value: e.target.value });
+  let v = e.target;
+  console.log("change " + e + " " + v.id + "=" + v.value);
+  let cv = JSON.stringify({ id: v.id, value: v.value });
   webSocket.send(cv);
-  console.log(controls[e.target.id].name + "-> " + cv);
+  console.log(controls[v.id].name + "-> " + cv);
+}
+
+function set_button(e) {
+  let v = e.target.previousElementSibling;
+  console.log("set_button " + e + " " + v.id + "=" + v.value);
+  let cv = JSON.stringify({ id: v.id, value: v.value });
+  webSocket.send(cv);
+  console.log(controls[v.id].name + "-> " + cv);
 }
