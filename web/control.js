@@ -15,7 +15,7 @@ const StringValue = (id, name) =>
 const NumericValue = (id, name) =>
   div({class: 'control'},
     label({ for: id }, name),
-    input({ type: 'number', id: id, onchange: e => change(e) })
+    input({ type: 'number', id: id, onchange: e => change(e), oninput: e => do_input(e) })
   )
     
 const RangeValue = (id, name, min, max, def, descriptions) =>
@@ -33,23 +33,24 @@ window.onload = function () {
   const urlParams = new URLSearchParams(window.location.search);
   const id = urlParams.get('id');
 
-  if (id !== null) {
-    setTimeout(loadRadars(id), 200);
-  }
+  loadRadars(id);
 }
 
 function loadRadars(id) {
   fetch('/v1/api/radars')
   .then(res => res.json())
   .then(out => radarsLoaded(id, out))
-  .catch(err => setTimeout(loadRadars(id), 15000));
+  .catch(err => restart(id));
 }
 
+function restart(id) {
+  setTimeout(loadRadars(id), 15000);
+}
 function radarsLoaded(id, d) {
   radar = d[id];
 
   if (radar === undefined || radar.controls === undefined) {
-    setTimeout(loadRadars(id), 15000);
+    restart(id);
     return;
   }
   controls = radar.controls;
@@ -63,15 +64,18 @@ function radarsLoaded(id, d) {
   }
   webSocket.onclose = (e) => {
     console.log("websocket close: " + e);
+    restart(id);
   }
   webSocket.onmessage = (e) => {
-    console.log("websocket message: " + e.data);
+    
     let v = JSON.parse(e.data);
-    let d = document.getElementById(v.id);
-    d.setAttribute('value', ('description' in v && d.type == 'text') ? v.description : v.value);
-    if ('descriptions' in controls[v.id] && d.type == 'range') {
-      let desc = d.parentNode.querySelector('.description');
-      if (desc) desc.innerHTML = v.description;
+    let i = document.getElementById(v.id);
+    i.setAttribute('value', v.value);
+    console.log("<- " + e.data + " = " + controls[v.id].name);
+    if ('descriptions' in controls[v.id] && i.type == 'range') {
+      let description = controls[v.id].descriptions[v.value];
+      let d = i.parentNode.querySelector('.description');
+      if (d) d.innerHTML = description;
     }
   }
 
@@ -111,4 +115,9 @@ function set_button(e) {
   let cv = JSON.stringify({ id: v.id, value: v.value });
   webSocket.send(cv);
   console.log(controls[v.id].name + "-> " + cv);
+}
+
+function do_input(e) {
+  let v = e.target;
+  console.log("input " + e + " " + v.id + "=" + v.value);
 }

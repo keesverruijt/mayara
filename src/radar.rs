@@ -5,7 +5,6 @@ use log::info;
 use protobuf::Message;
 use serde::ser::{SerializeMap, Serializer};
 use serde::Serialize;
-use std::sync::PoisonError;
 use std::{
     collections::HashMap,
     fmt::{self, Display, Write},
@@ -488,15 +487,6 @@ impl SharedRadars {
                 persistent_data: Persistence::new(),
             })),
         }
-    }
-
-    pub fn read(
-        &self,
-    ) -> Result<
-        std::sync::RwLockReadGuard<'_, Radars>,
-        PoisonError<std::sync::RwLockReadGuard<'_, Radars>>,
-    > {
-        self.radars.read()
     }
 
     // A radar has been found

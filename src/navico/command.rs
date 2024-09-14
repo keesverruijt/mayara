@@ -1,6 +1,6 @@
 use log::{debug, trace};
 use num_traits::ToPrimitive;
-use std::cmp::{max, min};
+use std::cmp::min;
 use tokio::net::UdpSocket;
 
 use crate::radar::{RadarError, RadarInfo};
@@ -68,6 +68,35 @@ impl Command {
         (a + 720) % 360
     }
 
+    fn valid_range(&self, i: i32) -> i32 {
+        let rd = self.info.range_detection.as_ref().unwrap();
+
+        if i < rd.min_range {
+            return rd.min_range;
+        }
+        if i > rd.max_range {
+            return rd.max_range;
+        }
+        let mut next = false;
+        let mut prev = rd.min_range;
+        for range in &rd.ranges {
+            if next {
+                return *range;
+            }
+            if i < *range {
+                return prev;
+            }
+            if i == *range {
+                return i;
+            }
+            if i == range + 1 {
+                next = true;
+            }
+            prev = *range;
+        }
+        rd.max_range
+    }
+
     pub async fn set_control(&mut self, cv: &ControlValue) -> Result<(), RadarError> {
         let value = cv
             .value
@@ -79,7 +108,7 @@ impl Command {
 
         match cv.id {
             ControlType::Range => {
-                let decimeters: i32 = max(value, 50) * 10;
+                let decimeters: i32 = self.valid_range(value) * 10;
 
                 cmd.extend_from_slice(&[0x03, 0xc1]);
                 cmd.extend_from_slice(&decimeters.to_le_bytes());

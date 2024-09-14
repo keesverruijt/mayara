@@ -283,19 +283,13 @@ impl Control {
     // }
 
     pub fn value(&self) -> String {
-        if self.description.is_some() {
+        if self.item.is_string_value {
             return self.description.clone().unwrap();
         }
-        if let (Some(value), Some(descriptions)) = (self.value, &self.item.descriptions) {
-            if let Some(v) = descriptions.get(value as usize) {
-                return v.to_string();
-            }
-        }
 
-        return format!(
-            "{}",
-            self.value.unwrap_or(self.item.default_value.unwrap_or(0))
-        );
+        self.value
+            .unwrap_or(self.item.default_value.unwrap_or(0))
+            .to_string()
     }
 
     pub fn set_all(
