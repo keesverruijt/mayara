@@ -2,6 +2,7 @@
     "files.autoSave": "onFocusChange",
     "editor.formatOnPaste": true,
     "editor.formatOnSave": true,
-    "editor.formatOnSaveMode": "modifications",
-    "editor.formatOnType": true
+    "editor.formatOnSaveMode": "file",
+    "editor.formatOnType": true,
+    "editor.defaultFormatter": "rust-lang.rust-analyzer"
 }
