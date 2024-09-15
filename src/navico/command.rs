@@ -77,30 +77,32 @@ impl Command {
     }
 
     fn valid_range(&self, i: i32) -> i32 {
-        let rd = self.info.range_detection.as_ref().unwrap();
+        if let Some(rd) = &self.info.range_detection {
+            let mut next = false;
+            let metric = Self::is_metric(i);
+            let mut prev = if metric { rd.ranges[0] } else { rd.ranges[1] };
+            for range in &rd.ranges {
+                if next && metric == Self::is_metric(*range) {
+                    return *range;
+                }
+                if i == *range - 1 {
+                    return prev;
+                }
+                if i == *range {
+                    return i;
+                }
+                if i == *range + 1 {
+                    next = true;
+                }
+                if metric == Self::is_metric(*range) {
+                    prev = *range;
+                }
+            }
 
-        let mut next = false;
-        let metric = Self::is_metric(i);
-        let mut prev = if metric { rd.ranges[0] } else { rd.ranges[1] };
-        for range in &rd.ranges {
-            if next && metric == Self::is_metric(*range) {
-                return *range;
-            }
-            if i == *range - 1 {
-                return prev;
-            }
-            if i == *range {
-                return i;
-            }
-            if i == *range + 1 {
-                next = true;
-            }
-            if metric == Self::is_metric(*range) {
-                prev = *range;
-            }
+            prev
+        } else {
+            i
         }
-
-        prev
     }
 
     pub async fn set_control(&mut self, cv: &ControlValue) -> Result<(), RadarError> {
