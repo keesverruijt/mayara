@@ -68,33 +68,39 @@ impl Command {
         (a + 720) % 360
     }
 
+    fn near(a: i32, b: i32) -> bool {
+        return a >= b - 1 && a <= b + 1 || (b == 0 && a == 99);
+    }
+
+    fn is_metric(i: i32) -> bool {
+        Self::near(i, 50) || Self::near(i, 75) || Self::near(i % 100, 0)
+    }
+
     fn valid_range(&self, i: i32) -> i32 {
         let rd = self.info.range_detection.as_ref().unwrap();
 
-        if i < rd.min_range {
-            return rd.min_range;
-        }
-        if i > rd.max_range {
-            return rd.max_range;
-        }
         let mut next = false;
-        let mut prev = rd.min_range;
+        let metric = Self::is_metric(i);
+        let mut prev = if metric { rd.ranges[0] } else { rd.ranges[1] };
         for range in &rd.ranges {
-            if next {
+            if next && metric == Self::is_metric(*range) {
                 return *range;
             }
-            if i < *range {
+            if i == *range - 1 {
                 return prev;
             }
             if i == *range {
                 return i;
             }
-            if i == range + 1 {
+            if i == *range + 1 {
                 next = true;
             }
-            prev = *range;
+            if metric == Self::is_metric(*range) {
+                prev = *range;
+            }
         }
-        rd.max_range
+
+        prev
     }
 
     pub async fn set_control(&mut self, cv: &ControlValue) -> Result<(), RadarError> {
@@ -109,6 +115,7 @@ impl Command {
         match cv.id {
             ControlType::Range => {
                 let decimeters: i32 = self.valid_range(value) * 10;
+                log::trace!("range {value} -> {decimeters}");
 
                 cmd.extend_from_slice(&[0x03, 0xc1]);
                 cmd.extend_from_slice(&decimeters.to_le_bytes());

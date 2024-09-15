@@ -1,6 +1,6 @@
 import van from "./van-1.5.2.debug.js";
 
-const {div, label, input, button} = van.tags
+const {div, label, input, button, select, option} = van.tags
 
 var radar;
 var controls;
@@ -15,17 +15,28 @@ const StringValue = (id, name) =>
 const NumericValue = (id, name) =>
   div({class: 'control'},
     label({ for: id }, name),
-    input({ type: 'number', id: id, onchange: e => change(e), oninput: e => do_input(e) })
+    input({ type: 'number', id: id, onchange: e => do_change(e), oninput: e => do_input(e) })
   )
     
 const RangeValue = (id, name, min, max, def, descriptions) =>
   div({ class: 'control' },
     label({ for: id }, name),
     (descriptions) ? div({ class: 'description' }) : null,
-    input({ type: 'range', id, min, max, value: def, onchange: e => change(e)})
+    input({ type: 'range', id, min, max, value: def, onchange: e => do_change(e)})
   )
   
-const SetButton = () => button({ onclick: e => set_button(e) }, 'Set')
+const SelectValue = (id, name, validValues, descriptions) => {
+  let r =
+    div({ class: 'control' },
+      label({ for: id }, name),
+      (descriptions) ? div({ class: 'description' }) : null,
+      select({ id, onchange: e => do_change(e) }, validValues.map(v => option({ value: v }, descriptions[v]))
+      )
+    );
+  return r;
+}
+
+const SetButton = () => button({ onclick: e => do_button(e) }, 'Set')
  
   
 
@@ -70,8 +81,8 @@ function radarsLoaded(id, d) {
     
     let v = JSON.parse(e.data);
     let i = document.getElementById(v.id);
-    i.setAttribute('value', v.value);
-    console.log("<- " + e.data + " = " + controls[v.id].name);
+    i.value = v.value;
+    console.log("<- " + e.data + " = " + controls[v.id].name + " = " + i.value);
     if ('descriptions' in controls[v.id] && i.type == 'range') {
       let description = controls[v.id].descriptions[v.value];
       let d = i.parentNode.querySelector('.description');
@@ -90,7 +101,9 @@ function buildControls() {
     van.add(c, (v['isStringValue'])
       ? StringValue(k, v.name)
       : ('maxValue' in v && v.maxValue <= 100)
-        ? RangeValue(k, v.name, v.minValue, v.maxValue, 0, 'descriptions' in v)
+        ? ('validValues' in v)
+          ? SelectValue(k, v.name, v['validValues'], v['descriptions'])
+          : RangeValue(k, v.name, v.minValue, v.maxValue, 0, 'descriptions' in v)
         : NumericValue(k, v.name));
     if (v['isReadOnly']) {
       document.getElementById(k).setAttribute('readonly', 'true');
@@ -101,7 +114,7 @@ function buildControls() {
   console.log(controls);
 }
 
-function change(e) {
+function do_change(e) {
   let v = e.target;
   console.log("change " + e + " " + v.id + "=" + v.value);
   let cv = JSON.stringify({ id: v.id, value: v.value });
@@ -109,7 +122,7 @@ function change(e) {
   console.log(controls[v.id].name + "-> " + cv);
 }
 
-function set_button(e) {
+function do_button(e) {
   let v = e.target.previousElementSibling;
   console.log("set_button " + e + " " + v.id + "=" + v.value);
   let cv = JSON.stringify({ id: v.id, value: v.value });

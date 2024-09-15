@@ -123,7 +123,7 @@ impl ControlValue {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Control {
+pub(crate) struct Control {
     #[serde(flatten)]
     item: ControlDefinition,
     #[serde(skip)]
@@ -134,6 +134,8 @@ pub struct Control {
     pub auto: Option<bool>,
     #[serde(skip)]
     pub state: ControlState,
+    #[serde(skip)]
+    pub needs_refresh: bool, // True when it has been changed and client needs to know value (again)
 }
 
 impl Control {
@@ -145,6 +147,7 @@ impl Control {
             auto: None,
             state: ControlState::Off,
             description: None,
+            needs_refresh: false,
         }
     }
 
@@ -284,7 +287,7 @@ impl Control {
 
     pub fn value(&self) -> String {
         if self.item.is_string_value {
-            return self.description.clone().unwrap();
+            return self.description.clone().unwrap_or_else(|| "".to_string());
         }
 
         self.value
@@ -334,7 +337,11 @@ impl Control {
             self.value = Some(value);
             self.auto = auto;
             self.state = state;
+            self.needs_refresh = false;
 
+            Ok(Some(()))
+        } else if self.needs_refresh {
+            self.needs_refresh = false;
             Ok(Some(()))
         } else {
             Ok(None)
@@ -345,8 +352,12 @@ impl Control {
         let value = Some(value);
         if &self.description != &value {
             self.description = value;
+            self.needs_refresh = false;
             self.state = ControlState::Manual;
             log::trace!("Set {} to {:?}", self.item.control_type, self.description);
+            Some(())
+        } else if self.needs_refresh {
+            self.needs_refresh = false;
             Some(())
         } else {
             None

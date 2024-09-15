@@ -27,8 +27,8 @@ pub struct NavicoReportReceiver {
     command_sender: Command,
     data_tx: Sender<DataUpdate>,
     range_timeout: Option<Instant>,
-    subtype_timeout: Instant,
-    subtype_repeat: Duration,
+    report_request_timeout: Instant,
+    report_request_interval: Duration,
     reported_unknown: [bool; 256],
 }
 
@@ -288,8 +288,8 @@ impl NavicoReportReceiver {
             model,
             command_sender,
             range_timeout: None,
-            subtype_timeout: Instant::now(),
-            subtype_repeat: Duration::from_millis(5000),
+            report_request_timeout: Instant::now(),
+            report_request_interval: Duration::from_millis(5000),
             data_tx,
             reported_unknown: [false; 256],
         }
@@ -322,7 +322,7 @@ impl NavicoReportReceiver {
 
         loop {
             let mut is_range_timeout = false;
-            let mut timeout = self.subtype_timeout;
+            let mut timeout = self.report_request_timeout;
             if let Some(t) = self.range_timeout {
                 if t < timeout {
                     timeout = t;
@@ -339,7 +339,6 @@ impl NavicoReportReceiver {
                         self.process_range(0).await?;
                     } else {
                         self.send_report_requests().await?;
-                        self.subtype_timeout += self.subtype_repeat;
                     }
                 },
 
@@ -360,9 +359,17 @@ impl NavicoReportReceiver {
                 r = command_rx.recv() => {
                     match r {
                         Ok(control_message) => {
-                            self.process_control_message(&control_message).await?;
+                            match self.process_control_message(&control_message).await {
+                                Ok(()) => {}
+                                Err(e) => {
+                                    log::error!("Cannot act on control message: {e}");
+                                }
+                            }
                         }
-                        Err(_e) => {}
+                        Err(e) => {
+                            log::error!("Cannot read control message: {e}");
+                            // Send a JSON reply on websocket
+                        }
                     }
                 }
             }
@@ -391,7 +398,11 @@ impl NavicoReportReceiver {
                     _ => {} // rest is numeric
                 }
 
+                self.info.set_refresh(&cv.id);
                 self.command_sender.set_control(cv).await?;
+            }
+            ControlMessage::Error(e) => {
+                log::error!("Received error from client: {e}");
             }
         }
         Ok(())
@@ -404,6 +415,7 @@ impl NavicoReportReceiver {
         self.command_sender
             .send(&command::REQUEST_MANY2_REPORT)
             .await?;
+        self.report_request_timeout += self.report_request_interval;
         Ok(())
     }
 
@@ -780,8 +792,6 @@ impl NavicoReportReceiver {
         self.set(&ControlType::OperatingHours, hours);
         self.set_string(&ControlType::FirmwareVersion, firmware);
 
-        self.subtype_repeat = Duration::from_secs(600);
-
         Ok(())
     }
 
@@ -943,6 +953,7 @@ impl NavicoReportReceiver {
 
         if self.model == Model::HALO {
             self.set(&ControlType::SeaState, sea_state as i32);
+            self.set_auto(&ControlType::Sea, sea_clutter, auto_sea_clutter);
         }
         self.set(
             &ControlType::InterferenceRejection,
@@ -956,7 +967,6 @@ impl NavicoReportReceiver {
         );
         self.set(&ControlType::NoiseRejection, noise_reduction);
         self.set(&ControlType::TargetSeparation, target_sep);
-        self.set_auto(&ControlType::Sea, sea_clutter, auto_sea_clutter);
 
         Ok(())
     }

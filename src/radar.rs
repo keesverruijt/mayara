@@ -286,6 +286,12 @@ impl RadarInfo {
         }
     }
 
+    pub fn set_refresh(&mut self, control_type: &ControlType) {
+        if let Some(control) = self.controls.get_mut(control_type) {
+            control.needs_refresh = true;
+        }
+    }
+
     pub fn set_all(
         &mut self,
         control_type: &ControlType,

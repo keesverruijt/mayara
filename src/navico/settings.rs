@@ -81,13 +81,12 @@ impl NavicoControls {
             Control::new_string(ControlType::FirmwareVersion),
         );
 
-        controls.insert(
+        let mut control = Control::new_list(
             ControlType::Status,
-            Control::new_list(
-                ControlType::Status,
-                &["Off", "Standby", "Transmit", "", "", "SpinningUp"],
-            ),
+            &["Off", "Standby", "Transmit", "", "", "SpinningUp"],
         );
+        control.set_valid_values([1, 2].to_vec());
+        controls.insert(ControlType::Status, control);
 
         controls.insert(
             ControlType::SideLobeSuppression,
