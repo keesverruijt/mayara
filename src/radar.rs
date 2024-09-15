@@ -280,10 +280,14 @@ impl RadarInfo {
         }
     }
 
-    pub fn broadcast_all_json(&self) {
+    pub async fn send_all_json(
+        &self,
+        reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
+    ) -> Result<(), RadarError> {
         for c in self.controls.iter() {
-            Self::broadcast_json(&self.control_tx, c);
+            self.send_json(reply_tx.clone(), c, None).await?;
         }
+        Ok(())
     }
 
     pub fn set_refresh(&mut self, control_type: &ControlType) {
@@ -299,15 +303,22 @@ impl RadarInfo {
         auto: Option<bool>,
         state: ControlState,
     ) -> Result<Option<()>, ControlError> {
-        if let Some(control) = self.controls.get_mut(control_type) {
-            if control.set_all(value, auto, state)?.is_some() {
-                Self::broadcast_protobuf(&self.protobuf_tx, control);
-                Self::broadcast_json(&self.control_tx, control);
-                return Ok(Some(()));
+        let control = {
+            if let Some(control) = self.controls.get_mut(control_type) {
+                Ok(control
+                    .set_all(value, auto, state)?
+                    .map(|_| control.clone()))
+            } else {
+                Err(ControlError::NotSupported(*control_type))
             }
-            Ok(None)
+        }?;
+
+        if let Some(control) = control {
+            self.broadcast_protobuf(&control);
+            self.broadcast_json(&control);
+            Ok(Some(()))
         } else {
-            Err(ControlError::NotSupported(*control_type))
+            Ok(None)
         }
     }
 
@@ -318,57 +329,43 @@ impl RadarInfo {
         control_type: &ControlType,
         value: i32,
     ) -> Result<Option<()>, ControlError> {
-        if let Some(control) = self.controls.get_mut(control_type) {
-            if control
-                .set_all(value, None, ControlState::Manual)?
-                .is_some()
-            {
-                Self::broadcast_protobuf(&self.protobuf_tx, control);
-                Self::broadcast_json(&self.control_tx, control);
-                return Ok(Some(()));
-            }
-            Ok(None)
-        } else {
-            Err(ControlError::NotSupported(*control_type))
-        }
+        self.set_all(control_type, value, None, ControlState::Manual)
     }
+
     pub fn set_auto(
         &mut self,
         control_type: &ControlType,
         auto: bool,
         value: i32,
     ) -> Result<Option<()>, ControlError> {
-        if let Some(control) = self.controls.get_mut(control_type) {
-            let state = if auto {
-                ControlState::Auto
-            } else {
-                ControlState::Manual
-            };
-
-            if control.set_all(value, Some(auto), state)?.is_some() {
-                Self::broadcast_protobuf(&self.protobuf_tx, control);
-                Self::broadcast_json(&self.control_tx, control);
-                return Ok(Some(()));
-            }
-            Ok(None)
+        let state = if auto {
+            ControlState::Auto
         } else {
-            Err(ControlError::NotSupported(*control_type))
-        }
+            ControlState::Manual
+        };
+
+        self.set_all(control_type, value, Some(auto), state)
     }
+
     pub fn set_string(
         &mut self,
         control_type: &ControlType,
         value: String,
     ) -> Result<Option<String>, ControlError> {
-        if let Some(control) = self.controls.get_mut(control_type) {
-            if control.set_string(value).is_some() {
-                Self::broadcast_protobuf(&self.protobuf_tx, control);
-                Self::broadcast_json(&self.control_tx, control);
-                return Ok(control.description.clone());
+        let control = {
+            if let Some(control) = self.controls.get_mut(control_type) {
+                Ok(control.set_string(value).map(|_| control.clone()))
+            } else {
+                Err(ControlError::NotSupported(*control_type))
             }
-            Ok(None)
+        }?;
+
+        if let Some(control) = control {
+            self.broadcast_protobuf(&control);
+            self.broadcast_json(&control);
+            Ok(control.description.clone())
         } else {
-            Err(ControlError::NotSupported(*control_type))
+            Ok(None)
         }
     }
 
@@ -381,14 +378,15 @@ impl RadarInfo {
         return None;
     }
 
-    fn broadcast_json(tx: &tokio::sync::broadcast::Sender<ControlValue>, control: &Control) {
+    fn broadcast_json(&self, control: &Control) {
         let control_value = crate::settings::ControlValue {
             id: control.item().control_type,
             value: control.value(),
             auto: control.auto,
+            error: None,
         };
 
-        match tx.send(control_value) {
+        match self.control_tx.send(control_value) {
             Err(_e) => {}
             Ok(cnt) => {
                 log::trace!(
@@ -400,7 +398,33 @@ impl RadarInfo {
         }
     }
 
-    fn broadcast_protobuf(update_tx: &tokio::sync::broadcast::Sender<Vec<u8>>, control: &Control) {
+    pub(super) async fn send_json(
+        &self,
+        reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
+        control: &Control,
+        error: Option<String>,
+    ) -> Result<(), RadarError> {
+        let control_value = crate::settings::ControlValue {
+            id: control.item().control_type,
+            value: control.value(),
+            auto: control.auto,
+            error,
+        };
+
+        match reply_tx.send(control_value).await {
+            Err(_e) => {}
+            Ok(()) => {
+                log::trace!(
+                    "Sent control value {} to requestng JSON client",
+                    control.item().control_type,
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn broadcast_protobuf(&self, control: &Control) {
         if let Some(value) = control.value {
             let mut control_value = crate::protos::RadarMessage::radar_message::ControlValue::new();
             control_value.id = control.item().control_type.to_string();
@@ -415,7 +439,7 @@ impl RadarInfo {
             message
                 .write_to_vec(&mut bytes)
                 .expect("Cannot write RadarMessage to vec");
-            match update_tx.send(bytes) {
+            match self.protobuf_tx.send(bytes) {
                 Err(_e) => {
                     log::trace!(
                         "Stored control value {} value {}",

@@ -369,6 +369,7 @@ impl NavicoReportReceiver {
                         Err(e) => {
                             log::error!("Cannot read control message: {e}");
                             // Send a JSON reply on websocket
+
                         }
                     }
                 }
@@ -381,11 +382,11 @@ impl NavicoReportReceiver {
         control_message: &ControlMessage,
     ) -> Result<(), RadarError> {
         match control_message {
-            ControlMessage::NewClient => {
+            ControlMessage::NewClient(reply_tx) => {
                 // Send all control values
-                self.info.broadcast_all_json();
+                self.info.send_all_json(reply_tx.clone()).await?;
             }
-            ControlMessage::Value(cv) => {
+            ControlMessage::Value(reply_tx, cv) => {
                 // match strings first
                 match cv.id {
                     ControlType::UserName => {
@@ -398,11 +399,18 @@ impl NavicoReportReceiver {
                     _ => {} // rest is numeric
                 }
 
-                self.info.set_refresh(&cv.id);
-                self.command_sender.set_control(cv).await?;
-            }
-            ControlMessage::Error(e) => {
-                log::error!("Received error from client: {e}");
+                if let Err(e) = self.command_sender.set_control(cv).await {
+                    // Find our current control value for this ControlType
+                    if let Some(control) = self.info.controls.get(&cv.id) {
+                        self.info
+                            .send_json(reply_tx.clone(), control, Some(e.to_string()))
+                            .await?;
+                    } else {
+                        log::error!("Cannot send control error back: {e}");
+                    }
+                } else {
+                    self.info.set_refresh(&cv.id);
+                }
             }
         }
         Ok(())

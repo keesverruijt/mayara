@@ -270,9 +270,10 @@ async fn control_stream(
 ) {
     let mut control_rx = radar.control_tx.subscribe();
     let command_tx = radar.command_tx.clone();
+    let (reply_tx, mut reply_rx) = tokio::sync::mpsc::channel(60);
 
-    const NEW_CLIENT: ControlMessage = ControlMessage::NewClient;
-    if let Err(e) = command_tx.send(NEW_CLIENT) {
+    let new_client: ControlMessage = ControlMessage::NewClient(reply_tx.clone());
+    if let Err(e) = command_tx.send(new_client) {
         log::error!("Unable to send error to control channel: {e}");
         return;
     }
@@ -286,6 +287,29 @@ async fn control_stream(
                 debug!("Shutdown of /control websocket");
                 break;
             },
+            // this is where we receive directed control messages meant just for us, they
+            // are either error replies for an invalid control value or the full list of
+            // controls.
+            r = reply_rx.recv() => {
+                match r {
+                    Some(message) => {
+                        let message = serde_json::to_string(&message).unwrap();
+                        trace!("Sending {:?}", message);
+                        let ws_message = Message::Text(message);
+
+                        if let Err(e) = socket.send(ws_message).await {
+                            log::error!("send to websocket client: {e}");
+                            break;
+                        }
+
+                    },
+                    None => {
+                        log::error!("Error on Control channel");
+                        break;
+                    }
+                }
+            },
+            // this is where we receive broadcasted control values
             r = control_rx.recv() => {
                 match r {
                     Ok(message) => {
@@ -306,6 +330,7 @@ async fn control_stream(
                     }
                 }
             },
+            // receive control values from the client
             r = socket.recv() => {
                 match r {
                     Some(Ok(message)) => {
@@ -314,7 +339,7 @@ async fn control_stream(
                                 if let Ok(control_value) = serde_json::from_str(&message) {
                                     log::info!("Received ControlValue {:?}", control_value);
 
-                                    let control_message = ControlMessage::Value(control_value);
+                                    let control_message = ControlMessage::Value(reply_tx.clone(), control_value);
 
                                     if let Err(e) = command_tx.send(control_message) {
                                         log::error!("send to control channel: {e}");

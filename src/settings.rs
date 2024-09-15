@@ -96,8 +96,8 @@ impl Controls {
 
 #[derive(Clone, Debug)]
 pub enum ControlMessage {
-    Value(ControlValue),
-    NewClient,
+    Value(tokio::sync::mpsc::Sender<ControlValue>, ControlValue),
+    NewClient(tokio::sync::mpsc::Sender<ControlValue>),
 }
 
 // This is what we send back and forth to clients
@@ -109,6 +109,8 @@ pub struct ControlValue {
     pub value: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto: Option<bool>,
+    #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 impl ControlValue {
@@ -117,6 +119,16 @@ impl ControlValue {
             id,
             value,
             auto: None,
+            error: None,
+        }
+    }
+
+    pub(crate) fn new_error(id: ControlType, value: String, error: String) -> Self {
+        ControlValue {
+            id,
+            value,
+            auto: None,
+            error: Some(error),
         }
     }
 }
