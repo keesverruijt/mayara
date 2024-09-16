@@ -98,6 +98,7 @@ impl Controls {
 pub enum ControlMessage {
     Value(tokio::sync::mpsc::Sender<ControlValue>, ControlValue),
     NewClient(tokio::sync::mpsc::Sender<ControlValue>),
+    SetValue(ControlValue),
 }
 
 // This is what we send back and forth to clients
@@ -446,7 +447,7 @@ pub(crate) struct ControlDefinition {
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     automatic: Option<AutomaticValue>,
     #[serde(skip_serializing_if = "is_false")]
-    is_string_value: bool,
+    pub(crate) is_string_value: bool,
     #[serde(skip)]
     default_value: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -535,12 +536,13 @@ pub enum ControlType {
     AntennaHeight,
     // AntennaStarboard,
     BearingAlignment,
+    // Orientation,
+    RotationSpeed,
     OperatingHours,
     ModelName,
     FirmwareVersion,
     SerialNumber,
     UserName,
-    // Orientation,
 }
 
 impl Display for ControlType {
@@ -579,6 +581,7 @@ impl Display for ControlType {
             // ControlType::Orientation => "Orientation",
             ControlType::Rain => "Rain clutter",
             ControlType::Range => "Range",
+            ControlType::RotationSpeed => "Rotation speed",
             // ControlType::Scaling => "Scaling",
             ControlType::ScanSpeed => "Fast scan",
             ControlType::Sea => "Sea clutter",
@@ -612,6 +615,8 @@ pub enum ControlError {
     TooLow(ControlType, i32, i32),
     #[error("Control {0} value {1} is higher than maximum value {2}")]
     TooHigh(ControlType, i32, i32),
+    #[error("Control {0} value {1} is not a legal value")]
+    Invalid(ControlType, String),
     #[error("Control {0} does not support Auto")]
     NoAuto(ControlType),
 }

@@ -77,6 +77,13 @@ impl NavicoControls {
         );
 
         controls.insert(
+            ControlType::RotationSpeed,
+            Control::new_numeric(ControlType::RotationSpeed, 0, 990)
+                .read_only(true)
+                .unit("dRPM"),
+        );
+
+        controls.insert(
             ControlType::FirmwareVersion,
             Control::new_string(ControlType::FirmwareVersion),
         );

@@ -2,7 +2,7 @@ use bincode::deserialize;
 use log::{debug, trace, warn};
 use protobuf::Message;
 use serde::Deserialize;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use std::{io, time::Duration};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::Receiver;
@@ -14,6 +14,7 @@ use crate::navico::NAVICO_SPOKE_LEN;
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::*;
+use crate::settings::{ControlMessage, ControlType, ControlValue};
 use crate::util::{create_multicast, PrintableSpoke};
 
 use super::{
@@ -118,14 +119,16 @@ pub struct NavicoDataReceiver {
     sock: Option<UdpSocket>,
     rx: tokio::sync::mpsc::Receiver<DataUpdate>,
     doppler: DopplerMode,
-    legend: Option<Legend>,
-    pixel_to_blob: Option<[[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH]>,
+    pixel_to_blob: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH],
     replay: bool,
+    rotation_timestamp: Instant,
 }
 
 impl NavicoDataReceiver {
     pub fn new(info: RadarInfo, rx: Receiver<DataUpdate>, replay: bool) -> NavicoDataReceiver {
         let key = info.key();
+
+        let pixel_to_blob = Self::pixel_to_blob(&info.legend);
 
         NavicoDataReceiver {
             key,
@@ -135,9 +138,9 @@ impl NavicoDataReceiver {
             sock: None,
             rx,
             doppler: DopplerMode::None,
-            legend: None,
-            pixel_to_blob: None,
+            pixel_to_blob,
             replay,
+            rotation_timestamp: Instant::now(),
         }
     }
 
@@ -162,7 +165,7 @@ impl NavicoDataReceiver {
         }
     }
 
-    fn fill_pixel_to_blob(&mut self, legend: &Legend) {
+    fn pixel_to_blob(legend: &Legend) -> [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH] {
         let mut lookup: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH] =
             [[0; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH];
         // Cannot use for() in const expr, so use while instead
@@ -193,7 +196,7 @@ impl NavicoDataReceiver {
             };
             j += 1;
         }
-        self.pixel_to_blob = Some(lookup);
+        lookup
     }
 
     fn handle_data_update(&mut self, r: Option<DataUpdate>) {
@@ -202,8 +205,8 @@ impl NavicoDataReceiver {
                 self.doppler = doppler;
             }
             Some(DataUpdate::Legend(legend)) => {
-                self.fill_pixel_to_blob(&legend);
-                self.legend = Some(legend);
+                self.pixel_to_blob = Self::pixel_to_blob(&legend);
+                self.info.legend = legend;
             }
             None => {}
         }
@@ -274,36 +277,38 @@ impl NavicoDataReceiver {
 
         trace!("Received UDP frame with {} spokes", &scanlines_in_packet);
 
+        let mut mark_full_rotation = false;
         let mut message = RadarMessage::new();
         message.radar = 1;
-        if let Some(pixel_to_blob) = self.pixel_to_blob {
-            let mut offset: usize = FRAME_HEADER_LENGTH;
-            for scanline in 0..scanlines_in_packet {
-                let header_slice = &data[offset..offset + RADAR_LINE_HEADER_LENGTH];
-                let spoke_slice = &data[offset + RADAR_LINE_HEADER_LENGTH
-                    ..offset + RADAR_LINE_HEADER_LENGTH + RADAR_LINE_DATA_LENGTH];
 
-                if let Some((range, angle, heading)) = self.validate_header(header_slice, scanline)
-                {
-                    trace!("range {} angle {} heading {:?}", range, angle, heading);
-                    trace!(
-                        "Received {:04} spoke {}",
-                        scanline,
-                        PrintableSpoke::new(spoke_slice)
-                    );
-                    message.spokes.push(self.process_spoke(
-                        &pixel_to_blob,
-                        range,
-                        angle,
-                        heading,
-                        spoke_slice,
-                    ));
-                } else {
-                    warn!("Invalid spoke: header {:02X?}", &header_slice);
-                    self.statistics.broken_packets += 1;
+        let mut offset: usize = FRAME_HEADER_LENGTH;
+        for scanline in 0..scanlines_in_packet {
+            let header_slice = &data[offset..offset + RADAR_LINE_HEADER_LENGTH];
+            let spoke_slice = &data[offset + RADAR_LINE_HEADER_LENGTH
+                ..offset + RADAR_LINE_HEADER_LENGTH + RADAR_LINE_DATA_LENGTH];
+
+            if let Some((range, angle, heading)) = self.validate_header(header_slice, scanline) {
+                trace!("range {} angle {} heading {:?}", range, angle, heading);
+                trace!(
+                    "Received {:04} spoke {}",
+                    scanline,
+                    PrintableSpoke::new(spoke_slice)
+                );
+                message
+                    .spokes
+                    .push(self.process_spoke(range, angle, heading, spoke_slice));
+                if angle < 2 {
+                    mark_full_rotation = true;
                 }
-                offset += RADAR_LINE_LENGTH;
+            } else {
+                warn!("Invalid spoke: header {:02X?}", &header_slice);
+                self.statistics.broken_packets += 1;
             }
+            offset += RADAR_LINE_LENGTH;
+        }
+
+        if mark_full_rotation {
+            self.info.full_rotation();
         }
 
         let mut bytes = Vec::new();
@@ -406,14 +411,9 @@ impl NavicoDataReceiver {
         Some((range, angle, heading))
     }
 
-    fn process_spoke(
-        &self,
-        pixel_to_blob: &[[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH],
-        range: u32,
-        angle: u16,
-        heading: Option<u16>,
-        spoke: &[u8],
-    ) -> Spoke {
+    fn process_spoke(&self, range: u32, angle: u16, heading: Option<u16>, spoke: &[u8]) -> Spoke {
+        let pixel_to_blob = &self.pixel_to_blob;
+
         // Convert the spoke data to bytes
         let mut generic_spoke: Vec<u8> = Vec::with_capacity(NAVICO_SPOKE_LEN);
         let low_nibble_index = (match self.doppler {

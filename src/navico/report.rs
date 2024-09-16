@@ -412,17 +412,17 @@ impl NavicoReportReceiver {
                     self.info.set_refresh(&cv.id);
                 }
             }
+            ControlMessage::SetValue(cv) => {
+                self.info.set_string(&cv.id, cv.value.clone()).unwrap();
+                self.radars.update(&self.info);
+                return Ok(());
+            }
         }
         Ok(())
     }
 
     async fn send_report_requests(&mut self) -> Result<(), RadarError> {
-        self.command_sender
-            .send(&command::REQUEST_03_REPORT)
-            .await?;
-        self.command_sender
-            .send(&command::REQUEST_MANY2_REPORT)
-            .await?;
+        self.command_sender.send_report_requests().await?;
         self.report_request_timeout += self.report_request_interval;
         Ok(())
     }

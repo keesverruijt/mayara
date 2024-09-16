@@ -13,6 +13,7 @@ pub const REQUEST_03_REPORT: [u8; 2] = [0x04, 0xc2]; // This causes the radar to
 pub const REQUEST_MANY2_REPORT: [u8; 2] = [0x01, 0xc2]; // This causes the radar to report Report 02, 03, 04, 07 and 08
 pub const _REQUEST_04_REPORT: [u8; 2] = [0x02, 0xc2]; // This causes the radar to report Report 4
 pub const _REQUEST_02_08_REPORT: [u8; 2] = [0x03, 0xc2]; // This causes the radar to report Report 2 and Report 8
+const COMMAND_STAY_ON_A: [u8; 2] = [0xa0, 0xc1];
 
 pub struct Command {
     key: String,
@@ -127,6 +128,13 @@ impl Command {
         let mut cmd = Vec::with_capacity(6);
 
         match cv.id {
+            ControlType::Status => {
+                cmd.extend_from_slice(&[0x00, 0xc1, 0x01]);
+                self.send(&cmd).await?;
+                cmd.clear();
+                cmd.extend_from_slice(&[0x01, 0xc1, value as u8 - 1]);
+            }
+
             ControlType::Range => {
                 let decimeters: i32 = self.valid_range(value) * 10;
                 log::trace!("range {value} -> {decimeters}");
@@ -267,6 +275,13 @@ impl Command {
         if self.fake_errors && cv.id == ControlType::Rain && value > 10 {
             return Self::generate_fake_error(value);
         }
+        Ok(())
+    }
+
+    pub(super) async fn send_report_requests(&mut self) -> Result<(), RadarError> {
+        self.send(&REQUEST_03_REPORT).await?;
+        self.send(&REQUEST_MANY2_REPORT).await?;
+        self.send(&COMMAND_STAY_ON_A).await?;
         Ok(())
     }
 }

@@ -5,6 +5,7 @@ use log::info;
 use protobuf::Message;
 use serde::ser::{SerializeMap, Serializer};
 use serde::Serialize;
+use std::time::{Duration, Instant};
 use std::{
     collections::HashMap,
     fmt::{self, Display, Write},
@@ -149,7 +150,7 @@ impl RangeDetection {
     }
 }
 #[derive(Clone, Debug)]
-pub struct RadarInfo {
+pub(crate) struct RadarInfo {
     key: String,
     pub id: usize,
     pub locator_id: LocatorId,
@@ -168,6 +169,7 @@ pub struct RadarInfo {
     pub range_detection: Option<RangeDetection>, // if Some, then ranges are flexible, detected and persisted
     pub controls: Controls, // Which controls there are, not complete in beginning
     // pub update: fn(&mut RadarInfo), // When controls or model is updated
+    rotation_timestamp: Instant,
 
     // Channels
     pub message_tx: tokio::sync::broadcast::Sender<Vec<u8>>, // Serialized RadarMessage
@@ -234,6 +236,7 @@ impl RadarInfo {
             protobuf_tx,
             range_detection: None,
             controls,
+            rotation_timestamp: Instant::now(),
         }
     }
 
@@ -243,6 +246,24 @@ impl RadarInfo {
 
     pub fn set_legend(&mut self, doppler: bool) {
         self.legend = default_legend(doppler, self.pixel_values);
+    }
+
+    pub fn full_rotation(&mut self) {
+        let now = Instant::now();
+        let diff: Duration = now - self.rotation_timestamp;
+        let diff = diff.as_millis() as f64;
+        let rpm = format!("{:.0}", (600_000. / diff));
+
+        self.rotation_timestamp = now;
+
+        log::debug!("{}: rotation speed {} dRPM", self.key, rpm);
+
+        let _ = self
+            .command_tx
+            .send(ControlMessage::SetValue(ControlValue::new(
+                ControlType::RotationSpeed,
+                rpm,
+            )));
     }
 
     ///
@@ -354,7 +375,16 @@ impl RadarInfo {
     ) -> Result<Option<String>, ControlError> {
         let control = {
             if let Some(control) = self.controls.get_mut(control_type) {
-                Ok(control.set_string(value).map(|_| control.clone()))
+                if control.item().is_string_value {
+                    Ok(control.set_string(value).map(|_| control.clone()))
+                } else {
+                    let i = value
+                        .parse::<i32>()
+                        .map_err(|e| ControlError::Invalid(control_type.clone(), value))?;
+                    control
+                        .set_all(i, None, ControlState::Manual)
+                        .map(|_| Some(control.clone()))
+                }
             } else {
                 Err(ControlError::NotSupported(*control_type))
             }
