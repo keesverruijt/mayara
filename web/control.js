@@ -137,11 +137,10 @@ function radarsLoaded(id, d) {
 
 function setControl(v) {
   let i = get_element(v.id);
-  if (i) {
-    let control = myr_controls[v.id];
-
+  let control = myr_controls[v.id];
+  if (i && control) {
     i.value = v.value;
-    console.log("<- " + control.name + " = " + i.value);
+    console.log("<- " + control.name + " = " + v.value);
     let n = i.parentNode.querySelector('.myr_numeric');
     if (n) n.innerHTML = v.value;
     let d = i.parentNode.querySelector('.myr_description');
@@ -162,6 +161,7 @@ function buildControls() {
   van.add(c, div(myr_radar.name + " Controls"));
 
   c = get_element('controls');
+  c.innerHTML = "";
   for (const [k, v] of Object.entries(myr_controls)) {
     van.add(c, (v['isStringValue'])
       ? StringValue(k, v.name)

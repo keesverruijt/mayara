@@ -236,7 +236,7 @@ impl RadarInfo {
             protobuf_tx,
             range_detection: None,
             controls,
-            rotation_timestamp: Instant::now(),
+            rotation_timestamp: Instant::now() - Duration::from_secs(2),
         }
     }
 
@@ -586,12 +586,6 @@ impl SharedRadars {
     /// Update radar info in radars container
     ///
     pub fn update(&self, radar_info: &RadarInfo) {
-        log::info!(
-            "{}: update radars list model='{}'",
-            radar_info.key,
-            radar_info.model_name().unwrap_or("null".to_string())
-        );
-
         let mut radars = self.radars.write().unwrap();
 
         radars

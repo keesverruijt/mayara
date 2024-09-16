@@ -281,7 +281,6 @@ async fn control_stream(
     debug!("Started /control websocket");
 
     loop {
-        debug!("Loop /control websocket");
         tokio::select! {
             _ = shutdown_rx.recv() => {
                 debug!("Shutdown of /control websocket");
