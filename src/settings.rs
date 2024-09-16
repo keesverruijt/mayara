@@ -123,15 +123,6 @@ impl ControlValue {
             error: None,
         }
     }
-
-    pub(crate) fn new_error(id: ControlType, value: String, error: String) -> Self {
-        ControlValue {
-            id,
-            value,
-            auto: None,
-            error: Some(error),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -194,6 +185,12 @@ impl Control {
         self
     }
 
+    pub fn send_always(mut self) -> Control {
+        self.item.is_send_always = true;
+
+        self
+    }
+
     pub fn new_numeric(control_type: ControlType, min_value: i32, max_value: i32) -> Self {
         let min_value = Some(min_value);
         let max_value = Some(max_value);
@@ -213,6 +210,7 @@ impl Control {
             valid_values: None,
             is_read_only: false,
             is_string_value: false,
+            is_send_always: false,
         });
         control
     }
@@ -241,6 +239,7 @@ impl Control {
             valid_values: None,
             is_read_only: false,
             is_string_value: false,
+            is_send_always: false,
         })
     }
 
@@ -267,6 +266,7 @@ impl Control {
             valid_values: None,
             is_read_only: false,
             is_string_value: false,
+            is_send_always: false,
         })
     }
 
@@ -287,6 +287,7 @@ impl Control {
             valid_values: None,
             is_read_only: true,
             is_string_value: true,
+            is_send_always: false,
         });
         control
     }
@@ -352,7 +353,7 @@ impl Control {
             .to_string()
     }
 
-    pub fn set_all(
+    pub fn set(
         &mut self,
         mut value: i32,
         auto: Option<bool>,
@@ -397,7 +398,7 @@ impl Control {
             self.needs_refresh = false;
 
             Ok(Some(()))
-        } else if self.needs_refresh {
+        } else if self.needs_refresh || self.item.is_send_always {
             self.needs_refresh = false;
             Ok(Some(()))
         } else {
@@ -468,6 +469,8 @@ pub(crate) struct ControlDefinition {
     pub(crate) valid_values: Option<Vec<i32>>,
     #[serde(skip_serializing_if = "is_false")]
     is_read_only: bool,
+    #[serde(skip)]
+    is_send_always: bool,
 }
 
 fn is_false(v: &bool) -> bool {

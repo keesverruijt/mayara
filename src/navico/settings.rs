@@ -61,6 +61,13 @@ impl NavicoControls {
             ),
         );
         controls.insert(
+            ControlType::LocalInterferenceRejection,
+            Control::new_list(
+                ControlType::LocalInterferenceRejection,
+                &["Off", "Low", "Medium", "High"],
+            ),
+        );
+        controls.insert(
             ControlType::Rain,
             Control::new_numeric(ControlType::Rain, 0, 100).wire_scale_factor(255),
         );
@@ -91,8 +98,10 @@ impl NavicoControls {
         let mut control = Control::new_list(
             ControlType::Status,
             &["Off", "Standby", "Transmit", "", "", "SpinningUp"],
-        );
+        )
+        .send_always();
         control.set_valid_values([1, 2].to_vec());
+
         controls.insert(ControlType::Status, control);
 
         controls.insert(

@@ -14,7 +14,7 @@ use crate::radar::{DopplerMode, RadarError, RadarInfo, RangeDetection, SharedRad
 use crate::settings::{ControlMessage, ControlState, ControlType, ControlValue};
 use crate::util::{c_string, c_wide_string, create_multicast};
 
-use super::command::{self, Command};
+use super::command::Command;
 use super::{DataUpdate, Model};
 
 pub struct NavicoReportReceiver {
@@ -447,21 +447,21 @@ impl NavicoReportReceiver {
         }
     }
 
-    fn set_all(
+    fn set(
         &mut self,
         control_type: &ControlType,
         value: i32,
         auto: Option<bool>,
         state: ControlState,
     ) {
-        match self.info.set_all(control_type, value, auto, state) {
+        match self.info.set(control_type, value, auto, state) {
             Err(e) => {
                 error!("{}: {}", self.key, e.to_string());
             }
             Ok(Some(())) => {
                 if log::log_enabled!(log::Level::Debug) {
                     let control = self.info.controls.get(control_type).unwrap();
-                    debug!(
+                    log::trace!(
                         "{}: Control '{}' new value {} state {}",
                         self.key,
                         control_type,
@@ -474,25 +474,8 @@ impl NavicoReportReceiver {
         };
     }
 
-    fn set(&mut self, control_type: &ControlType, value: i32) {
-        match self.info.set(control_type, value) {
-            Err(e) => {
-                error!("{}: {}", self.key, e.to_string());
-            }
-            Ok(Some(())) => {
-                if log::log_enabled!(log::Level::Debug) {
-                    let control = self.info.controls.get(control_type).unwrap();
-                    debug!(
-                        "{}: Control '{}' new value {} {}",
-                        self.key,
-                        control_type,
-                        control.value(),
-                        control.item().unit.as_deref().unwrap_or("")
-                    );
-                }
-            }
-            Ok(None) => {}
-        };
+    fn set_value(&mut self, control_type: &ControlType, value: i32) {
+        self.set(control_type, value, None, ControlState::Manual)
     }
 
     fn set_auto(&mut self, control_type: &ControlType, value: i32, auto: u8) {
@@ -729,7 +712,7 @@ impl NavicoReportReceiver {
         if status.is_err() {
             bail!("{}: Unknown radar status {}", self.key, report.status);
         }
-        self.set(&ControlType::Status, report.status as i32);
+        self.set_value(&ControlType::Status, report.status as i32);
 
         Ok(())
     }
@@ -749,16 +732,16 @@ impl NavicoReportReceiver {
         let target_expansion = report.target_expansion as i32;
         let target_boost = report.target_boost as i32;
 
-        self.set(&ControlType::Range, range);
+        self.set_value(&ControlType::Range, range);
         if self.model == Model::HALO {
-            self.set(&ControlType::Mode, mode);
+            self.set_value(&ControlType::Mode, mode);
         }
-        self.set(&ControlType::Gain, gain);
+        self.set_value(&ControlType::Gain, gain);
         self.set_auto(&ControlType::Sea, sea, sea_auto);
-        self.set(&ControlType::Rain, rain);
-        self.set(&ControlType::InterferenceRejection, interference_rejection);
-        self.set(&ControlType::TargetExpansion, target_expansion);
-        self.set(&ControlType::TargetBoost, target_boost);
+        self.set_value(&ControlType::Rain, rain);
+        self.set_value(&ControlType::InterferenceRejection, interference_rejection);
+        self.set_value(&ControlType::TargetExpansion, target_expansion);
+        self.set_value(&ControlType::TargetBoost, target_boost);
 
         self.process_range(range).await?;
 
@@ -797,7 +780,7 @@ impl NavicoReportReceiver {
         }
 
         let firmware = format!("{} {}", firmware_date, firmware_time);
-        self.set(&ControlType::OperatingHours, hours);
+        self.set_value(&ControlType::OperatingHours, hours);
         self.set_string(&ControlType::FirmwareVersion, firmware);
 
         Ok(())
@@ -808,16 +791,16 @@ impl NavicoReportReceiver {
 
         trace!("{}: report {:?}", self.key, report);
 
-        self.set(
+        self.set_value(
             &ControlType::BearingAlignment,
             i16::from_le_bytes(report.bearing_alignment) as i32,
         );
-        self.set(
+        self.set_value(
             &ControlType::AntennaHeight,
             u16::from_le_bytes(report.antenna_height) as i32,
         );
         if self.model == Model::HALO {
-            self.set(&ControlType::AccentLight, report.accent_light as i32);
+            self.set_value(&ControlType::AccentLight, report.accent_light as i32);
         }
 
         Ok(())
@@ -866,8 +849,8 @@ impl NavicoReportReceiver {
             } else {
                 ControlState::Off
             };
-            self.set_all(&start, start_angle as i32, None, state);
-            self.set_all(&end, end_angle as i32, None, state);
+            self.set(&start, start_angle as i32, None, state);
+            self.set(&end, end_angle as i32, None, state);
         }
 
         Ok(())
@@ -898,8 +881,8 @@ impl NavicoReportReceiver {
             } else {
                 ControlState::Off
             };
-            self.set_all(&start, start_angle as i32, None, state);
-            self.set_all(&end, end_angle as i32, None, state);
+            self.set(&start, start_angle as i32, None, state);
+            self.set(&end, end_angle as i32, None, state);
         }
 
         Ok(())
@@ -920,7 +903,7 @@ impl NavicoReportReceiver {
         trace!("{}: report {:?}", self.key, report);
 
         let sea_state = report.sea_state as i32;
-        let interference_rejection = report.interference_rejection as i32;
+        let local_interference_rejection = report.interference_rejection as i32;
         let scan_speed = report.scan_speed as i32;
         let sidelobe_suppression_auto = report.sls_auto;
         let sidelobe_suppression = report.side_lobe_suppression as i32;
@@ -955,26 +938,26 @@ impl NavicoReportReceiver {
                     self.data_tx.send(DataUpdate::Doppler(doppler_mode)).await?;
                 }
             }
-            self.set(&ControlType::Doppler, doppler_state as i32);
-            self.set(&ControlType::DopplerSpeedThreshold, doppler_speed as i32);
+            self.set_value(&ControlType::Doppler, doppler_state as i32);
+            self.set_value(&ControlType::DopplerSpeedThreshold, doppler_speed as i32);
         }
 
         if self.model == Model::HALO {
-            self.set(&ControlType::SeaState, sea_state as i32);
+            self.set_value(&ControlType::SeaState, sea_state as i32);
             self.set_auto(&ControlType::Sea, sea_clutter, auto_sea_clutter);
         }
-        self.set(
-            &ControlType::InterferenceRejection,
-            interference_rejection as i32,
+        self.set_value(
+            &ControlType::LocalInterferenceRejection,
+            local_interference_rejection as i32,
         );
-        self.set(&ControlType::ScanSpeed, scan_speed as i32);
+        self.set_value(&ControlType::ScanSpeed, scan_speed as i32);
         self.set_auto(
             &ControlType::SideLobeSuppression,
             sidelobe_suppression,
             sidelobe_suppression_auto,
         );
-        self.set(&ControlType::NoiseRejection, noise_reduction);
-        self.set(&ControlType::TargetSeparation, target_sep);
+        self.set_value(&ControlType::NoiseRejection, noise_reduction);
+        self.set_value(&ControlType::TargetSeparation, target_sep);
 
         Ok(())
     }

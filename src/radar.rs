@@ -317,7 +317,7 @@ impl RadarInfo {
         }
     }
 
-    pub fn set_all(
+    pub fn set(
         &mut self,
         control_type: &ControlType,
         value: i32,
@@ -326,9 +326,7 @@ impl RadarInfo {
     ) -> Result<Option<()>, ControlError> {
         let control = {
             if let Some(control) = self.controls.get_mut(control_type) {
-                Ok(control
-                    .set_all(value, auto, state)?
-                    .map(|_| control.clone()))
+                Ok(control.set(value, auto, state)?.map(|_| control.clone()))
             } else {
                 Err(ControlError::NotSupported(*control_type))
             }
@@ -343,16 +341,6 @@ impl RadarInfo {
         }
     }
 
-    /// Set a control value, and if it is changed then broadcast the control
-    /// to all listeners.
-    pub fn set(
-        &mut self,
-        control_type: &ControlType,
-        value: i32,
-    ) -> Result<Option<()>, ControlError> {
-        self.set_all(control_type, value, None, ControlState::Manual)
-    }
-
     pub fn set_auto(
         &mut self,
         control_type: &ControlType,
@@ -365,7 +353,7 @@ impl RadarInfo {
             ControlState::Manual
         };
 
-        self.set_all(control_type, value, Some(auto), state)
+        self.set(control_type, value, Some(auto), state)
     }
 
     pub fn set_string(
@@ -380,9 +368,9 @@ impl RadarInfo {
                 } else {
                     let i = value
                         .parse::<i32>()
-                        .map_err(|e| ControlError::Invalid(control_type.clone(), value))?;
+                        .map_err(|_| ControlError::Invalid(control_type.clone(), value))?;
                     control
-                        .set_all(i, None, ControlState::Manual)
+                        .set(i, None, ControlState::Manual)
                         .map(|_| Some(control.clone()))
                 }
             } else {

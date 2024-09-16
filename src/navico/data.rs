@@ -14,7 +14,6 @@ use crate::navico::NAVICO_SPOKE_LEN;
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::*;
-use crate::settings::{ControlMessage, ControlType, ControlValue};
 use crate::util::{create_multicast, PrintableSpoke};
 
 use super::{
@@ -121,7 +120,6 @@ pub struct NavicoDataReceiver {
     doppler: DopplerMode,
     pixel_to_blob: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH],
     replay: bool,
-    rotation_timestamp: Instant,
 }
 
 impl NavicoDataReceiver {
@@ -140,7 +138,6 @@ impl NavicoDataReceiver {
             doppler: DopplerMode::None,
             pixel_to_blob,
             replay,
-            rotation_timestamp: Instant::now(),
         }
     }
 
