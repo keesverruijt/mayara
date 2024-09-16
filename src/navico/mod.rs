@@ -13,7 +13,6 @@ use crate::locator::{LocatorId, RadarListenAddress, RadarLocator};
 use crate::radar::{DopplerMode, Legend, RadarInfo, SharedRadars};
 use crate::util::c_string;
 use crate::util::PrintableSlice;
-use crate::Cli;
 
 mod command;
 mod data;
@@ -206,7 +205,7 @@ const NAVICO_BEACON_SINGLE_SIZE: usize = size_of::<NavicoBeaconSingle>();
 const NAVICO_BEACON_DUAL_SIZE: usize = size_of::<NavicoBeaconDual>();
 const NAVICO_BEACON_BR24_SIZE: usize = size_of::<BR24Beacon>();
 
-fn found(mut info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle, args: &Cli) {
+fn found(mut info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
     info.set_string(&crate::settings::ControlType::UserName, info.key())
         .unwrap();
 
@@ -231,6 +230,7 @@ fn found(mut info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle, a
         let data_name = info.key() + " data";
         let report_name = info.key() + " reports";
         let info_clone = info.clone();
+        let args = radars.cli_args();
 
         if args.output {
             let info_clone2 = info.clone();
@@ -240,7 +240,7 @@ fn found(mut info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle, a
             }));
         }
 
-        let data_receiver = data::NavicoDataReceiver::new(info, rx_data, args.clone());
+        let data_receiver = data::NavicoDataReceiver::new(info, rx_data, args.replay);
         let report_receiver =
             report::NavicoReportReceiver::new(info_clone, radars.clone(), model, tx_data);
 
@@ -260,7 +260,6 @@ fn process_locator_report(
     via: &Ipv4Addr,
     radars: &SharedRadars,
     subsys: &SubsystemHandle,
-    args: &Cli,
 ) -> io::Result<()> {
     if report.len() < 2 {
         return Ok(());
@@ -283,7 +282,7 @@ fn process_locator_report(
     if report[0] == 0x1 && report[1] == 0xB2 {
         // Common Navico message
 
-        return process_beacon_report(report, from, via, radars, subsys, args);
+        return process_beacon_report(report, from, via, radars, subsys);
     }
     Ok(())
 }
@@ -294,7 +293,6 @@ fn process_beacon_report(
     via: &Ipv4Addr,
     radars: &SharedRadars,
     subsys: &SubsystemHandle,
-    args: &Cli,
 ) -> Result<(), io::Error> {
     if report.len() < size_of::<BR24Beacon>() {
         debug!(
@@ -330,7 +328,7 @@ fn process_beacon_report(
                         radar_send.into(),
                         NavicoControls::new(None),
                     );
-                    found(location_info, radars, subsys, args);
+                    found(location_info, radars, subsys);
 
                     let radar_data: SocketAddrV4 = data.b.data.into();
                     let radar_report: SocketAddrV4 = data.b.report.into();
@@ -350,7 +348,7 @@ fn process_beacon_report(
                         radar_send.into(),
                         NavicoControls::new(None),
                     );
-                    found(location_info, radars, subsys, args);
+                    found(location_info, radars, subsys);
                 }
             }
             Err(e) => {
@@ -384,7 +382,7 @@ fn process_beacon_report(
                         radar_send.into(),
                         NavicoControls::new(None),
                     );
-                    found(location_info, radars, subsys, args);
+                    found(location_info, radars, subsys);
                 }
             }
             Err(e) => {
@@ -418,7 +416,7 @@ fn process_beacon_report(
                         radar_send.into(),
                         NavicoControls::new(Some(BR24_MODEL_NAME)),
                     );
-                    found(location_info, radars, subsys, args);
+                    found(location_info, radars, subsys);
                 }
             }
             Err(e) => {

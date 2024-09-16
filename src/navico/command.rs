@@ -3,7 +3,7 @@ use num_traits::ToPrimitive;
 use std::cmp::min;
 use tokio::net::UdpSocket;
 
-use crate::radar::{RadarError, RadarInfo};
+use crate::radar::{RadarError, RadarInfo, SharedRadars};
 use crate::settings::{ControlType, ControlValue};
 use crate::util::create_multicast_send;
 
@@ -19,15 +19,19 @@ pub struct Command {
     info: RadarInfo,
     model: Model,
     sock: Option<UdpSocket>,
+    fake_errors: bool,
 }
 
 impl Command {
-    pub fn new(info: RadarInfo, model: Model) -> Self {
+    pub fn new(info: RadarInfo, model: Model, radars: SharedRadars) -> Self {
+        let args = radars.cli_args();
+
         Command {
             key: info.key(),
             info,
             model,
             sock: None,
+            fake_errors: args.fake_errors,
         }
     }
 
@@ -102,6 +106,14 @@ impl Command {
             prev
         } else {
             i
+        }
+    }
+
+    fn generate_fake_error(v: i32) -> Result<(), RadarError> {
+        match v {
+            11 => Err(RadarError::CannotSetControlType(ControlType::Rain)),
+            12 => Err(RadarError::CannotSetControlType(ControlType::Status)),
+            _ => Err(RadarError::NoSuchRadar("FakeRadarKey".to_string())),
         }
     }
 
@@ -250,6 +262,11 @@ impl Command {
         };
 
         log::info!("{}: Send command {:02X?}", self.info.key(), cmd);
-        self.send(&cmd).await
+        self.send(&cmd).await?;
+
+        if self.fake_errors && cv.id == ControlType::Rain && value > 10 {
+            return Self::generate_fake_error(value);
+        }
+        Ok(())
     }
 }

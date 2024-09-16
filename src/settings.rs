@@ -256,7 +256,13 @@ impl Control {
             wire_scale_factor: Some((descriptions.len() as i32) - 1),
             wire_offset: Some(0),
             unit: None,
-            descriptions: Some(descriptions.into_iter().map(|n| n.to_string()).collect()),
+            descriptions: Some(
+                descriptions
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, n)| (i as i32, n.to_string()))
+                    .collect(),
+            ),
             valid_values: None,
             is_read_only: false,
             is_string_value: false,
@@ -291,6 +297,44 @@ impl Control {
 
     pub fn set_valid_values(&mut self, values: Vec<i32>) {
         self.item.valid_values = Some(values);
+
+        if let Some(unit) = &self.item.unit {
+            if unit == "m" {
+                // Reset the descriptions map
+                let mut descriptions = HashMap::new();
+                for v in self.item.valid_values.as_ref().unwrap().iter() {
+                    let mut desc = if v % 25 == 0 {
+                        // Metric
+                        if v % 1000 == 0 {
+                            format!("{} km", v / 1000)
+                        } else {
+                            format!("{} m", v)
+                        }
+                    } else {
+                        if v % 1852 == 0 {
+                            format!("{} nm", v / 1852)
+                        } else {
+                            match v {
+                                57 => "1/32 nm",
+                                114 => "1/16 nm",
+                                231 => "1/8 nm",
+                                463 => "1/4 nm",
+                                926 => "1/2 nm",
+                                1389 => "3/4 nm",
+                                2778 => "1.5 nm",
+                                _ => "",
+                            }
+                            .to_string()
+                        }
+                    };
+                    if desc.len() == 0 {
+                        desc = format!("{} m", v);
+                    }
+                    descriptions.insert(*v, desc);
+                }
+                self.item.descriptions = Some(descriptions);
+            }
+        }
     }
 
     // pub fn auto(&self) -> Option<bool> {
@@ -418,7 +462,7 @@ pub(crate) struct ControlDefinition {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) unit: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) descriptions: Option<Vec<String>>,
+    pub(crate) descriptions: Option<HashMap<i32, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) valid_values: Option<Vec<i32>>,
     #[serde(skip_serializing_if = "is_false")]

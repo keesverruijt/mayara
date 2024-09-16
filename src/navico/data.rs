@@ -13,8 +13,8 @@ use crate::locator::LocatorId;
 use crate::navico::NAVICO_SPOKE_LEN;
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
+use crate::radar::*;
 use crate::util::{create_multicast, PrintableSpoke};
-use crate::{radar::*, Cli};
 
 use super::{
     DataUpdate, NAVICO_SPOKES, NAVICO_SPOKES_RAW, RADAR_LINE_DATA_LENGTH, SPOKES_PER_FRAME,
@@ -120,11 +120,11 @@ pub struct NavicoDataReceiver {
     doppler: DopplerMode,
     legend: Option<Legend>,
     pixel_to_blob: Option<[[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH]>,
-    args: Cli,
+    replay: bool,
 }
 
 impl NavicoDataReceiver {
-    pub fn new(info: RadarInfo, rx: Receiver<DataUpdate>, args: Cli) -> NavicoDataReceiver {
+    pub fn new(info: RadarInfo, rx: Receiver<DataUpdate>, replay: bool) -> NavicoDataReceiver {
         let key = info.key();
 
         NavicoDataReceiver {
@@ -137,7 +137,7 @@ impl NavicoDataReceiver {
             doppler: DopplerMode::None,
             legend: None,
             pixel_to_blob: None,
-            args,
+            replay,
         }
     }
 
@@ -433,7 +433,7 @@ impl NavicoDataReceiver {
             generic_spoke.push(pixel_to_blob[high_nibble_index][pixel]);
         }
 
-        if self.args.replay {
+        if self.replay {
             // Generate circle at extreme range
             let pixel = 0xff as usize;
             generic_spoke.pop();
@@ -453,7 +453,7 @@ impl NavicoDataReceiver {
         let angle = (angle / 2) as u32;
         // For now, don't send heading in replay mode, signalk-radar-client doesn't
         // handle it well yet.
-        let heading = if self.args.replay {
+        let heading = if self.replay {
             None
         } else {
             heading.map(|h| (((h / 2) as u32) + angle) % (NAVICO_SPOKES as u32))

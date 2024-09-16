@@ -39,9 +39,13 @@ pub struct Cli {
     #[arg(long, default_value_t = false)]
     output: bool,
 
-    /// Replay or dev mode; draw circle at extreme range
+    /// Replay mode, see below
     #[arg(long, default_value_t = false)]
     replay: bool,
+
+    /// Fake error mode, see below
+    #[arg(long, default_value_t = false)]
+    fake_errors: bool,
 }
 
 #[tokio::main]
@@ -60,7 +64,11 @@ async fn main() -> Result<()> {
         warn!(" * Timestamp on each spoke is as if received now");
         warn!(" * Any 4G/HALO secondary radar B is ignored and not reported");
     }
-
+    if args.fake_errors {
+        warn!("Fake error mode activated, this does the following:");
+        warn!(" * Any control operation on Rain Clutter beyond values 0..10 will fail");
+        warn!(" * Failure for value 11..13 are all different");
+    }
     if args.output {
         warn!("Output mode activated; 'protobuf' formatted RadarMessage sent to stdout");
     }
@@ -69,7 +77,7 @@ async fn main() -> Result<()> {
     let radars_clone1 = radars.clone();
 
     let web = Web::new(args.port, radars_clone1);
-    let locator = Locator::new(radars, args);
+    let locator = Locator::new(radars);
 
     Toplevel::new(|s| async move {
         s.start(SubsystemBuilder::new("Locator", |a| locator.run(a)));

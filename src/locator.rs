@@ -55,7 +55,6 @@ pub struct RadarListenAddress {
         &Ipv4Addr,   // nic_addr
         &SharedRadars,
         &SubsystemHandle,
-        &Cli,
     ) -> Result<(), io::Error>,
 }
 
@@ -75,7 +74,6 @@ impl RadarListenAddress {
             &Ipv4Addr,
             &SharedRadars,
             &SubsystemHandle,
-            &Cli,
         ) -> Result<(), io::Error>,
     ) -> RadarListenAddress {
         RadarListenAddress {
@@ -97,7 +95,6 @@ struct LocatorInfo {
         &Ipv4Addr,   // nic_addr
         &SharedRadars,
         &SubsystemHandle,
-        &Cli,
     ) -> Result<(), io::Error>,
 }
 
@@ -120,16 +117,15 @@ struct InterfaceState {
 
 pub struct Locator {
     pub radars: SharedRadars,
-    pub args: Cli,
 }
 
 impl Locator {
-    pub fn new(radars: SharedRadars, args: Cli) -> Self {
-        Locator { radars, args }
+    pub fn new(radars: SharedRadars) -> Self {
+        Locator { radars }
     }
 
     pub async fn run(self, subsys: SubsystemHandle) -> Result<(), RadarError> {
-        let radars = self.radars;
+        let radars = &self.radars;
         let navico_locator = navico::create_locator();
         let navico_br24_locator = navico::create_br24_locator();
         //let mut garmin_locator = garmin::create_locator();
@@ -141,7 +137,7 @@ impl Locator {
 
         info!("Entering loop, listening for radars");
         let mut interface_state = InterfaceState {
-            args: self.args,
+            args: self.radars.cli_args(),
             active_nic_addresses: Vec::new(),
             inactive_nic_names: HashMap::new(),
             lost_nic_names: HashMap::new(),
@@ -197,7 +193,6 @@ impl Locator {
                                     &socket.nic_addr,
                                     &radars,
                                     &subsys,
-                                    &interface_state.args,
                                 );
                                 // Respawn this task
                                 spawn_receive(&mut set, socket);

@@ -277,7 +277,7 @@ impl NavicoReportReceiver {
     ) -> NavicoReportReceiver {
         let key = info.key();
 
-        let command_sender = Command::new(info.clone(), model.clone());
+        let command_sender = Command::new(info.clone(), model.clone(), radars.clone());
 
         NavicoReportReceiver {
             key: key,

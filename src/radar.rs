@@ -372,7 +372,7 @@ impl RadarInfo {
     fn get_description(control: &Control) -> Option<String> {
         if let (Some(value), Some(descriptions)) = (control.value, &control.item().descriptions) {
             if value >= 0 && value < (descriptions.len() as i32) {
-                return Some(descriptions[value as usize].to_string());
+                return descriptions.get(&value).cloned();
             }
         }
         return None;
@@ -609,6 +609,11 @@ impl SharedRadars {
             }
         }
         Err(RadarError::NoSuchRadar(key.to_string()))
+    }
+
+    pub fn cli_args(&self) -> Cli {
+        let radars = self.radars.read().unwrap();
+        radars.args.clone()
     }
 }
 

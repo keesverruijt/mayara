@@ -9,17 +9,27 @@ html {
   background: #000000;
 }
 
+div.controller {
+  display: block;
+  width: 200px;
+}
+
+div.error {
+  display: block;
+  border-width: 0px;
+  background-color: firebrick;
+  color: wheat;
+}
+
 div.control {
   display: block;
   border-style: solid;
-  border: 1px;
   border-radius: 3px;
   border-color: lightskyblue;
 }
 
 div.description {
   display: block;
-  text-align: right;
 }
 
 label {
