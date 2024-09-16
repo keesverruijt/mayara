@@ -8,6 +8,7 @@ var myr_radar;
 var myr_controls;
 var myr_webSocket;
 var myr_error_message;
+var myr_no_response_timeout;
 
 const StringValue = (id, name) =>
   div({class: 'myr_control'},
@@ -66,6 +67,27 @@ class TemporaryMessage {
   }
 };
 
+class Timeout {
+  timeoutId;
+  element;
+
+  constructor(id) {
+    this.element = get_element(id);
+  }
+
+  setTimeout() {
+    this.cancel();
+    this.timeoutId = setTimeout(() => { setControl({ id: '0', value: '0' }); }, 15000);
+  };
+
+  cancel() {
+    if (typeof this.timeoutId === "number") {
+      clearTimeout(this.timeoutId);
+      this.timeoutId = undefined;
+    }
+  }
+};
+
 window.onload = function () {
   const urlParams = new URLSearchParams(window.location.search);
   const id = urlParams.get('id');
@@ -94,6 +116,7 @@ function radarsLoaded(id, d) {
   myr_error_message = new TemporaryMessage('error');
   
   buildControls();
+  myr_no_response_timeout = new Timeout('0');
 
   myr_webSocket = new WebSocket(myr_radar.controlUrl);
 
@@ -102,15 +125,23 @@ function radarsLoaded(id, d) {
   }
   myr_webSocket.onclose = (e) => {
     console.log("websocket close: " + e);
+    setControl({ id: '0', value: '0' });
     restart(id);
   }
   myr_webSocket.onmessage = (e) => {
     let v = JSON.parse(e.data);
-    let i = get_element(v.id);
+    setControl(v);
+    myr_no_response_timeout.setTimeout();
+  }
+}
+
+function setControl(v) {
+  let i = get_element(v.id);
+  if (i) {
     let control = myr_controls[v.id];
 
     i.value = v.value;
-    console.log("<- " + e.data + " = " + control.name + " = " + i.value);
+    console.log("<- " + control.name + " = " + i.value);
     let n = i.parentNode.querySelector('.myr_numeric');
     if (n) n.innerHTML = v.value;
     let d = i.parentNode.querySelector('.myr_description');
@@ -153,7 +184,7 @@ function do_change(e) {
   console.log("change " + e + " " + id + "=" + v.value);
   let cv = JSON.stringify({ id: id, value: v.value });
   myr_webSocket.send(cv);
-  console.log(controls[id].name + "-> " + cv);
+  console.log(myr_controls[id].name + "-> " + cv);
 }
 
 function do_button(e) {
