@@ -1,15 +1,18 @@
 import van from "./van-1.5.2.debug.js";
 
-const {a, li} = van.tags
+const {a, tr, td} = van.tags
 
-const RadarEntry = (id, name) => li(a({href: "/control.html?id=" + id}, name))
+const RadarEntry = (id, name) => tr(
+  td({ class: 'myr' }, a({ href: "/control.html?id=" + id }, name + " controller")),
+  td({ class: 'myr' }, a({ href: "/viewer.html?id=" + id }, name + " PPI viewer")),
+)
 
 function radarsLoaded(d) {
   let c = Object.keys(d).length;
   if (c > 0) {
     let r = document.getElementById("radars");
-    r.innerHTML = "<div>" + c + " radars detected</div><ul></ul>";
-    r = r.getElementsByTagName('ul')[0];
+    r.innerHTML = "<div>" + c + " radars detected</div><table></table>";
+    r = r.getElementsByTagName('table')[0];
     Object.keys(d).sort().forEach(function(v, i) { van.add(r, RadarEntry(v, d[v].name)); });
   }
 

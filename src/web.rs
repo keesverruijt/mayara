@@ -31,11 +31,15 @@ use crate::{
 
 const RADAR_URI: &str = "/v1/api/radars";
 const SPOKES_URI: &str = "/v1/api/spokes/";
-const CONTROL_URI: &str = "/v1/api/control";
+const CONTROL_URI: &str = "/v1/api/control/";
 
 #[derive(RustEmbed, Clone)]
 #[folder = "web/"]
 struct Assets;
+
+#[derive(RustEmbed, Clone)]
+#[folder = "$OUT_DIR/web/"]
+struct ProtoAssets;
 
 #[derive(Error, Debug)]
 pub enum WebError {
@@ -70,6 +74,7 @@ impl Web {
         .unwrap();
 
         let serve_assets = ServeEmbed::<Assets>::new();
+        let proto_assets = ServeEmbed::<ProtoAssets>::new();
         let mut shutdown_rx = self.shutdown_tx.subscribe();
         let shutdown_tx = self.shutdown_tx.clone(); // Clone as self used in with_state() and with_graceful_shutdown() below
 
@@ -77,6 +82,7 @@ impl Web {
             .route(RADAR_URI, get(get_radars))
             .route(&format!("{}{}", SPOKES_URI, ":key"), get(spokes_handler))
             .route(&format!("{}{}", CONTROL_URI, ":key"), get(control_handler))
+            .nest_service("/proto", proto_assets)
             .nest_service("/", serve_assets)
             .with_state(self)
             .into_make_service_with_connect_info::<SocketAddr>();
