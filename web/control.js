@@ -2,37 +2,41 @@ import van from "./van-1.5.2.debug.js";
 
 const {div, label, input, button, select, option} = van.tags
 
-var radar;
-var controls;
-var webSocket;
-var error_message;
+const prefix = 'myr_';
+
+var myr_radar;
+var myr_controls;
+var myr_webSocket;
+var myr_error_message;
 
 const StringValue = (id, name) =>
-  div({class: 'control'},
-    label({ for: id }, name),
-    input({ type: 'text', id: id, size: 20 })
+  div({class: 'myr_control'},
+    label({ for: prefix + id }, name),
+    input({ type: 'text', id: prefix + id, size: 20 })
   )
 
 const NumericValue = (id, name) =>
-  div({class: 'control'},
-    label({ for: id }, name),
-    div({ class: 'numeric' }),
-    input({ type: 'number', id: id, onchange: e => do_change(e), oninput: e => do_input(e) })
+  div({class: 'myr_control'},
+    label({ for: prefix + id }, name),
+    div({ class: 'myr_numeric' }),
+    input({ type: 'number', id: prefix + id, onchange: e => do_change(e), oninput: e => do_input(e) })
   )
     
 const RangeValue = (id, name, min, max, def, descriptions) =>
-  div({ class: 'control' },
-    label({ for: id }, name),
-    div({ class: 'description' }),
-    input({ type: 'range', id, min, max, value: def, onchange: e => do_change(e)})
+  div({ class: 'myr_control' },
+    label({ for: prefix + id }, name),
+    div({ class: 'myr_description' }),
+    input({ type: 'range', id: prefix + id, min, max, value: def, onchange: e => do_change(e)})
   )
   
 const SelectValue = (id, name, validValues, descriptions) => {
   let r =
-    div({ class: 'control' },
-      label({ for: id }, name),
-      div({ class: 'description' }),
-      select({ id, onchange: e => do_change(e) }, validValues.map(v => option({ value: v }, descriptions[v]))
+    div({ class: 'myr_control' },
+      label({ for: prefix + id }, name),
+      div({ class: 'myr_description' }),
+      select(
+        { id: prefix + id, onchange: e => do_change(e) },
+        validValues.map(v => option({ value: v }, descriptions[v]))
       )
     );
   return r;
@@ -45,7 +49,7 @@ class TemporaryMessage {
   element;
 
   constructor(id) {
-    this.element = document.getElementById(id);
+    this.element = get_element(id);
   }
 
   raise(aMessage) {
@@ -80,54 +84,54 @@ function restart(id) {
   setTimeout(loadRadars(id), 15000);
 }
 function radarsLoaded(id, d) {
-  radar = d[id];
+  myr_radar = d[id];
 
-  if (radar === undefined || radar.controls === undefined) {
+  if (myr_radar === undefined || myr_radar.controls === undefined) {
     restart(id);
     return;
   }
-  controls = radar.controls;
-  error_message = new TemporaryMessage('error');
+  myr_controls = myr_radar.controls;
+  myr_error_message = new TemporaryMessage('error');
   
   buildControls();
 
-  webSocket = new WebSocket(radar.controlUrl);
+  myr_webSocket = new WebSocket(myr_radar.controlUrl);
 
-  webSocket.onopen = (e) => {
+  myr_webSocket.onopen = (e) => {
     console.log("websocket open: " + JSON.stringify(e));
   }
-  webSocket.onclose = (e) => {
+  myr_webSocket.onclose = (e) => {
     console.log("websocket close: " + e);
     restart(id);
   }
-  webSocket.onmessage = (e) => {
+  myr_webSocket.onmessage = (e) => {
     let v = JSON.parse(e.data);
-    let i = document.getElementById(v.id);
-    let control = controls[v.id];
+    let i = get_element(v.id);
+    let control = myr_controls[v.id];
 
     i.value = v.value;
     console.log("<- " + e.data + " = " + control.name + " = " + i.value);
-    let n = i.parentNode.querySelector('.numeric');
+    let n = i.parentNode.querySelector('.myr_numeric');
     if (n) n.innerHTML = v.value;
-    let d = i.parentNode.querySelector('.description');
+    let d = i.parentNode.querySelector('.myr_description');
     if (d) {
       let description = (control.descriptions) ? control.descriptions[v.value] : undefined;
       if (!description) description = v.value;
       d.innerHTML = description;
     }
     if (v.error) {
-      error_message.raise(v.error);
+      myr_error_message.raise(v.error);
     }
   }
 }
 
 function buildControls() {
-  let c = document.getElementById('title');
+  let c = get_element('title');
   c.innerHTML = "";
-  van.add(c, div(radar.name + " Controls"));
+  van.add(c, div(myr_radar.name + " Controls"));
 
-  c = document.getElementById('controls');
-  for (const [k, v] of Object.entries(controls)) {
+  c = get_element('controls');
+  for (const [k, v] of Object.entries(myr_controls)) {
     van.add(c, (v['isStringValue'])
       ? StringValue(k, v.name)
       : ('validValues' in v)
@@ -136,31 +140,45 @@ function buildControls() {
           ? RangeValue(k, v.name, v.minValue, v.maxValue, 0, 'descriptions' in v)
           : NumericValue(k, v.name));
     if (v['isReadOnly']) {
-      document.getElementById(k).setAttribute('readonly', 'true');
+      get_element(k).setAttribute('readonly', 'true');
     } else if (v['isStringValue']) {
-      van.add(document.getElementById(k).parentNode, SetButton());
+      van.add(get_element(k).parentNode, SetButton());
     }
   }
-  console.log(controls);
 }
 
 function do_change(e) {
   let v = e.target;
-  console.log("change " + e + " " + v.id + "=" + v.value);
-  let cv = JSON.stringify({ id: v.id, value: v.value });
-  webSocket.send(cv);
-  console.log(controls[v.id].name + "-> " + cv);
+  let id = strip_prefix(v.id);
+  console.log("change " + e + " " + id + "=" + v.value);
+  let cv = JSON.stringify({ id: id, value: v.value });
+  myr_webSocket.send(cv);
+  console.log(controls[id].name + "-> " + cv);
 }
 
 function do_button(e) {
   let v = e.target.previousElementSibling;
-  console.log("set_button " + e + " " + v.id + "=" + v.value);
-  let cv = JSON.stringify({ id: v.id, value: v.value });
-  webSocket.send(cv);
-  console.log(controls[v.id].name + "-> " + cv);
+  let id = strip_prefix(v.id);
+  console.log("set_button " + e + " " + id + "=" + v.value);
+  let cv = JSON.stringify({ id: id, value: v.value });
+  myr_webSocket.send(cv);
+  console.log(myr_controls[id].name + "-> " + cv);
 }
 
 function do_input(e) {
   let v = e.target;
   console.log("input " + e + " " + v.id + "=" + v.value);
+}
+
+function get_element(id) {
+  let did = prefix + id;
+  let r = document.getElementById(did);
+  return r;
+}
+
+function strip_prefix(id) {
+  if (id.startsWith(prefix)) {
+    return id.substr(prefix.length);
+  }
+  return id;
 }

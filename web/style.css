@@ -9,26 +9,26 @@ html {
   background: #000000;
 }
 
-div.controller {
+div.myr_controller {
   display: block;
   width: 200px;
 }
 
-div.error {
+div.myr_error {
   display: block;
   border-width: 0px;
   background-color: firebrick;
   color: wheat;
 }
 
-div.control {
+div.myr_control {
   display: block;
   border-style: solid;
   border-radius: 3px;
   border-color: lightskyblue;
 }
 
-div.description {
+div.myr_description {
   display: block;
 }
 
