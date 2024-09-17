@@ -14,8 +14,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --release
+    - name: Setup latest Alpine linux
+      uses: jirutka/setup-alpine@1
+    - name: Build in Alpine chroot
+      run: |
+        cat /etc/alpine-release
+        apk add git curl bash g++ musl-dev make perl
+        curl -sSf https://sh.rustup.rs | bash -s -- -y
+        PATH="$HOME/.cargo/bin:$PATH"
+        cargo build --release
     - name: Run tests
       run: cargo test --release --verbose
     - name: Upload artifacts
