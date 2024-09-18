@@ -367,7 +367,10 @@ impl Control {
             }
         }
         if let (Some(min_value), Some(max_value)) = (self.item.min_value, self.item.max_value) {
-            if self.item.wire_offset.is_none() && value > max_value && value <= 2 * max_value {
+            if self.item.wire_offset.unwrap_or(0) == -1
+                && value > max_value
+                && value <= 2 * max_value
+            {
                 // debug!("{} value {} -> ", self.item.control_type, value);
                 value -= 2 * max_value;
                 // debug!("{} ..... {}", self.item.control_type, value);
