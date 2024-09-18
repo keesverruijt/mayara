@@ -67,5 +67,7 @@ div.myr_controller_left {
 
 div.myr_ppi {
   float: left;
-  background-color: lightgreen;
+  display:flex;
+  flex-direction:column;
+  background-color: rgb(72, 72, 72);
 }

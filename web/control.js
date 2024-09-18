@@ -1,6 +1,8 @@
-import van from "./van-1.5.2.debug.js";
+export { loadRadar, registerRadarCallback };
 
-const {div, label, input, button, select, option} = van.tags
+import van from "./van-1.5.2.js";
+
+const { div, label, input, button, select, option } = van.tags
 
 const prefix = 'myr_';
 
@@ -9,6 +11,11 @@ var myr_controls;
 var myr_webSocket;
 var myr_error_message;
 var myr_no_response_timeout;
+var callbacks = Array();
+
+function registerRadarCallback(callback) {
+  callbacks.push(callback);
+}
 
 const StringValue = (id, name) =>
   div({class: 'myr_control'},
@@ -88,14 +95,17 @@ class Timeout {
   }
 };
 
+//
+// This is not called when used in a nested module.
+//
 window.onload = function () {
   const urlParams = new URLSearchParams(window.location.search);
   const id = urlParams.get('id');
 
-  loadRadars(id);
+  loadRadar(id);
 }
 
-function loadRadars(id) {
+function loadRadar(id) {
   fetch('/v1/api/radars')
   .then(res => res.json())
   .then(out => radarsLoaded(id, out))
@@ -103,7 +113,7 @@ function loadRadars(id) {
 }
 
 function restart(id) {
-  setTimeout(loadRadars(id), 15000);
+  setTimeout(loadRadar(id), 15000);
 }
 function radarsLoaded(id, d) {
   myr_radar = d[id];
@@ -133,6 +143,11 @@ function radarsLoaded(id, d) {
     setControl(v);
     myr_no_response_timeout.setTimeout();
   }
+
+  callbacks.forEach((value) => {
+    let r = myr_radar;
+    value(r);
+  });
 }
 
 function setControl(v) {
