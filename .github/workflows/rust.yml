@@ -22,15 +22,10 @@ jobs:
         curl -sSf https://sh.rustup.rs | bash -s -- -y
       shell: alpine.sh --root {0}
     - name: Build in Alpine chroot
-      run: |
-        echo "$PATH"
-        PATH="$HOME/.cargo/bin:$PATH"
-        cargo build --release
-      shell: alpine.sh --root {0}
+      run: cargo build --release
+      shell: alpine.sh {0}
     - name: Run tests
-      run: |
-        PATH="$HOME/.cargo/bin:$PATH"
-        cargo test --release --verbose
+      run: cargo test --release --verbose
       shell: alpine.sh {0}
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
