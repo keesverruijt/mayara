@@ -55,6 +55,7 @@ async fn main() -> Result<()> {
     let log_level = args.verbose.log_level_filter();
     env_logger::Builder::from_env(Env::default())
         .filter_level(log_level)
+        .filter_module("tungstenite::protocol", log::LevelFilter::Info)
         .init();
 
     info!("Mayara {} loglevel {}", VERSION, log_level);
