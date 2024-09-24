@@ -6,7 +6,7 @@
 
 FROM wdantuma/signalk-radar-demo:latest AS build
 
-RUN apk add --no-cache git curl bash g++
+RUN apk add --no-cache git curl bash g++ make perl
 
 WORKDIR /src
 
@@ -27,6 +27,7 @@ COPY start.sh .
 COPY samples/halo_and_0183.pcap .
 
 RUN chmod +x start.sh
+RUN rm -rf mayara || :
 
 COPY --from=build /src/mayara/target/release/mayara /app/mayara
 
