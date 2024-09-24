@@ -27,6 +27,7 @@ window.onload = function () {
 
   canvas = Object;
   canvas.dom = document.getElementById('myr_canvas');
+  canvas.background_dom = document.getElementById('myr_canvas_background');
   var parent = canvas.dom.parentNode,
     styles = getComputedStyle(parent),
     w = parseInt(styles.getPropertyValue("width"), 10),
@@ -104,7 +105,8 @@ function redrawCanvas() {
   canvas.center_x = canvas.width / 2;
   canvas.center_y = canvas.height / 2;
   canvas.beam_length = Math.max(canvas.center_x, canvas.center_y);
-  canvas.ctx = canvas.dom.getContext("2d");
+  canvas.ctx = canvas.dom.getContext("2d", { alpha: true });
+  canvas.background_ctx = canvas.background_dom.getContext("2d");
   
   canvas.pattern = document.createElement('canvas');
   canvas.pattern.width = 2048;
@@ -116,15 +118,21 @@ function redrawCanvas() {
 }
 
 function drawRings() {
-  canvas.ctx.strokeStyle = "#FFFFFF";
-  canvas.ctx.beginPath();
+  canvas.background_ctx.strokeStyle = "#FFFFFFFF";
+  canvas.background_ctx.beginPath();
 
-  canvas.ctx.setTransform(1, 0, 0, 1, canvas.center_x, canvas.center_y);
-  canvas.ctx.beginPath();
-  for (let i = 0; i <= canvas.center_x; i = i + 50) {
-    canvas.ctx.arc(0, 0, i, 0, 2 * Math.PI);
+  canvas.background_ctx.setTransform(1, 0, 0, 1, canvas.center_x, canvas.center_y);
+  canvas.background_ctx.beginPath();
+  for (let i = 50; i <= canvas.beam_length; i = i + 50) {
+    canvas.background_ctx.arc(0, 0, i, 0, 2 * Math.PI);
   }
-  canvas.ctx.stroke();
+  canvas.background_ctx.stroke();
+
+  canvas.background_ctx.setTransform(1, 0, 0, 1, 0, 0);
+  canvas.background_ctx.fillStyle = "lightblue";
+  canvas.background_ctx.font = "bold 18px sans";
+  canvas.background_ctx.fillText("MAYARA", 5, 20);
+
 }
 
 var f;
@@ -139,16 +147,14 @@ function drawSpoke(spoke) {
   // let c = 1 * pixels_per_item;
   // let s = 0 * pixels_per_item;
  
-  let work = false;
-  
   for (let i = 0, idx = 0; i < spoke.data.length; i++, idx += 4) {
     let v = spoke.data[i];
+    
+    canvas.image.data[idx + 0] = rgbaLegend[v][0];
+    canvas.image.data[idx + 1] = rgbaLegend[v][1];
+    canvas.image.data[idx + 2] = rgbaLegend[v][2];
+    canvas.image.data[idx + 3] = 255;
     if (v > 0) {
-      canvas.image.data[idx + 0] = rgbaLegend[v][0];
-      canvas.image.data[idx + 1] = rgbaLegend[v][1];
-      canvas.image.data[idx + 2] = rgbaLegend[v][2];
-      canvas.image.data[idx + 3] = 255;
-      work = true;
       f++;
     }
   }
@@ -156,23 +162,29 @@ function drawSpoke(spoke) {
     console.log("spokes with data = " + f);
     f = 0;
   }
-  // if (!work) return;
 
   canvas.pattern_ctx.putImageData(canvas.image, 0, 0);
  
   let pattern = canvas.ctx.createPattern(canvas.pattern, "repeat-x");
 
+  let arc_angle = 2 * Math.PI / radar.spokes;
+
   canvas.ctx.setTransform(c, s, -s, c, canvas.center_x, canvas.center_y);
-  // canvas.ctx.setTransform(c, s, -s, c, 0, spoke.angle / 2);
-  canvas.ctx.fillstyle = pattern;
+  canvas.ctx.fillStyle = pattern;
   canvas.ctx.strokeStyle = pattern;
-  //canvas.ctx.strokeStyle = "#000000";
-  //canvas.ctx.fillStyle = "#00FF00";
   canvas.ctx.beginPath();
   canvas.ctx.moveTo(0, 0);
-  canvas.ctx.lineTo(spoke.data.length, 0);
+  canvas.ctx.arc(0, 0, spoke.data.length, 0, arc_angle);
+  canvas.ctx.closePath();
+  canvas.ctx.fill();
+  // canvas.ctx.stroke();
+  
+  /*
+  canvas.ctx.strokeStyle = "#000000FF";
+  canvas.ctx.fillStyle = "#000000FF";
   canvas.ctx.moveTo(0, 0);
-  canvas.ctx.arc(0, 0, spoke.data.length, 0, 2 * Math.PI / radar.spokes);
+  canvas.ctx.arc(0, 0, spoke.data.length, arc_angle * 2, arc_angle * 4);
   canvas.ctx.fill();
   canvas.ctx.stroke();
-}
+  */
+ }

@@ -28,8 +28,10 @@ div.myr_error {
 div.myr_control {
   display: block;
   border-style: solid;
-  border-radius: 3px;
-  border-color: lightskyblue;
+  border-width: 1px;
+  margin: 2px;
+  border-radius: 1px;
+  border-color: white;
 }
 
 div.myr_description {
@@ -69,5 +71,22 @@ div.myr_ppi {
   float: left;
   display:flex;
   flex-direction:column;
-  background-color: rgb(72, 72, 72);
+  background-color: rgb(32, 32, 32);
+  position: relative;
+  width: 600px;
+  height: 600px;
+}
+
+#myr_canvas {
+    z-index: 1;
+    position: absolute;
+    left: 0;
+    top: 0;
+}
+
+#myr_canvas_background {
+    z-index: 2;
+    position: absolute;
+    left: 0;
+    top: 0px;
 }
