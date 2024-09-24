@@ -28,14 +28,8 @@ window.onload = function () {
   canvas = Object;
   canvas.dom = document.getElementById('myr_canvas');
   canvas.background_dom = document.getElementById('myr_canvas_background');
-  var parent = canvas.dom.parentNode,
-    styles = getComputedStyle(parent),
-    w = parseInt(styles.getPropertyValue("width"), 10),
-    h = parseInt(styles.getPropertyValue("height"), 10);
-
-  canvas.dom.width = w;
-  canvas.dom.height = h;
   redrawCanvas();
+  window.onresize = function(){ redrawCanvas(); }
 }
 
 function radarLoaded(r) {
@@ -53,7 +47,6 @@ function radarLoaded(r) {
   }
   webSocket.onclose = (e) => {
     console.log("websocket close: " + e);
-    setControl({ id: '0', value: '0' });
     restart(id);
   }
   webSocket.onmessage = (e) => {
@@ -100,6 +93,16 @@ function hexToRGBA(hex) {
 }
 
 function redrawCanvas() {
+  var parent = canvas.dom.parentNode,
+    styles = getComputedStyle(parent),
+    w = parseInt(styles.getPropertyValue("width"), 10),
+    h = parseInt(styles.getPropertyValue("height"), 10);
+
+  canvas.dom.width = w;
+  canvas.dom.height = h;
+  canvas.background_dom.width = w;
+  canvas.background_dom.height = h;
+
   canvas.width = canvas.dom.width;
   canvas.height = canvas.dom.height;
   canvas.center_x = canvas.width / 2;
