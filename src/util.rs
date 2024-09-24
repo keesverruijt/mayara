@@ -87,8 +87,8 @@ impl fmt::Display for PrintableSpoke<'_> {
                     f,
                     "{}",
                     match sum {
-                        0..8 => ' ',
-                        8..512 => '.',
+                        0 => ' ',
+                        1..512 => '.',
                         _ => '*',
                     }
                 )?;

@@ -149,10 +149,10 @@ impl Command {
                 cmd.extend_from_slice(&value.to_le_bytes());
             }
             ControlType::Gain => {
-                let v: i32 = min((value + 1) * 255 / 100, 255);
+                let v = min((value + 1) * 255 / 100, 255) as u8;
                 let auto = auto as u32;
 
-                cmd.extend_from_slice(&[0x06, 0xc1, 0x00]);
+                cmd.extend_from_slice(&[0x06, 0xc1, 0x00, 0x00, 0x00, 0x00]);
                 cmd.extend_from_slice(&auto.to_le_bytes());
                 cmd.extend_from_slice(&v.to_le_bytes());
             }

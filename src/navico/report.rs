@@ -74,21 +74,22 @@ struct RadarReport2_99 {
     _command: u8,
     range: [u8; 4],             // 2..6 = range
     _u00: [u8; 1],              // 6
-    mode: u8, // 7 = mode, 0 = custom, 1 = harbor, 2 = offshore, 3 = ?, 4 = bird, 5 = weather
-    _u01: [u8; 4], // 8..12
-    gain: u8, // 12
-    sea_auto: u8, // 13 = sea_auto, 0 = off, 1 = harbor, 2 = offshore
-    _u02: [u8; 3], // 14..17
-    sea: [u8; 4], // 17..21
-    _u03: u8, // 21
-    rain: u8, // 22
-    _u04: [u8; 11], // 23..34
+    mode: u8,                   // 7 = mode
+    gain_auto: u8,              // 8
+    _u01: [u8; 3],              // 9..12
+    gain: u8,                   // 12
+    sea_auto: u8,               // 13 = sea_auto, 0 = off, 1 = harbor, 2 = offshore
+    _u02: [u8; 3],              // 14..17
+    sea: [u8; 4],               // 17..21
+    _u03: u8,                   // 21
+    rain: u8,                   // 22
+    _u04: [u8; 11],             // 23..34
     interference_rejection: u8, // 34
-    _u05: [u8; 3], // 35..38
-    target_expansion: u8, // 38
-    _u06: [u8; 3], // 39..42
-    target_boost: u8, // 42
-    _u07: [u8; 56], // 43..99
+    _u05: [u8; 3],              // 35..38
+    target_expansion: u8,       // 38
+    _u06: [u8; 3],              // 39..42
+    target_boost: u8,           // 42
+    _u07: [u8; 56],             // 43..99
 }
 
 impl RadarReport2_99 {
@@ -311,7 +312,7 @@ impl NavicoReportReceiver {
                     "{}: {} via {}: create multicast failed: {}",
                     self.key, &self.info.report_addr, &self.info.nic_addr, e
                 );
-                Err(e)
+                Ok(())
             }
         }
     }
@@ -724,6 +725,7 @@ impl NavicoReportReceiver {
 
         let mode = report.mode as i32;
         let range = i32::from_le_bytes(report.range);
+        let gain_auto = report.gain_auto;
         let gain = report.gain as i32;
         let sea_auto = report.sea_auto;
         let sea = i32::from_le_bytes(report.sea);
@@ -736,7 +738,7 @@ impl NavicoReportReceiver {
         if self.model == Model::HALO {
             self.set_value(&ControlType::Mode, mode);
         }
-        self.set_value(&ControlType::Gain, gain);
+        self.set_auto(&ControlType::Gain, gain, gain_auto);
         self.set_auto(&ControlType::Sea, sea, sea_auto);
         self.set_value(&ControlType::Rain, rain);
         self.set_value(&ControlType::InterferenceRejection, interference_rejection);

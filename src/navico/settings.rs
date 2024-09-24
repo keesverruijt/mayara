@@ -44,11 +44,11 @@ impl NavicoControls {
                 100,
                 AutomaticValue {
                     has_auto: true,
-                    auto_values: 100,
+                    auto_values: 1,
                     auto_descriptions: None,
-                    has_auto_adjustable: true,
-                    auto_adjust_min_value: -50,
-                    auto_adjust_max_value: 50,
+                    has_auto_adjustable: false,
+                    auto_adjust_min_value: 0,
+                    auto_adjust_max_value: 0,
                 },
             )
             .wire_scale_factor(255),
