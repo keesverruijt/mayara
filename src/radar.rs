@@ -656,7 +656,6 @@ impl fmt::Display for DopplerMode {
 }
 
 pub const BLOB_HISTORY_COLORS: u8 = 32;
-const TRANSPARENT: u8 = 0;
 const OPAQUE: u8 = 255;
 
 fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
@@ -680,7 +679,7 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
     let one_third = pixels_with_color / 3;
     let two_thirds = one_third * 2;
 
-    // No return is black and transparent
+    // No return is black
     legend.pixels.push(Lookup {
         r#type: PixelType::Normal,
         color: Color {
@@ -690,7 +689,7 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
             g: 0,
             // blue peaks at 1/3 and is zero by 2/3
             b: 0,
-            a: TRANSPARENT,
+            a: OPAQUE,
         },
     });
 

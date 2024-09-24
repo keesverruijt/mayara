@@ -1,4 +1,4 @@
-export { loadRadar, registerRadarCallback };
+export { loadRadar, registerRadarCallback, registerRangeCallback };
 
 import van from "./van-1.5.2.js";
 
@@ -13,10 +13,15 @@ var myr_range_control_id;
 var myr_webSocket;
 var myr_error_message;
 var myr_no_response_timeout;
-var callbacks = Array();
+var myr_callbacks = Array();
+var myr_range_callbacks = Array();
 
 function registerRadarCallback(callback) {
-  callbacks.push(callback);
+  myr_callbacks.push(callback);
+}
+
+function registerRangeCallback(callback) {
+  myr_range_callbacks.push(callback);
 }
 
 const StringValue = (id, name) =>
@@ -155,9 +160,8 @@ function radarsLoaded(id, d) {
     myr_no_response_timeout.setTimeout();
   }
 
-  callbacks.forEach((value) => {
-    let r = myr_radar;
-    value(r);
+  myr_callbacks.forEach((cb) => {
+    cb(myr_radar);
   });
 }
 
@@ -198,6 +202,9 @@ function setControl(v) {
           myr_range_control_id = v.id;
         }
       }
+      myr_range_callbacks.forEach((cb) => {
+        cb(control, v.value);
+      });
     }
     if (v.error) {
       myr_error_message.raise(v.error);

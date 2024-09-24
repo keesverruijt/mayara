@@ -63,8 +63,9 @@ div.myr_container {
 
 div.myr_controller_left {
   float: left;
-  height: auto;
-  overflow-y:auto;
+  height: 100vh;
+  max-height: 100vh;
+  overflow-y: scroll;
 }
 
 div.myr_ppi {
