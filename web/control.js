@@ -9,6 +9,7 @@ const auto_postfix = '_auto';
 
 var myr_radar;
 var myr_controls;
+var myr_range_control_id;
 var myr_webSocket;
 var myr_error_message;
 var myr_no_response_timeout;
@@ -187,6 +188,17 @@ function setControl(v) {
         checkbox.checked = v.auto;
       }
     }
+    if (control.name == 'Range') {
+      if (control.descriptions[v.value]) {
+        let unit = control.descriptions[v.value].split(/(\s+)/);
+        // Filter either on 'nm' or 'm'
+        if (unit.length == 3) {
+          let units = get_element_by_server_id(999);
+          units.value = (unit[2] == 'nm') ? 1 : 0;
+          myr_range_control_id = v.id;
+        }
+      }
+    }
     if (v.error) {
       myr_error_message.raise(v.error);
     }
@@ -201,6 +213,9 @@ function buildControls() {
   c = get_element_by_server_id('controls');
   c.innerHTML = "";
   for (const [k, v] of Object.entries(myr_controls)) {
+    if (v.name == 'Range') {
+      van.add(c, SelectValue(999, 'Range units', [0, 1], { "0": "Metric", "1": "Nautic" }));
+    }
     van.add(c, (v['isStringValue'])
       ? StringValue(k, v.name)
       : ('validValues' in v)
@@ -223,6 +238,10 @@ function do_change(e) {
   let v = e.target;
   let id = html_to_server_id(v.id);
   console.log("change " + e + " " + id + "=" + v.value);
+  if (id == 999) {
+    handle_range_unit_change(v.value);
+    return;
+  }
   let message = { id: id, value: v.value };
   let checkbox = document.getElementById(v.id + auto_postfix);
   if (checkbox) {
@@ -280,4 +299,27 @@ function auto_to_value_id(id) {
     r = r.substr(0, r.length - auto_postfix.length);
   }
   return r;
+}
+
+function handle_range_unit_change(value) {
+  let unit = (value == 0) ? / (k?)m$/ : / nm$/;
+
+  if (myr_range_control_id) {
+    let e = get_element_by_server_id(myr_range_control_id);
+    // Rebuild the select elements from scratch
+    let c = myr_controls[myr_range_control_id];
+
+    let validValues = Array();
+    let descriptions = {};
+
+    for (const r of c.validValues) {
+      if (c.descriptions[r].match(unit)) {
+        validValues.push(r);
+        descriptions[r] = c.descriptions[r];
+      }
+    }
+
+    e.innerHTML = "";
+    van.add(e, validValues.map(v => option({ value: v }, descriptions[v])));
+  }
 }
