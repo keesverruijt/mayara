@@ -327,7 +327,7 @@ impl NavicoDataReceiver {
         &self,
         header_slice: &[u8],
         scanline: usize,
-    ) -> Option<(u32, u16, Option<u16>)> {
+    ) -> Option<(u32, SpokeBearing, Option<u16>)> {
         match self.info.locator_id {
             LocatorId::Gen3Plus => match deserialize::<Br4gHeader>(&header_slice) {
                 Ok(header) => {
@@ -354,7 +354,7 @@ impl NavicoDataReceiver {
         }
     }
 
-    fn validate_4g_header(header: &Br4gHeader) -> Option<(u32, u16, Option<u16>)> {
+    fn validate_4g_header(header: &Br4gHeader) -> Option<(u32, SpokeBearing, Option<u16>)> {
         if header.header_len != (RADAR_LINE_HEADER_LENGTH as u8) {
             warn!(
                 "Spoke with illegal header length ({}) ignored",
@@ -368,7 +368,7 @@ impl NavicoDataReceiver {
         }
 
         let heading = u16::from_le_bytes(header.heading);
-        let angle = u16::from_le_bytes(header.angle);
+        let angle = u16::from_le_bytes(header.angle) / 2;
         let large_range = u16::from_le_bytes(header.large_range);
         let small_range = u16::from_le_bytes(header.small_range);
 
@@ -386,7 +386,7 @@ impl NavicoDataReceiver {
         Some((range, angle, heading))
     }
 
-    fn validate_br24_header(header: &Br24Header) -> Option<(u32, u16, Option<u16>)> {
+    fn validate_br24_header(header: &Br24Header) -> Option<(u32, SpokeBearing, Option<u16>)> {
         if header.header_len != (RADAR_LINE_HEADER_LENGTH as u8) {
             warn!(
                 "Spoke with illegal header length ({}) ignored",
@@ -400,7 +400,7 @@ impl NavicoDataReceiver {
         }
 
         let heading = u16::from_le_bytes(header.heading);
-        let angle = u16::from_le_bytes(header.angle);
+        let angle = u16::from_le_bytes(header.angle) / 2;
         let range = u32::from_le_bytes(header.range);
 
         let heading = extract_heading_value(heading);
@@ -408,7 +408,13 @@ impl NavicoDataReceiver {
         Some((range, angle, heading))
     }
 
-    fn process_spoke(&self, range: u32, angle: u16, heading: Option<u16>, spoke: &[u8]) -> Spoke {
+    fn process_spoke(
+        &self,
+        range: u32,
+        angle: SpokeBearing,
+        heading: Option<u16>,
+        spoke: &[u8],
+    ) -> Spoke {
         let pixel_to_blob = &self.pixel_to_blob;
 
         // Convert the spoke data to bytes
@@ -447,20 +453,19 @@ impl NavicoDataReceiver {
             generic_spoke.len()
         );
 
-        let angle = (angle / 2) as u32;
         // For now, don't send heading in replay mode, signalk-radar-client doesn't
         // handle it well yet.
         let heading = if self.replay {
             None
         } else {
-            heading.map(|h| (((h / 2) as u32) + angle) % (NAVICO_SPOKES as u32))
+            heading.map(|h| (((h / 2) + angle) % (NAVICO_SPOKES as u16)) as u32)
         };
 
         let mut message = RadarMessage::new();
         message.radar = 1;
         let mut spoke = Spoke::new();
         spoke.range = range;
-        spoke.angle = angle;
+        spoke.angle = angle as u32;
         spoke.bearing = heading;
         spoke.time = SystemTime::now()
             .duration_since(UNIX_EPOCH)

@@ -436,10 +436,10 @@ impl Control {
 pub(crate) struct AutomaticValue {
     #[serde(skip_serializing_if = "is_false")]
     pub(crate) has_auto: bool,
-    #[serde(skip)]
-    pub(crate) auto_values: i32,
-    #[serde(skip)]
-    pub(crate) auto_descriptions: Option<Vec<String>>,
+    //#[serde(skip)]
+    //pub(crate) auto_values: i32,
+    //#[serde(skip)]
+    //pub(crate) auto_descriptions: Option<Vec<String>>,
     pub(crate) has_auto_adjustable: bool,
     pub(crate) auto_adjust_min_value: i32,
     pub(crate) auto_adjust_max_value: i32,

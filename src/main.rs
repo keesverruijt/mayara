@@ -17,6 +17,7 @@ mod navico;
 mod protos;
 mod radar;
 mod settings;
+mod signalk;
 mod util;
 mod web;
 
@@ -56,6 +57,8 @@ async fn main() -> Result<()> {
     env_logger::Builder::from_env(Env::default())
         .filter_level(log_level)
         .filter_module("tungstenite::protocol", log::LevelFilter::Info)
+        .filter_module("mdns_sd", log::LevelFilter::Info)
+        .filter_module("polling", log::LevelFilter::Info)
         .init();
 
     info!("Mayara {} loglevel {}", VERSION, log_level);
@@ -74,13 +77,15 @@ async fn main() -> Result<()> {
         warn!("Output mode activated; 'protobuf' formatted RadarMessage sent to stdout");
     }
 
+    let signal_k = signalk::NavigationData::new();
     let radars = SharedRadars::new(args.clone());
     let radars_clone1 = radars.clone();
 
-    let web = Web::new(args.port, radars_clone1);
     let locator = Locator::new(radars);
+    let web = Web::new(args.port, radars_clone1);
 
     Toplevel::new(|s| async move {
+        s.start(SubsystemBuilder::new("SignalK", |a| signal_k.run(a)));
         s.start(SubsystemBuilder::new("Locator", |a| locator.run(a)));
         s.start(SubsystemBuilder::new("Webserver", |a| web.run(a)));
     })

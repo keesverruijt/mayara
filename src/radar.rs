@@ -15,6 +15,8 @@ use std::{
 use thiserror::Error;
 use tokio_graceful_shutdown::SubsystemHandle;
 
+mod trail;
+
 use crate::config::Persistence;
 use crate::locator::LocatorId;
 use crate::protos::RadarMessage::RadarMessage;
@@ -23,9 +25,11 @@ use crate::settings::{
 };
 use crate::Cli;
 
+pub(crate) type SpokeBearing = u16;
+
 #[derive(Error, Debug)]
 pub enum RadarError {
-    #[error("Socket operation failed")]
+    #[error("I/O operation failed")]
     Io(#[from] std::io::Error),
     #[error("Interface '{0}' is not available")]
     InterfaceNotFound(String),
@@ -43,6 +47,8 @@ pub enum RadarError {
     MissingValue(ControlType),
     #[error("No such radar with key '{0}'")]
     NoSuchRadar(String),
+    #[error("Cannot parse JSON '{0}'")]
+    ParseJson(String),
 }
 
 // Tell axum how to convert `AppError` into a response.
@@ -101,6 +107,7 @@ pub struct Legend {
     pub doppler_approaching: u8,
     pub doppler_receding: u8,
     pub history_start: u8,
+    pub strong_return: u8,
 }
 
 impl Serialize for Legend {
@@ -665,6 +672,7 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
         border: 0,
         doppler_approaching: 0,
         doppler_receding: 0,
+        strong_return: 0,
     };
 
     let mut pixel_values = pixel_values;
@@ -678,6 +686,7 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
     let delta: f32 = (WHITE * 2.0) / (pixels_with_color as f32);
     let one_third = pixels_with_color / 3;
     let two_thirds = one_third * 2;
+    legend.strong_return = two_thirds;
 
     // No return is black
     legend.pixels.push(Lookup {
