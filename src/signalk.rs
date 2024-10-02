@@ -10,6 +10,8 @@ use std::{
     pin::Pin,
     sync::atomic::{AtomicBool, Ordering},
 };
+use tokio::io::AsyncBufReadExt;
+use tokio::io::BufReader;
 use tokio::{io::AsyncWriteExt, net::TcpStream};
 use tokio_graceful_shutdown::SubsystemHandle;
 
@@ -22,12 +24,29 @@ const TCP_SERVICE_NAME: &'static str = "_signalk-tcp._tcp.local.";
 const SUBSCRIBE: &'static str =
     "{\"context\": \"vessels.self\",\"subscribe\": [{\"path\": \"navigation.headingTrue\"},{\"path\": \"navigation.position\"}]}\r\n";
 
-pub(crate) static HEADING_TRUE_VALID: AtomicBool = AtomicBool::new(false);
-pub(crate) static POSITION_VALID: AtomicBool = AtomicBool::new(false);
-pub(crate) static HEADING_TRUE: AtomicF64 = AtomicF64::new(0.0);
-pub(crate) static POSITION_LAT: AtomicF64 = AtomicF64::new(0.0);
-pub(crate) static POSITION_LON: AtomicF64 = AtomicF64::new(0.0);
+static HEADING_TRUE_VALID: AtomicBool = AtomicBool::new(false);
+static POSITION_VALID: AtomicBool = AtomicBool::new(false);
+static HEADING_TRUE: AtomicF64 = AtomicF64::new(0.0);
+static POSITION_LAT: AtomicF64 = AtomicF64::new(0.0);
+static POSITION_LON: AtomicF64 = AtomicF64::new(0.0);
 
+pub(crate) fn get_heading_true() -> Option<f64> {
+    if HEADING_TRUE_VALID.load(Ordering::Acquire) {
+        return Some(HEADING_TRUE.load(Ordering::Acquire));
+    }
+    return None;
+}
+
+pub(crate) fn get_position_i64() -> (Option<i64>, Option<i64>) {
+    if POSITION_VALID.load(Ordering::Acquire) {
+        let lat = POSITION_LAT.load(Ordering::Acquire);
+        let lon = POSITION_LON.load(Ordering::Acquire);
+        let lat = (lat * 1e16) as i64;
+        let lon = (lon * 1e16) as i64;
+        return (Some(lat), Some(lon));
+    }
+    return (None, None);
+}
 pub(crate) struct NavigationData {}
 
 impl NavigationData {
@@ -54,7 +73,7 @@ impl NavigationData {
                 event = tcp_locator.recv_async() => {
                     match event {
                         Ok(ServiceEvent::ServiceResolved(info)) => {
-                            log::info!("Resolved a new service: {}", info.get_fullname());
+                            log::debug!("Resolved a new service: {}", info.get_fullname());
                             let addr = info.get_addresses();
                             let port = info.get_port();
 
@@ -63,7 +82,7 @@ impl NavigationData {
                             }
                         },
                         other_event => {
-                            log::info!("Received other event: {:?}", &other_event);
+                            log::trace!("Received other event: {:?}", &other_event);
                             continue;
                         }
                     }
@@ -74,6 +93,10 @@ impl NavigationData {
             let stream = connect_first(known_addresses.clone()).await;
             match stream {
                 Ok(stream) => {
+                    log::info!(
+                        "Listening to Signal K data from {}",
+                        stream.peer_addr().unwrap()
+                    );
                     if self.receive_loop(stream, &subsys).await.is_ok() {
                         break;
                     }
@@ -82,7 +105,11 @@ impl NavigationData {
             }
         }
 
-        mdns.shutdown().unwrap();
+        if let Ok(r) = mdns.shutdown() {
+            if let Ok(r) = r.recv() {
+                log::debug!("mdns_shutdown: {:?}", r);
+            }
+        }
         return Ok(());
     }
 
@@ -90,35 +117,31 @@ impl NavigationData {
     // or Ok if we are to shutdown.
     async fn receive_loop(
         &self,
-        mut stream: TcpStream,
+        stream: TcpStream,
         subsys: &SubsystemHandle,
     ) -> Result<(), RadarError> {
+        let mut buffered = BufReader::new(stream);
+
         loop {
-            let mut buf = [0; 4096];
+            let mut line = String::new();
 
             tokio::select! { biased;
                 _ = subsys.on_shutdown_requested() => {
+                    log::info!("SK receive_loop done");
                     return Ok(());
                 },
-                _ = stream.readable() => {
-                    match stream.try_read(&mut buf) {
-                        Ok(n) => {
-                            if n > 2 {
-
-                                // Try to convert to String
-                                if let Ok(s) = std::str::from_utf8(&buf[0..n]) {
-                                    log::info!("SK <- {}", s);
-                                    let s = s.to_string();
-                                    if s.starts_with("{\"name\":") {
-                                        self.subscribe(&mut stream).await?;
-                                        log::info!("SK -> {}", SUBSCRIBE);
-                                    }
-                                    else {
-                                        match parse_signalk(&s) {
-                                            Err(e) => { log::warn!("{}", e)}
-                                            Ok(_) => { }
-                                        }
-                                    }
+                r = buffered.read_line(&mut line) => {
+                    match r {
+                        Ok(_) => {
+                            log::trace!("SK <- {}", line);
+                            if line.starts_with("{\"name\":") {
+                                self.send_subscription(&mut buffered).await?;
+                                log::trace!("SK -> {}", SUBSCRIBE);
+                            }
+                            else {
+                                match parse_signalk(&line) {
+                                    Err(e) => { log::warn!("{}", e)}
+                                    Ok(_) => { }
                                 }
                             }
                         }
@@ -134,7 +157,7 @@ impl NavigationData {
         }
     }
 
-    async fn subscribe(&self, stream: &mut TcpStream) -> Result<(), RadarError> {
+    async fn send_subscription(&self, stream: &mut BufReader<TcpStream>) -> Result<(), RadarError> {
         let bytes: &[u8] = SUBSCRIBE.as_bytes();
 
         stream.write_all(bytes).await.map_err(|e| RadarError::Io(e))
@@ -149,13 +172,12 @@ impl NavigationData {
 fn parse_signalk(s: &str) -> Result<(), RadarError> {
     match serde_json::from_str::<Value>(s) {
         Ok(v) => {
-            let values = &v["values"];
+            let updates = &v["updates"][0];
+            let values = &updates["values"][0];
             {
-                log::info!("{:?}", values);
+                log::trace!("values: {:?}", values);
 
-                if let (Some(path), Some(value)) =
-                    (values["path"].as_str(), values["value"].as_object())
-                {
+                if let (Some(path), value) = (values["path"].as_str(), &values["value"]) {
                     match path {
                         "navigation.position" => {
                             if let (Some(longitude), Some(latitude)) =
@@ -167,8 +189,8 @@ fn parse_signalk(s: &str) -> Result<(), RadarError> {
                                 return Ok(());
                             }
                         }
-                        "navigation.trueHeading" => {
-                            if let Some(heading) = value["heading"].as_f64() {
+                        "navigation.headingTrue" => {
+                            if let Some(heading) = value.as_f64() {
                                 HEADING_TRUE_VALID.store(true, Ordering::Release);
                                 HEADING_TRUE.store(heading, Ordering::Release);
                                 return Ok(());
@@ -196,7 +218,7 @@ async fn connect_to_socket(address: SocketAddr) -> Result<TcpStream, RadarError>
     let stream = TcpStream::connect(address)
         .await
         .map_err(|e| RadarError::Io(e))?;
-    log::info!("Connected to {}", address);
+    log::debug!("Connected to {}", address);
     Ok(stream)
 }
 
@@ -220,7 +242,7 @@ where
         addresses
             .into_iter()
             .map(|address| {
-                log::info!("Connecting to {}", address);
+                log::debug!("Connecting to {}", address);
                 Box::pin(connect_to_socket(address)) as Pin<Box<dyn Future<Output = _> + Send>>
             })
             .collect();
@@ -228,11 +250,11 @@ where
     // Use select_ok to return the first successful connection
     match select_ok(futures).await {
         Ok((stream, _)) => {
-            log::info!("First successful connection: {:?}", stream);
+            log::debug!("First successful connection: {:?}", stream);
             Ok(stream)
         }
         Err(e) => {
-            log::info!("All connections failed: {}", e);
+            log::debug!("All connections failed: {}", e);
             Err(e)
         }
     }

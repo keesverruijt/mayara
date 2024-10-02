@@ -65,7 +65,23 @@ impl Controls {
         self.controls.insert(control_type, value);
     }
 
-    pub fn new_base(controls: HashMap<ControlType, Control>) -> Self {
+    pub fn new_base(mut controls: HashMap<ControlType, Control>) -> Self {
+        // Add controls that are not radar dependent
+
+        let descriptions = HashMap::from([
+            (0, "Off".to_string()),
+            (15, "15s".to_string()),
+            (30, "30s".to_string()),
+            (60, "1 min".to_string()),
+            (180, "3 min".to_string()),
+            (300, "5 min".to_string()),
+            (600, "10 min".to_string()),
+        ]);
+
+        let control = Control::new_map(ControlType::TargetTrails, descriptions);
+
+        controls.insert(ControlType::TargetTrails, control);
+
         Controls { controls }
     }
 
@@ -198,7 +214,7 @@ impl Control {
             control_type,
             name: control_type.to_string(),
             automatic: None,
-            has_off: false,
+            //has_off: false,
             default_value: min_value,
             min_value,
             max_value,
@@ -227,7 +243,7 @@ impl Control {
             control_type,
             name: control_type.to_string(),
             automatic: Some(automatic),
-            has_off: false,
+            //has_off: false,
             default_value: min_value,
             min_value,
             max_value,
@@ -248,7 +264,7 @@ impl Control {
             control_type,
             name: control_type.to_string(),
             automatic: None,
-            has_off: false,
+            //has_off: false,
             default_value: Some(0),
             min_value: Some(0),
             max_value: Some((descriptions.len() as i32) - 1),
@@ -270,12 +286,32 @@ impl Control {
         })
     }
 
+    pub fn new_map(control_type: ControlType, descriptions: HashMap<i32, String>) -> Self {
+        Self::new(ControlDefinition {
+            control_type,
+            name: control_type.to_string(),
+            automatic: None,
+            //has_off: false,
+            default_value: Some(0),
+            min_value: Some(0),
+            max_value: Some((descriptions.len() as i32) - 1),
+            step_value: Some(1),
+            wire_scale_factor: Some((descriptions.len() as i32) - 1),
+            wire_offset: Some(0),
+            unit: None,
+            descriptions: Some(descriptions),
+            valid_values: None,
+            is_read_only: false,
+            is_string_value: false,
+            is_send_always: false,
+        })
+    }
     pub fn new_string(control_type: ControlType) -> Self {
         let control = Self::new(ControlDefinition {
             control_type,
             name: control_type.to_string(),
             automatic: None,
-            has_off: false,
+            //has_off: false,
             default_value: None,
             min_value: None,
             max_value: None,
@@ -451,8 +487,8 @@ pub(crate) struct ControlDefinition {
     #[serde(skip)]
     pub(crate) control_type: ControlType,
     name: String,
-    #[serde(skip)]
-    has_off: bool,
+    //#[serde(skip)]
+    //has_off: bool,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     automatic: Option<AutomaticValue>,
     #[serde(skip_serializing_if = "is_false")]
@@ -520,7 +556,7 @@ pub enum ControlType {
     TargetBoost,
     TargetExpansion,
     TargetSeparation,
-    // TargetTrails,
+    TargetTrails,
     // TimedIdle,
     // TimedRun,
     // TrailsMotion,
@@ -605,7 +641,7 @@ impl Display for ControlType {
             ControlType::TargetBoost => "Target boost",
             ControlType::TargetExpansion => "Target expansion",
             ControlType::TargetSeparation => "Target separation",
-            // ControlType::TargetTrails => "Target trails",
+            ControlType::TargetTrails => "Target trails",
             // ControlType::TimedIdle => "Time idle",
             // ControlType::TimedRun => "Timed run",
             // ControlType::TrailsMotion => "Target trails motion",

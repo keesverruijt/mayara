@@ -15,7 +15,7 @@ use std::{
 use thiserror::Error;
 use tokio_graceful_shutdown::SubsystemHandle;
 
-mod trail;
+pub(crate) mod trail;
 
 use crate::config::Persistence;
 use crate::locator::LocatorId;
@@ -58,13 +58,16 @@ impl IntoResponse for RadarError {
     }
 }
 
+//
+// This order of pixeltypes is also how they are stored in the legend.
+//
 #[derive(Serialize, Clone, Debug)]
 enum PixelType {
-    History,
+    Normal,
     TargetBorder,
     DopplerApproaching,
     DopplerReceding,
-    Normal,
+    History,
 }
 
 #[derive(Clone, Debug)]
@@ -255,7 +258,7 @@ impl RadarInfo {
         self.legend = default_legend(doppler, self.pixel_values);
     }
 
-    pub fn full_rotation(&mut self) {
+    pub fn full_rotation(&mut self) -> u32 {
         let now = Instant::now();
         let diff: Duration = now - self.rotation_timestamp;
         let diff = diff.as_millis() as f64;
@@ -265,12 +268,17 @@ impl RadarInfo {
 
         log::debug!("{}: rotation speed {} dRPM", self.key, rpm);
 
-        let _ = self
-            .command_tx
-            .send(ControlMessage::SetValue(ControlValue::new(
-                ControlType::RotationSpeed,
-                rpm,
-            )));
+        if diff < 3000. && diff > 600. {
+            let _ = self
+                .command_tx
+                .send(ControlMessage::SetValue(ControlValue::new(
+                    ControlType::RotationSpeed,
+                    rpm,
+                )));
+            diff as u32
+        } else {
+            0
+        }
     }
 
     ///

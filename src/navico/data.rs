@@ -2,12 +2,14 @@ use bincode::deserialize;
 use log::{debug, trace, warn};
 use protobuf::Message;
 use serde::Deserialize;
+use std::f64::consts::PI;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{io, time::Duration};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::Receiver;
 use tokio::time::sleep;
 use tokio_graceful_shutdown::SubsystemHandle;
+use trail::TrailBuffer;
 
 use crate::locator::LocatorId;
 use crate::navico::NAVICO_SPOKE_LEN;
@@ -114,12 +116,13 @@ pub struct NavicoDataReceiver {
     key: String,
     statistics: Statistics,
     info: RadarInfo,
-    buf: Vec<u8>,
     sock: Option<UdpSocket>,
     rx: tokio::sync::mpsc::Receiver<DataUpdate>,
     doppler: DopplerMode,
     pixel_to_blob: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH],
     replay: bool,
+    trails: TrailBuffer,
+    previous_range: u32,
 }
 
 impl NavicoDataReceiver {
@@ -127,17 +130,19 @@ impl NavicoDataReceiver {
         let key = info.key();
 
         let pixel_to_blob = Self::pixel_to_blob(&info.legend);
+        let trails = TrailBuffer::new(info.legend.clone(), NAVICO_SPOKES, NAVICO_SPOKE_LEN);
 
         NavicoDataReceiver {
             key,
             statistics: Statistics { broken_packets: 0 },
             info: info,
-            buf: Vec::with_capacity(size_of::<RadarFramePkt>()),
             sock: None,
             rx,
             doppler: DopplerMode::None,
             pixel_to_blob,
             replay,
+            trails,
+            previous_range: 0,
         }
     }
 
@@ -205,11 +210,16 @@ impl NavicoDataReceiver {
                 self.pixel_to_blob = Self::pixel_to_blob(&legend);
                 self.info.legend = legend;
             }
+            Some(DataUpdate::RelativeTrail(seconds)) => {
+                self.trails.set_relative_trails_revolutions(seconds);
+            }
             None => {}
         }
     }
 
     async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
+        let mut buf = Vec::with_capacity(size_of::<RadarFramePkt>());
+
         loop {
             tokio::select! { biased;
                 _ = subsys.on_shutdown_requested() => {
@@ -218,10 +228,10 @@ impl NavicoDataReceiver {
                 r = self.rx.recv() => {
                   self.handle_data_update(r);
                 },
-                r = self.sock.as_ref().unwrap().recv_buf_from(&mut self.buf)  => {
+                r = self.sock.as_ref().unwrap().recv_buf_from(&mut buf)  => {
                     match r {
                         Ok(_) => {
-                            self.process_frame();
+                            self.process_frame(&mut buf);
                         },
                         Err(e) => {
                             return Err(RadarError::Io(e));
@@ -229,7 +239,7 @@ impl NavicoDataReceiver {
                     }
                 },
             }
-            self.buf.clear();
+            buf.clear();
         }
     }
 
@@ -253,9 +263,7 @@ impl NavicoDataReceiver {
         }
     }
 
-    fn process_frame(&mut self) {
-        let data = &self.buf;
-
+    fn process_frame(&mut self, data: &mut Vec<u8>) {
         if data.len() < FRAME_HEADER_LENGTH + RADAR_LINE_LENGTH {
             warn!(
                 "UDP data frame with even less than one spoke, len {} dropped",
@@ -305,7 +313,8 @@ impl NavicoDataReceiver {
         }
 
         if mark_full_rotation {
-            self.info.full_rotation();
+            let ms = self.info.full_rotation();
+            self.trails.set_rotation_speed(ms);
         }
 
         let mut bytes = Vec::new();
@@ -409,7 +418,7 @@ impl NavicoDataReceiver {
     }
 
     fn process_spoke(
-        &self,
+        &mut self,
         range: u32,
         angle: SpokeBearing,
         heading: Option<u16>,
@@ -453,20 +462,38 @@ impl NavicoDataReceiver {
             generic_spoke.len()
         );
 
+        if range != self.previous_range && range != 0 {
+            if self.previous_range != 0 {
+                let zoom_factor = self.previous_range as f64 / range as f64;
+                self.trails.zoom_relative_trails(zoom_factor);
+            }
+            self.previous_range = range;
+        }
+
         // For now, don't send heading in replay mode, signalk-radar-client doesn't
         // handle it well yet.
         let heading = if self.replay {
             None
-        } else {
+        } else if heading.is_some() {
             heading.map(|h| (((h / 2) + angle) % (NAVICO_SPOKES as u16)) as u32)
+        } else {
+            let heading = crate::signalk::get_heading_true();
+            heading.map(|h| {
+                (((h * NAVICO_SPOKES as f64 / (2. * PI)) as u16 + angle) % (NAVICO_SPOKES as u16))
+                    as u32
+            })
         };
 
-        let mut message = RadarMessage::new();
-        message.radar = 1;
+        self.trails
+            .update_relative_trails(angle, &mut generic_spoke);
+
+        let mut message: RadarMessage = RadarMessage::new();
+        message.radar = self.info.id as u32;
         let mut spoke = Spoke::new();
         spoke.range = range;
         spoke.angle = angle as u32;
         spoke.bearing = heading;
+        (spoke.lat, spoke.lon) = crate::signalk::get_position_i64();
         spoke.time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)

@@ -42,6 +42,7 @@ const NAVICO_BEACON_ADDRESS: SocketAddr =
 pub enum DataUpdate {
     Doppler(DopplerMode),
     Legend(Legend),
+    RelativeTrail(u16),
 }
 
 #[derive(Deserialize, Debug, Copy, Clone)]
