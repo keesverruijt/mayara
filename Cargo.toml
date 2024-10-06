@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.80.1"
 
+[features]
+navico = []
+furuno = []
+default = ["navico", "furuno"]
+
 [dependencies]
 anyhow = "1.0.86"
 async-trait = "0.1.81"
@@ -18,7 +23,7 @@ crossbeam = "0.8.4"
 directories = "5.0.1"
 enum-primitive-derive = "0.3.0"
 env_logger = "0.11.5"
-futures-util = "0.3.30"
+futures-util = "0.3.31"
 libc = "0.2.156"
 log = "0.4.22"
 mdns-sd = "0.11.4"

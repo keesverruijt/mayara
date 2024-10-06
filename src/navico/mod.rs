@@ -3,7 +3,6 @@ use bincode::deserialize;
 use enum_primitive_derive::Primitive;
 use log::{debug, error, log_enabled, trace};
 use serde::Deserialize;
-use settings::NavicoControls;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::{fmt, io};
 use tokio::sync::mpsc;
@@ -220,7 +219,7 @@ fn found(mut info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
         };
         if model != Model::Unknown {
             let info2 = info.clone();
-            info.controls.update_when_model_known(model, &info2);
+            settings::update_when_model_known(&mut info.controls, model, &info2);
             info.set_legend(model == Model::HALO);
             radars.update(&info);
         }
@@ -327,7 +326,7 @@ fn process_beacon_report(
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
-                        NavicoControls::new(None),
+                        settings::new(None),
                     );
                     found(location_info, radars, subsys);
 
@@ -347,7 +346,7 @@ fn process_beacon_report(
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
-                        NavicoControls::new(None),
+                        settings::new(None),
                     );
                     found(location_info, radars, subsys);
                 }
@@ -381,7 +380,7 @@ fn process_beacon_report(
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
-                        NavicoControls::new(None),
+                        settings::new(None),
                     );
                     found(location_info, radars, subsys);
                 }
@@ -415,7 +414,7 @@ fn process_beacon_report(
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
-                        NavicoControls::new(Some(BR24_MODEL_NAME)),
+                        settings::new(Some(BR24_MODEL_NAME)),
                     );
                     found(location_info, radars, subsys);
                 }

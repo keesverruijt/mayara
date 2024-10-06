@@ -12,7 +12,7 @@ use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::radar::{DopplerMode, RadarError, RadarInfo, RangeDetection, SharedRadars};
 use crate::settings::{ControlMessage, ControlState, ControlType, ControlValue};
-use crate::util::{c_string, c_wide_string, create_multicast};
+use crate::util::{c_string, c_wide_string, create_listen_socket};
 
 use super::command::Command;
 use super::{DataUpdate, Model};
@@ -297,7 +297,7 @@ impl NavicoReportReceiver {
     }
 
     async fn start_socket(&mut self) -> io::Result<()> {
-        match create_multicast(&self.info.report_addr, &self.info.nic_addr) {
+        match create_listen_socket(&self.info.report_addr, &self.info.nic_addr) {
             Ok(sock) => {
                 self.sock = Some(sock);
                 debug!(
@@ -801,7 +801,11 @@ impl NavicoReportReceiver {
                     info!("{}: Radar is model {}", self.key, model);
                     let info2 = self.info.clone();
                     self.model = model;
-                    self.info.controls.update_when_model_known(model, &info2);
+                    super::settings::update_when_model_known(
+                        &mut self.info.controls,
+                        model,
+                        &info2,
+                    );
                     self.info.set_legend(model == Model::HALO);
 
                     self.radars.update(&self.info);

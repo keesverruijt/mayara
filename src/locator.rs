@@ -23,7 +23,7 @@ use tokio::time::sleep;
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::radar::{RadarError, SharedRadars};
-use crate::{navico, util, Cli};
+use crate::{furuno, navico, util, Cli};
 
 const LOCATOR_PACKET_BUFFER_LEN: usize = 300; // Long enough for any location packet
 
@@ -31,6 +31,7 @@ const LOCATOR_PACKET_BUFFER_LEN: usize = 300; // Long enough for any location pa
 pub enum LocatorId {
     GenBR24,
     Gen3Plus,
+    Furuno,
 }
 
 impl LocatorId {
@@ -39,6 +40,7 @@ impl LocatorId {
         match *self {
             GenBR24 => "Navico BR24",
             Gen3Plus => "Navico 3G/4G/HALO",
+            Furuno => "Furuno DRSxxxx",
         }
     }
 }
@@ -126,14 +128,7 @@ impl Locator {
 
     pub async fn run(self, subsys: SubsystemHandle) -> Result<(), RadarError> {
         let radars = &self.radars;
-        let navico_locator = navico::create_locator();
-        let navico_br24_locator = navico::create_br24_locator();
-        //let mut garmin_locator = garmin::create_locator();
-
         let mut listen_addresses: Vec<RadarListenAddress> = Vec::new();
-        navico_locator.update_listen_addresses(&mut listen_addresses);
-        navico_br24_locator.update_listen_addresses(&mut listen_addresses);
-        // garmin_locator.update_listen_addresses(&listen_addresses);
 
         info!("Entering loop, listening for radars");
         let mut interface_state = InterfaceState {
@@ -144,11 +139,33 @@ impl Locator {
             first_loop: true,
         };
 
+        #[cfg(feature = "navico")]
+        if interface_state
+            .args
+            .brand
+            .as_ref()
+            .unwrap_or(&"navico".to_owned())
+            .eq_ignore_ascii_case("navico")
+        {
+            navico::create_locator().update_listen_addresses(&mut listen_addresses);
+            navico::create_br24_locator().update_listen_addresses(&mut listen_addresses);
+        }
+        #[cfg(feature = "furuno")]
+        if interface_state
+            .args
+            .brand
+            .as_ref()
+            .unwrap_or(&"furuno".to_owned())
+            .eq_ignore_ascii_case("furuno")
+        {
+            furuno::create_locator().update_listen_addresses(&mut listen_addresses);
+        }
+
         loop {
             let cancellation_token = subsys.create_cancellation_token();
 
             // create a list of sockets for all listen addresses
-            let sockets = create_multicast_sockets(&listen_addresses, &mut interface_state);
+            let sockets = create_listen_sockets(&listen_addresses, &mut interface_state);
             let mut set = JoinSet::new();
             if sockets.is_err() {
                 if interface_state.args.interface.is_some() {
@@ -172,7 +189,7 @@ impl Locator {
             });
 
             // Now that we're listening to the radars, send any address request (wake) packets
-            {
+            if !interface_state.args.replay {
                 for x in &listen_addresses {
                     if let Some(address_request) = x.adress_request_packet {
                         send_multicast_packet(&x.address, address_request);
@@ -264,7 +281,7 @@ fn send_multicast_packet(addr: &SocketAddr, msg: &[u8]) {
     }
 }
 
-fn create_multicast_sockets(
+fn create_listen_sockets(
     listen_addresses: &Vec<RadarListenAddress>,
     interface_state: &mut InterfaceState,
 ) -> Result<Vec<LocatorInfo>, RadarError> {
@@ -278,7 +295,9 @@ fn create_multicast_sockets(
 
                 if only_interface.is_none() || only_interface.as_ref() == Some(&itf.name) {
                     for nic_addr in itf.addr {
-                        if let IpAddr::V4(nic_ip) = nic_addr.ip() {
+                        if let (IpAddr::V4(nic_ip), Some(IpAddr::V4(nic_netmask))) =
+                            (nic_addr.ip(), nic_addr.netmask())
+                        {
                             if !nic_ip.is_loopback() || only_interface.is_some() {
                                 if interface_state.lost_nic_names.contains_key(&itf.name)
                                     || !interface_state.active_nic_addresses.contains(&nic_ip)
@@ -299,7 +318,7 @@ fn create_multicast_sockets(
                                         "Interface '{}' now listening on IP address {}/{} for radars",
                                         itf.name,
                                         &nic_ip,
-                                        nic_addr.netmask().unwrap()
+                                        &nic_netmask,
                                     );
                                     }
                                     interface_state.active_nic_addresses.push(nic_ip.clone());
@@ -310,7 +329,25 @@ fn create_multicast_sockets(
                                     if let SocketAddr::V4(listen_addr) =
                                         radar_listen_address.address
                                     {
-                                        let socket = util::create_multicast(&listen_addr, &nic_ip);
+                                        if !listen_addr.ip().is_multicast() {
+                                            log::info!("{} is not multicast", listen_addr.ip());
+                                            if !util::match_ipv4(
+                                                &nic_ip,
+                                                listen_addr.ip(),
+                                                &nic_netmask,
+                                            ) {
+                                                log::info!(
+                                                    "{}/{} does not match bcast {}",
+                                                    nic_ip,
+                                                    nic_netmask,
+                                                    listen_addr.ip()
+                                                );
+                                                continue;
+                                            }
+                                        }
+
+                                        let socket =
+                                            util::create_listen_socket(&listen_addr, &nic_ip);
                                         match socket {
                                             Ok(socket) => {
                                                 sockets.push(LocatorInfo {
@@ -319,13 +356,13 @@ fn create_multicast_sockets(
                                                     process: radar_listen_address.process,
                                                 });
                                                 debug!(
-                                                "Listening on '{}' address {} for multicast address {}",
-                                                itf.name, nic_ip, listen_addr,
-                                            );
+                                                    "Listening on '{}' address {} for address {}",
+                                                    itf.name, nic_ip, listen_addr,
+                                                );
                                             }
                                             Err(e) => {
                                                 warn!(
-                                                "Cannot listen on '{}' address {} for multicast address {}: {}",
+                                                "Cannot listen on '{}' address {} for address {}: {}",
                                                 itf.name, nic_ip, listen_addr, e
                                             );
                                             }

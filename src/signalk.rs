@@ -10,8 +10,8 @@ use std::{
     pin::Pin,
     sync::atomic::{AtomicBool, Ordering},
 };
-use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
+use tokio::io::{AsyncBufReadExt, BufWriter};
 use tokio::{io::AsyncWriteExt, net::TcpStream};
 use tokio_graceful_shutdown::SubsystemHandle;
 
@@ -117,25 +117,25 @@ impl NavigationData {
     // or Ok if we are to shutdown.
     async fn receive_loop(
         &self,
-        stream: TcpStream,
+        mut stream: TcpStream,
         subsys: &SubsystemHandle,
     ) -> Result<(), RadarError> {
-        let mut buffered = BufReader::new(stream);
+        let (read_half, write_half) = stream.split();
+        let mut writer = BufWriter::new(write_half);
+        let mut lines = BufReader::new(read_half).lines();
 
         loop {
-            let mut line = String::new();
-
             tokio::select! { biased;
                 _ = subsys.on_shutdown_requested() => {
                     log::info!("SK receive_loop done");
                     return Ok(());
                 },
-                r = buffered.read_line(&mut line) => {
+                r = lines.next_line() => {
                     match r {
-                        Ok(_) => {
+                        Ok(Some(line)) => {
                             log::trace!("SK <- {}", line);
                             if line.starts_with("{\"name\":") {
-                                self.send_subscription(&mut buffered).await?;
+                                self.send_subscription(&mut writer).await?;
                                 log::trace!("SK -> {}", SUBSCRIBE);
                             }
                             else {
@@ -144,6 +144,9 @@ impl NavigationData {
                                     Ok(_) => { }
                                 }
                             }
+                        }
+                        Ok(None) => {
+                            return Ok(());
                         }
                         Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
                             continue;
@@ -157,7 +160,10 @@ impl NavigationData {
         }
     }
 
-    async fn send_subscription(&self, stream: &mut BufReader<TcpStream>) -> Result<(), RadarError> {
+    async fn send_subscription(
+        &self,
+        stream: &mut BufWriter<tokio::net::tcp::WriteHalf<'_>>,
+    ) -> Result<(), RadarError> {
         let bytes: &[u8] = SUBSCRIBE.as_bytes();
 
         stream.write_all(bytes).await.map_err(|e| RadarError::Io(e))

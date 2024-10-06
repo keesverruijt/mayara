@@ -11,12 +11,12 @@ use tokio::time::sleep;
 use tokio_graceful_shutdown::SubsystemHandle;
 use trail::TrailBuffer;
 
-use crate::locator::LocatorId;
+use crate::locator::{Locator, LocatorId};
 use crate::navico::NAVICO_SPOKE_LEN;
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::*;
-use crate::util::{create_multicast, PrintableSpoke};
+use crate::util::{create_listen_socket, PrintableSpoke};
 
 use super::{
     DataUpdate, NAVICO_SPOKES, NAVICO_SPOKES_RAW, RADAR_LINE_DATA_LENGTH, SPOKES_PER_FRAME,
@@ -147,7 +147,7 @@ impl NavicoDataReceiver {
     }
 
     async fn start_socket(&mut self) -> io::Result<()> {
-        match create_multicast(&self.info.spoke_data_addr, &self.info.nic_addr) {
+        match create_listen_socket(&self.info.spoke_data_addr, &self.info.nic_addr) {
             Ok(sock) => {
                 self.sock = Some(sock);
                 debug!(
@@ -360,6 +360,9 @@ impl NavicoDataReceiver {
                     return None;
                 }
             },
+            LocatorId::Furuno => {
+                panic!("Furuno is not Navico");
+            }
         }
     }
 

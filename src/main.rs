@@ -12,7 +12,10 @@ use web::Web;
 
 mod config;
 // mod garmin;
+#[cfg(feature = "furuno")]
+mod furuno;
 mod locator;
+#[cfg(feature = "navico")]
 mod navico;
 mod protos;
 mod radar;
@@ -35,6 +38,10 @@ pub struct Cli {
     /// Limit radar location to a single interface
     #[arg(short, long)]
     interface: Option<String>,
+
+    /// Limit radar location to a single brand
+    #[arg(short, long)]
+    brand: Option<String>,
 
     /// Write RadarMessage data to stdout
     #[arg(long, default_value_t = false)]

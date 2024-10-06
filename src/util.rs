@@ -174,10 +174,49 @@ fn bind_to_multicast(
     Ok(())
 }
 
-pub fn create_multicast(addr: &SocketAddrV4, nic_addr: &Ipv4Addr) -> io::Result<UdpSocket> {
+/// On Windows, unlike all Unix variants, it is improper to bind to the multicast address
+///
+/// see https://msdn.microsoft.com/en-us/library/windows/desktop/ms737550(v=vs.85).aspx
+#[cfg(windows)]
+fn bind_to_broadcast(
+    socket: &socket2::Socket,
+    addr: &SocketAddrV4,
+    nic_addr: &Ipv4Addr,
+) -> io::Result<()> {
+    let _ = socket.set_broadcast(true);
+
+    let socketaddr = SocketAddr::new(IpAddr::V4(*nic_addr), addr.port());
+
+    socket.bind(&socket2::SockAddr::from(socketaddr))?;
+    log::info!("Binding broadcast socket to {}", socketaddr);
+    Ok(())
+}
+
+/// On unixes we bind to the multicast address, which causes multicast packets to be filtered
+#[cfg(unix)]
+fn bind_to_broadcast(
+    socket: &socket2::Socket,
+    addr: &SocketAddrV4,
+    nic_addr: &Ipv4Addr,
+) -> io::Result<()> {
+    let _ = socket.set_broadcast(true);
+    let _ = nic_addr; // Not used on Linux
+
+    let socketaddr = SocketAddr::new(IpAddr::V4(*addr.ip()), addr.port());
+
+    socket.bind(&socket2::SockAddr::from(socketaddr))?;
+    log::info!("Binding broadcast socket to {}", socketaddr);
+    Ok(())
+}
+
+pub fn create_listen_socket(addr: &SocketAddrV4, nic_addr: &Ipv4Addr) -> io::Result<UdpSocket> {
     let socket: socket2::Socket = new_socket()?;
 
-    bind_to_multicast(&socket, addr, nic_addr)?;
+    if addr.ip().is_multicast() {
+        bind_to_multicast(&socket, addr, nic_addr)?;
+    } else {
+        bind_to_broadcast(&socket, addr, nic_addr)?;
+    }
 
     let socket = UdpSocket::from_std(socket.into())?;
     Ok(socket)
@@ -193,4 +232,10 @@ pub fn create_multicast_send(addr: &SocketAddrV4, nic_addr: &Ipv4Addr) -> io::Re
 
     let socket = UdpSocket::from_std(socket.into())?;
     Ok(socket)
+}
+
+pub fn match_ipv4(addr: &Ipv4Addr, bcast: &Ipv4Addr, netmask: &Ipv4Addr) -> bool {
+    let r = addr & netmask;
+    let b = bcast & netmask;
+    r == b
 }
