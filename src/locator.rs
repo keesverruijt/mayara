@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -52,9 +52,9 @@ pub struct RadarListenAddress {
     pub brand: String,
     pub adress_request_packet: Option<&'static [u8]>, // Optional message to send to ask radar for address
     pub process: &'static dyn Fn(
-        &[u8],       // message
-        &SocketAddr, // from
-        &Ipv4Addr,   // nic_addr
+        &[u8],         // message
+        &SocketAddrV4, // from
+        &Ipv4Addr,     // nic_addr
         &SharedRadars,
         &SubsystemHandle,
     ) -> Result<(), io::Error>,
@@ -72,7 +72,7 @@ impl RadarListenAddress {
         ping: Option<&'static [u8]>,
         process: &'static dyn Fn(
             &[u8],
-            &SocketAddr,
+            &SocketAddrV4,
             &Ipv4Addr,
             &SharedRadars,
             &SubsystemHandle,
@@ -92,9 +92,9 @@ struct LocatorInfo {
     sock: UdpSocket,
     nic_addr: Ipv4Addr,
     process: &'static dyn Fn(
-        &[u8],       // message
-        &SocketAddr, // from
-        &Ipv4Addr,   // nic_addr
+        &[u8],         // message
+        &SocketAddrV4, // from
+        &Ipv4Addr,     // nic_addr
         &SharedRadars,
         &SubsystemHandle,
     ) -> Result<(), io::Error>,
@@ -240,7 +240,7 @@ impl Locator {
 }
 
 fn spawn_receive(
-    set: &mut JoinSet<Result<(LocatorInfo, SocketAddr, Vec<u8>), RadarError>>,
+    set: &mut JoinSet<Result<(LocatorInfo, SocketAddrV4, Vec<u8>), RadarError>>,
     socket: LocatorInfo,
 ) {
     set.spawn(async move {
@@ -248,7 +248,10 @@ fn spawn_receive(
         let res = socket.sock.recv_buf_from(&mut buf).await;
 
         match res {
-            Ok((_, addr)) => Ok((socket, addr, buf)),
+            Ok((_, addr)) => match addr {
+                SocketAddr::V4(addr) => Ok((socket, addr, buf)),
+                SocketAddr::V6(addr) => Err(RadarError::InterfaceNoV4(format!("{}", addr))),
+            },
             Err(e) => Err(RadarError::Io(e)),
         }
     });
@@ -329,13 +332,29 @@ fn create_listen_sockets(
                                     if let SocketAddr::V4(listen_addr) =
                                         radar_listen_address.address
                                     {
-                                        if !listen_addr.ip().is_multicast() {
-                                            log::info!("{} is not multicast", listen_addr.ip());
-                                            if !util::match_ipv4(
+                                        log::trace!(
+                                            "addr {} is multicast: {}",
+                                            listen_addr.ip(),
+                                            listen_addr.ip().is_multicast()
+                                        );
+                                        log::trace!(
+                                            "match_ipv4({}, {}, {}) = {}",
+                                            nic_ip,
+                                            listen_addr.ip(),
+                                            nic_netmask,
+                                            util::match_ipv4(
+                                                &nic_ip,
+                                                listen_addr.ip(),
+                                                &nic_netmask,
+                                            )
+                                        );
+                                        let socket = if !listen_addr.ip().is_multicast()
+                                            && !util::match_ipv4(
                                                 &nic_ip,
                                                 listen_addr.ip(),
                                                 &nic_netmask,
                                             ) {
+                                            if only_interface.is_none() {
                                                 log::info!(
                                                     "{}/{} does not match bcast {}",
                                                     nic_ip,
@@ -344,10 +363,11 @@ fn create_listen_sockets(
                                                 );
                                                 continue;
                                             }
-                                        }
+                                            util::create_udp_listen(&listen_addr, &nic_ip, true)
+                                        } else {
+                                            util::create_udp_listen(&listen_addr, &nic_ip, false)
+                                        };
 
-                                        let socket =
-                                            util::create_listen_socket(&listen_addr, &nic_ip);
                                         match socket {
                                             Ok(socket) => {
                                                 sockets.push(LocatorInfo {

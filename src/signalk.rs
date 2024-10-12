@@ -81,8 +81,7 @@ impl NavigationData {
                                 known_addresses.insert(SocketAddr::new(*a, port));
                             }
                         },
-                        other_event => {
-                            log::trace!("Received other event: {:?}", &other_event);
+                        _other_event => {
                             continue;
                         }
                     }

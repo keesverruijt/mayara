@@ -12,7 +12,7 @@ use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::radar::{DopplerMode, RadarError, RadarInfo, RangeDetection, SharedRadars};
 use crate::settings::{ControlMessage, ControlState, ControlType, ControlValue};
-use crate::util::{c_string, c_wide_string, create_listen_socket};
+use crate::util::{c_string, c_wide_string, create_udp_multicast_listen};
 
 use super::command::Command;
 use super::{DataUpdate, Model};
@@ -297,7 +297,7 @@ impl NavicoReportReceiver {
     }
 
     async fn start_socket(&mut self) -> io::Result<()> {
-        match create_listen_socket(&self.info.report_addr, &self.info.nic_addr) {
+        match create_udp_multicast_listen(&self.info.report_addr, &self.info.nic_addr) {
             Ok(sock) => {
                 self.sock = Some(sock);
                 debug!(

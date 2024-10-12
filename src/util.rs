@@ -134,8 +134,10 @@ fn bind_to_multicast(
 ) -> io::Result<()> {
     socket.join_multicast_v4(addr.ip(), nic_addr)?;
 
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), addr.port());
-    socket.bind(&socket2::SockAddr::from(addr))?;
+    let socketaddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), addr.port());
+    socket.bind(&socket2::SockAddr::from(socketaddr))?;
+    log::info!("Binding multicast socket to {}", socketaddr);
+
     Ok(())
 }
 
@@ -171,6 +173,12 @@ fn bind_to_multicast(
 
     let socketaddr = SocketAddr::new(IpAddr::V4(*addr.ip()), addr.port());
     socket.bind(&socket2::SockAddr::from(socketaddr))?;
+    log::info!(
+        "Binding multicast socket to {} nic {}",
+        socketaddr,
+        nic_addr
+    );
+
     Ok(())
 }
 
@@ -184,6 +192,7 @@ fn bind_to_broadcast(
     nic_addr: &Ipv4Addr,
 ) -> io::Result<()> {
     let _ = socket.set_broadcast(true);
+    let _ = addr; // Not used on Windows
 
     let socketaddr = SocketAddr::new(IpAddr::V4(*nic_addr), addr.port());
 
@@ -202,20 +211,39 @@ fn bind_to_broadcast(
     let _ = socket.set_broadcast(true);
     let _ = nic_addr; // Not used on Linux
 
-    let socketaddr = SocketAddr::new(IpAddr::V4(*addr.ip()), addr.port());
-
-    socket.bind(&socket2::SockAddr::from(socketaddr))?;
-    log::info!("Binding broadcast socket to {}", socketaddr);
+    socket.bind(&socket2::SockAddr::from(*addr))?;
+    log::info!("Binding broadcast socket to {}", *addr);
     Ok(())
 }
 
-pub fn create_listen_socket(addr: &SocketAddrV4, nic_addr: &Ipv4Addr) -> io::Result<UdpSocket> {
+pub fn create_udp_multicast_listen(
+    addr: &SocketAddrV4,
+    nic_addr: &Ipv4Addr,
+) -> io::Result<UdpSocket> {
+    let socket: socket2::Socket = new_socket()?;
+
+    bind_to_multicast(&socket, addr, nic_addr)?;
+
+    let socket = UdpSocket::from_std(socket.into())?;
+    Ok(socket)
+}
+
+pub fn create_udp_listen(
+    addr: &SocketAddrV4,
+    nic_addr: &Ipv4Addr,
+    no_broadcast: bool,
+) -> io::Result<UdpSocket> {
     let socket: socket2::Socket = new_socket()?;
 
     if addr.ip().is_multicast() {
         bind_to_multicast(&socket, addr, nic_addr)?;
-    } else {
+    } else if !no_broadcast {
         bind_to_broadcast(&socket, addr, nic_addr)?;
+    } else {
+        let socketaddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), addr.port());
+
+        socket.bind(&socket2::SockAddr::from(socketaddr))?;
+        log::info!("Binding socket to {}", socketaddr);
     }
 
     let socket = UdpSocket::from_std(socket.into())?;

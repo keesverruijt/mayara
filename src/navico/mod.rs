@@ -256,7 +256,7 @@ fn found(mut info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
 
 fn process_locator_report(
     report: &[u8],
-    from: &SocketAddr,
+    from: &SocketAddrV4,
     via: &Ipv4Addr,
     radars: &SharedRadars,
     subsys: &SubsystemHandle,
@@ -289,7 +289,7 @@ fn process_locator_report(
 
 fn process_beacon_report(
     report: &[u8],
-    from: &SocketAddr,
+    from: &SocketAddrV4,
     via: &Ipv4Addr,
     radars: &SharedRadars,
     subsys: &SubsystemHandle,
