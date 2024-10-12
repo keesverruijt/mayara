@@ -6,29 +6,28 @@ pub struct TrailBuffer {
     legend: Legend,
     spokes: usize,
     max_spoke_len: usize,
-    previous_pixels_per_meter: f64,
     trail_size: usize,
     true_trails: Vec<u8>,
     relative_trails: Vec<u16>,
     trail_length_ms: u32,
     rotation_speed_ms: u32,
-    doppler_trail_only: bool,
+    minimal_legend_value: u8,
 }
 
 impl TrailBuffer {
     pub fn new(legend: Legend, spokes: usize, max_spoke_len: usize) -> Self {
+        let minimal_legend_value = legend.strong_return;
         let trail_size = max_spoke_len * 2 + MARGIN * 2;
         TrailBuffer {
             legend,
             spokes,
             max_spoke_len,
-            previous_pixels_per_meter: 0.,
             trail_size,
             true_trails: vec![0; trail_size * trail_size],
             relative_trails: vec![0; spokes * max_spoke_len],
             trail_length_ms: 0,
             rotation_speed_ms: 0,
-            doppler_trail_only: false,
+            minimal_legend_value,
         }
     }
 
@@ -58,7 +57,7 @@ impl TrailBuffer {
         let update_relative_motion = true; // motion == TARGET_MOTION_RELATIVE;
 
         while radius < data.len() {
-            if data[radius] >= self.legend.strong_return && data[radius] < self.legend.history_start
+            if data[radius] >= self.minimal_legend_value && data[radius] < self.legend.history_start
             {
                 trail[radius] = 1;
             } else if trail[radius] > 0 {
@@ -128,6 +127,10 @@ impl TrailBuffer {
     }
 
     pub fn set_doppler_trail_only(&mut self, v: bool) {
-        self.doppler_trail_only = v;
+        self.minimal_legend_value = if v {
+            self.legend.doppler_approaching
+        } else {
+            self.legend.strong_return
+        };
     }
 }
