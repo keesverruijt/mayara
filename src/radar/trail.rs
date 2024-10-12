@@ -12,6 +12,7 @@ pub struct TrailBuffer {
     relative_trails: Vec<u16>,
     trail_length_ms: u32,
     rotation_speed_ms: u32,
+    doppler_trail_only: bool,
 }
 
 impl TrailBuffer {
@@ -27,6 +28,7 @@ impl TrailBuffer {
             relative_trails: vec![0; spokes * max_spoke_len],
             trail_length_ms: 0,
             rotation_speed_ms: 0,
+            doppler_trail_only: false,
         }
     }
 
@@ -118,5 +120,14 @@ impl TrailBuffer {
 
             new_trail.fill(0);
         }
+    }
+
+    pub fn clear(&mut self) {
+        self.true_trails = vec![0; self.trail_size * self.trail_size];
+        self.relative_trails = vec![0; self.spokes * self.max_spoke_len];
+    }
+
+    pub fn set_doppler_trail_only(&mut self, v: bool) {
+        self.doppler_trail_only = v;
     }
 }

@@ -16,6 +16,7 @@ use crate::navico::NAVICO_SPOKE_LEN;
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::*;
+use crate::settings::ControlType;
 use crate::util::{create_udp_multicast_listen, PrintableSpoke};
 
 use super::{
@@ -130,7 +131,14 @@ impl NavicoDataReceiver {
         let key = info.key();
 
         let pixel_to_blob = Self::pixel_to_blob(&info.legend);
-        let trails = TrailBuffer::new(info.legend.clone(), NAVICO_SPOKES, NAVICO_SPOKE_LEN);
+        let mut trails = TrailBuffer::new(info.legend.clone(), NAVICO_SPOKES, NAVICO_SPOKE_LEN);
+
+        if let Some(control) = info.controls.get(&ControlType::DopplerTrailsOnly) {
+            if let Some(value) = control.value {
+                let value = value > 0;
+                trails.set_doppler_trail_only(value);
+            }
+        }
 
         NavicoDataReceiver {
             key,
@@ -210,9 +218,20 @@ impl NavicoDataReceiver {
                 self.pixel_to_blob = Self::pixel_to_blob(&legend);
                 self.info.legend = legend;
             }
-            Some(DataUpdate::RelativeTrail(seconds)) => {
-                self.trails.set_relative_trails_revolutions(seconds);
-            }
+            Some(DataUpdate::ControlValue(cv)) => match cv.id {
+                ControlType::ClearTrails => {
+                    self.trails.clear();
+                }
+                ControlType::DopplerTrailsOnly => {
+                    let value = cv.value.parse::<u16>().unwrap_or(0) > 0;
+                    self.trails.set_doppler_trail_only(value);
+                }
+                ControlType::TargetTrails => {
+                    let value = cv.value.parse::<u16>().unwrap_or(0);
+                    self.trails.set_relative_trails_revolutions(value);
+                }
+                _ => {}
+            },
             None => {}
         }
     }

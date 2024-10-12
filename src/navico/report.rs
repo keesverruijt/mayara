@@ -397,8 +397,10 @@ impl NavicoReportReceiver {
                         self.radars.update(&self.info);
                         return Ok(());
                     }
-                    ControlType::TargetTrails => {
-                        self.handle_target_trails_value(cv).await?;
+                    ControlType::TargetTrails
+                    | ControlType::ClearTrails
+                    | ControlType::DopplerTrailsOnly => {
+                        self.pass_to_data_receiver(cv).await?;
                         return Ok(());
                     }
                     _ => {} // rest is numeric
@@ -426,18 +428,18 @@ impl NavicoReportReceiver {
         Ok(())
     }
 
-    async fn handle_target_trails_value(&mut self, cv: &ControlValue) -> Result<(), RadarError> {
+    async fn pass_to_data_receiver(&mut self, cv: &ControlValue) -> Result<(), RadarError> {
         let value = cv.value.parse::<i32>().unwrap_or(0);
         if self
             .info
             .set(&cv.id, value, cv.auto, ControlState::Manual)
             .is_err()
         {
-            log::warn!("Cannot set TargetTrails to {}", value);
+            log::warn!("Cannot set {} to {}", cv.id, value);
         }
 
         self.data_tx
-            .send(DataUpdate::RelativeTrail(value as u16))
+            .send(DataUpdate::ControlValue(cv.clone()))
             .await
             .map_err(|_| RadarError::CannotSetControlType(cv.id))?;
         Ok(())

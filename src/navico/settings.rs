@@ -181,24 +181,28 @@ pub fn update_when_model_known(controls: &mut Controls, model: Model, radar_info
         controls.insert(
             ControlType::NoTransmitStart1,
             Control::new_numeric(ControlType::NoTransmitStart1, -180, 180)
+                .unit("Deg")
                 .wire_scale_factor(1800)
                 .wire_offset(-1),
         );
         controls.insert(
             ControlType::NoTransmitStart2,
             Control::new_numeric(ControlType::NoTransmitStart2, -180, 180)
+                .unit("Deg")
                 .wire_scale_factor(1800)
                 .wire_offset(-1),
         );
         controls.insert(
             ControlType::NoTransmitStart3,
             Control::new_numeric(ControlType::NoTransmitStart3, -180, 180)
+                .unit("Deg")
                 .wire_scale_factor(1800)
                 .wire_offset(-1),
         );
         controls.insert(
             ControlType::NoTransmitStart4,
             Control::new_numeric(ControlType::NoTransmitStart4, -180, 180)
+                .unit("Deg")
                 .wire_scale_factor(1800)
                 .wire_offset(-1),
         );
@@ -326,6 +330,10 @@ pub fn update_when_model_known(controls: &mut Controls, model: Model, radar_info
             Control::new_numeric(ControlType::DopplerSpeedThreshold, 0, 1594)
                 .wire_scale_factor(1594 * 16)
                 .unit("cm/s"),
+        );
+        controls.insert(
+            ControlType::DopplerTrailsOnly,
+            Control::new_list(ControlType::DopplerTrailsOnly, &["Off", "On"]),
         );
     }
 

@@ -10,6 +10,7 @@ use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
 use crate::locator::{LocatorId, RadarListenAddress, RadarLocator};
 use crate::radar::{DopplerMode, Legend, RadarInfo, SharedRadars};
+use crate::settings::ControlValue;
 use crate::util::c_string;
 use crate::util::PrintableSlice;
 
@@ -41,7 +42,7 @@ const NAVICO_BEACON_ADDRESS: SocketAddr =
 pub enum DataUpdate {
     Doppler(DopplerMode),
     Legend(Legend),
-    RelativeTrail(u16),
+    ControlValue(ControlValue),
 }
 
 #[derive(Deserialize, Debug, Copy, Clone)]

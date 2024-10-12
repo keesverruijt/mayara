@@ -172,7 +172,13 @@ function setControl(v) {
     i.value = v.value;
     console.log("<- " + control.name + " = " + v.value);
     let n = i.parentNode.querySelector('.myr_numeric');
-    if (n) n.innerHTML = v.value;
+    if (n) {
+      if (control.unit) {
+        n.innerHTML = v.value.toString() + " " + control.unit;
+      } else {
+        n.innerHTML = v.value;
+      }
+    }
     let d = i.parentNode.querySelector('.myr_description');
     if (d) {
       let description = (control.descriptions) ? control.descriptions[v.value] : undefined;
