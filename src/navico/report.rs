@@ -232,7 +232,7 @@ struct RadarReport8_18 {
     noise_rejection: u8,        // 12    noise rejection
     target_sep: u8,             // 13
     sea_clutter: u8,            // 14 sea clutter on Halo
-    auto_sea_clutter: u8,       // 15 auto sea clutter on Halo
+    auto_sea_clutter: i8,       // 15 auto sea clutter on Halo
     _field13: u8,               // 16
     _field14: u8,               // 17
 }
@@ -523,6 +523,30 @@ impl NavicoReportReceiver {
         };
     }
 
+    fn set_value_with_many_auto(&mut self, control_type: &ControlType, value: i32, auto: i32) {
+        match self
+            .info
+            .set_value_with_many_auto(control_type, value, auto)
+        {
+            Err(e) => {
+                error!("{}: {}", self.key, e.to_string());
+            }
+            Ok(Some(())) => {
+                if log::log_enabled!(log::Level::Debug) {
+                    let control = self.info.controls.get(control_type).unwrap();
+                    debug!(
+                        "{}: Control '{}' new value {} auto {}",
+                        self.key,
+                        control_type,
+                        control.value(),
+                        auto
+                    );
+                }
+            }
+            Ok(None) => {}
+        };
+    }
+
     fn set_string(&mut self, control: &ControlType, value: String) {
         match self.info.set_string(control, value) {
             Err(e) => {
@@ -692,6 +716,21 @@ impl NavicoReportReceiver {
         }
 
         if data[1] != 0xc4 {
+            if data[1] == 0xc6 {
+                match data[0] {
+                    0x11 => {
+                        if data.len() != 3 || data[2] != 0 {
+                            bail!("Strange content of report 0x0a 0xc6: {:02X?}", data);
+                        }
+                        // this is just a response to the MFD sending 0x0a 0xc2,
+                        // not sure what purpose it serves.
+                        return Ok(());
+                    }
+                    _ => {
+                        bail!("Unknown report 0x{:02x} 0xc6: {:02X?}", data[0], data);
+                    }
+                }
+            }
             bail!("Unknown report {:02X?} dropped", data);
         }
         let report_identification = data[0];
@@ -773,7 +812,13 @@ impl NavicoReportReceiver {
             self.set_value(&ControlType::Mode, mode);
         }
         self.set_auto(&ControlType::Gain, gain, gain_auto);
-        self.set_auto(&ControlType::Sea, sea, sea_auto);
+        if self.model != Model::HALO {
+            self.set_auto(&ControlType::Sea, sea, sea_auto);
+        } else {
+            self.info
+                .set_auto_state(&ControlType::Sea, sea_auto > 0)
+                .unwrap();
+        }
         self.set_value(&ControlType::Rain, rain);
         self.set_value(&ControlType::InterferenceRejection, interference_rejection);
         self.set_value(&ControlType::TargetExpansion, target_expansion);
@@ -984,7 +1029,7 @@ impl NavicoReportReceiver {
 
         if self.model == Model::HALO {
             self.set_value(&ControlType::SeaState, sea_state as i32);
-            self.set_auto(&ControlType::Sea, sea_clutter, auto_sea_clutter);
+            self.set_value_with_many_auto(&ControlType::Sea, sea_clutter, auto_sea_clutter.into());
         }
         self.set_value(
             &ControlType::LocalInterferenceRejection,

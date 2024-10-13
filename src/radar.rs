@@ -347,6 +347,38 @@ impl RadarInfo {
             }
         }?;
 
+        // If the control changed, control.set returned Some(control)
+        if let Some(control) = control {
+            self.broadcast_protobuf(&control);
+            self.broadcast_json(&control);
+            Ok(Some(()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn set_auto_state(
+        &mut self,
+        control_type: &ControlType,
+        auto: bool,
+    ) -> Result<Option<()>, ControlError> {
+        let state = if auto {
+            ControlState::Auto
+        } else {
+            ControlState::Manual
+        };
+
+        let control = {
+            if let Some(control) = self.controls.get_mut(control_type) {
+                let value = control.value.unwrap_or(0);
+                Ok(control
+                    .set(value, Some(auto), state)?
+                    .map(|_| control.clone()))
+            } else {
+                Err(ControlError::NotSupported(*control_type))
+            }
+        }?;
+
         if let Some(control) = control {
             self.broadcast_protobuf(&control);
             self.broadcast_json(&control);
@@ -369,6 +401,39 @@ impl RadarInfo {
         };
 
         self.set(control_type, value, Some(auto), state)
+    }
+
+    pub fn set_value_with_many_auto(
+        &mut self,
+        control_type: &ControlType,
+        value: i32,
+        auto_value: i32,
+    ) -> Result<Option<()>, ControlError> {
+        let control = {
+            if let Some(control) = self.controls.get_mut(control_type) {
+                let auto = control.auto.unwrap_or(false);
+                if auto {
+                    Ok(control
+                        .set(auto_value, Some(true), ControlState::Auto)?
+                        .map(|_| control.clone()))
+                } else {
+                    Ok(control
+                        .set(value, Some(false), ControlState::Manual)?
+                        .map(|_| control.clone()))
+                }
+            } else {
+                Err(ControlError::NotSupported(*control_type))
+            }
+        }?;
+
+        // If the control changed, control.set returned Some(control)
+        if let Some(control) = control {
+            self.broadcast_protobuf(&control);
+            self.broadcast_json(&control);
+            Ok(Some(()))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn set_string(

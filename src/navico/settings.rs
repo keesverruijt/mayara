@@ -255,8 +255,7 @@ pub fn update_when_model_known(controls: &mut Controls, model: Model, radar_info
                     auto_adjust_min_value: -50,
                     auto_adjust_max_value: 50,
                 },
-            )
-            .wire_scale_factor(255),
+            ),
         );
     } else {
         controls.insert(
@@ -327,8 +326,8 @@ pub fn update_when_model_known(controls: &mut Controls, model: Model, radar_info
         );
         controls.insert(
             ControlType::DopplerSpeedThreshold,
-            Control::new_numeric(ControlType::DopplerSpeedThreshold, 0, 1594)
-                .wire_scale_factor(1594 * 16)
+            Control::new_numeric(ControlType::DopplerSpeedThreshold, 0, 99)
+                .wire_scale_factor(99 * 16)
                 .unit("cm/s"),
         );
         controls.insert(

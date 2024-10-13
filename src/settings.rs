@@ -394,6 +394,11 @@ impl Control {
             .to_string()
     }
 
+    /// Set the control to a (maybe new) value + auto state
+    ///
+    /// Return Ok(Some(())) when the value changed or it always needs
+    /// to be broadcast to listeners.
+    ///
     pub fn set(
         &mut self,
         mut value: i32,

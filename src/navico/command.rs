@@ -251,7 +251,7 @@ impl Command {
                 cmd.extend_from_slice(&[0x23, 0xc1, value as u8]);
             }
             ControlType::DopplerSpeedThreshold => {
-                let value = value as u16;
+                let value = value as u16 * 16;
                 cmd.extend_from_slice(&[0x24, 0xc1]);
                 cmd.extend_from_slice(&value.to_le_bytes());
             }
