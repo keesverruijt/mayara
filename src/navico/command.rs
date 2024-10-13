@@ -4,7 +4,7 @@ use std::cmp::{max, min};
 use tokio::net::UdpSocket;
 
 use crate::radar::{RadarError, RadarInfo, SharedRadars};
-use crate::settings::{ControlType, ControlValue};
+use crate::settings::{ControlType, ControlValue, Controls};
 use crate::util::create_multicast_send;
 
 use super::Model;
@@ -129,13 +129,47 @@ impl Command {
         }
     }
 
-    pub async fn set_control(&mut self, cv: &ControlValue) -> Result<(), RadarError> {
+    fn get_angle_value(ct: &ControlType, controls: &Controls) -> i16 {
+        if let Some(control) = controls.get(ct) {
+            if let Some(value) = control.value {
+                let value = (value * 10.0) as i32;
+                return Self::mod_deci_degrees(value) as i16;
+            }
+        }
+        return 0;
+    }
+
+    async fn send_no_transmit_cmd(
+        &mut self,
+        value_start: i16,
+        value_end: i16,
+        enabled: u8,
+        sector: u8,
+    ) -> Result<Vec<u8>, RadarError> {
+        let mut cmd = Vec::with_capacity(12);
+
+        cmd.extend_from_slice(&[0x0d, 0xc1, sector, 0, 0, 0, enabled]);
+        self.send(&cmd).await?;
+        cmd.clear();
+        cmd.extend_from_slice(&[0xc0, 0xc1, sector, 0, 0, 0, enabled]);
+        cmd.extend_from_slice(&value_start.to_le_bytes());
+        cmd.extend_from_slice(&value_end.to_le_bytes());
+
+        Ok(cmd)
+    }
+
+    pub async fn set_control(
+        &mut self,
+        cv: &ControlValue,
+        controls: &Controls,
+    ) -> Result<(), RadarError> {
         let value = cv
             .value
             .parse::<f32>()
             .map_err(|_| RadarError::MissingValue(cv.id))?;
         let deci_value = (value * 10.0) as i32;
         let auto: u8 = if cv.auto.unwrap_or(false) { 1 } else { 0 };
+        let enabled: u8 = if cv.enabled.unwrap_or(false) { 1 } else { 0 };
 
         let mut cmd = Vec::with_capacity(6);
 
@@ -226,23 +260,65 @@ impl Command {
             ControlType::SeaState => {
                 cmd.extend_from_slice(&[0x0b, 0xc1, value as u8]);
             }
-            ControlType::NoTransmitStart1
-            | ControlType::NoTransmitStart2
-            | ControlType::NoTransmitStart3
-            | ControlType::NoTransmitStart4 => {
-                let sector: u8 =
-                    cv.id.to_u8().unwrap() - ControlType::NoTransmitStart1.to_u8().unwrap();
-                cmd.extend_from_slice(&[0x0d, 0xc1, sector, 0, 0, 0, auto]);
-                todo!();
+            ControlType::NoTransmitStart1 => {
+                let value_start: i16 = Self::mod_deci_degrees(deci_value) as i16;
+                let value_end: i16 = Self::get_angle_value(&ControlType::NoTransmitEnd1, controls);
+                cmd = self
+                    .send_no_transmit_cmd(value_start, value_end, enabled, 0)
+                    .await?;
             }
-            ControlType::NoTransmitEnd1
-            | ControlType::NoTransmitEnd2
-            | ControlType::NoTransmitEnd3
-            | ControlType::NoTransmitEnd4 => {
-                let sector: u8 =
-                    cv.id.to_u8().unwrap() - ControlType::NoTransmitEnd1.to_u8().unwrap();
-                cmd.extend_from_slice(&[0x0d, 0xc1, sector, 0, 0, 0, auto]);
-                todo!();
+            ControlType::NoTransmitStart2 => {
+                let value_start: i16 = Self::mod_deci_degrees(deci_value) as i16;
+                let value_end: i16 = Self::get_angle_value(&ControlType::NoTransmitEnd2, controls);
+                cmd = self
+                    .send_no_transmit_cmd(value_start, value_end, enabled, 1)
+                    .await?;
+            }
+            ControlType::NoTransmitStart3 => {
+                let value_start: i16 = Self::mod_deci_degrees(deci_value) as i16;
+                let value_end: i16 = Self::get_angle_value(&ControlType::NoTransmitEnd3, controls);
+                cmd = self
+                    .send_no_transmit_cmd(value_start, value_end, enabled, 2)
+                    .await?;
+            }
+            ControlType::NoTransmitStart4 => {
+                let value_start: i16 = Self::mod_deci_degrees(deci_value) as i16;
+                let value_end: i16 = Self::get_angle_value(&ControlType::NoTransmitEnd4, controls);
+                cmd = self
+                    .send_no_transmit_cmd(value_start, value_end, enabled, 3)
+                    .await?;
+            }
+            ControlType::NoTransmitEnd1 => {
+                let value_start: i16 =
+                    Self::get_angle_value(&ControlType::NoTransmitStart1, controls);
+                let value_end: i16 = Self::mod_deci_degrees(deci_value) as i16;
+                cmd = self
+                    .send_no_transmit_cmd(value_start, value_end, enabled, 0)
+                    .await?;
+            }
+            ControlType::NoTransmitEnd2 => {
+                let value_start: i16 =
+                    Self::get_angle_value(&ControlType::NoTransmitStart2, controls);
+                let value_end: i16 = Self::mod_deci_degrees(deci_value) as i16;
+                cmd = self
+                    .send_no_transmit_cmd(value_start, value_end, enabled, 1)
+                    .await?;
+            }
+            ControlType::NoTransmitEnd3 => {
+                let value_start: i16 =
+                    Self::get_angle_value(&ControlType::NoTransmitStart3, controls);
+                let value_end: i16 = Self::mod_deci_degrees(deci_value) as i16;
+                cmd = self
+                    .send_no_transmit_cmd(value_start, value_end, enabled, 2)
+                    .await?;
+            }
+            ControlType::NoTransmitEnd4 => {
+                let value_start: i16 =
+                    Self::get_angle_value(&ControlType::NoTransmitStart4, controls);
+                let value_end: i16 = Self::mod_deci_degrees(deci_value) as i16;
+                cmd = self
+                    .send_no_transmit_cmd(value_start, value_end, enabled, 3)
+                    .await?;
             }
             ControlType::LocalInterferenceRejection => {
                 cmd.extend_from_slice(&[0x0e, 0xc1, value as u8]);

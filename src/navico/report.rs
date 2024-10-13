@@ -406,7 +406,11 @@ impl NavicoReportReceiver {
                     _ => {} // rest is numeric
                 }
 
-                if let Err(e) = self.command_sender.set_control(cv).await {
+                if let Err(e) = self
+                    .command_sender
+                    .set_control(cv, &self.info.controls)
+                    .await
+                {
                     // Find our current control value for this ControlType
                     if let Some(control) = self.info.controls.get(&cv.id) {
                         self.info
@@ -620,7 +624,9 @@ impl NavicoReportReceiver {
                 );
                 range_detection.commanded_range = next_range;
                 let cv = ControlValue::new(ControlType::Range, next_range.to_string());
-                self.command_sender.set_control(&cv).await?;
+                self.command_sender
+                    .set_control(&cv, &self.info.controls)
+                    .await?;
             }
 
             if complete {
