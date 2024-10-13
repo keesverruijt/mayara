@@ -396,7 +396,7 @@ impl Control {
 
     pub fn set_auto(&mut self, auto: bool) {
         self.needs_refresh = self.auto != Some(auto);
-        log::info!(
+        log::trace!(
             "Setting {} auto {} changed: {}",
             self.item.control_type,
             auto,
@@ -424,11 +424,11 @@ impl Control {
             // One of the _only_ reasons we use f32 is because Navico wire format for some things is
             // tenths of degrees. To make things uniform we map these to a float with .1 precision.
             if wire_scale_factor != max_value {
-                log::info!("{} map value {}", self.item.control_type, value);
+                log::trace!("{} map value {}", self.item.control_type, value);
                 value = value * max_value / wire_scale_factor;
 
                 auto_value = auto_value.map(|v| v * max_value / wire_scale_factor);
-                log::info!("{} map value to scaled {}", self.item.control_type, value);
+                log::trace!("{} map value to scaled {}", self.item.control_type, value);
             }
         }
 
@@ -474,7 +474,7 @@ impl Control {
                     auto_value = auto_value.map(|value| (value / step).round() * step);
                 }
             }
-            log::info!("{} map value to rounded {}", self.item.control_type, value);
+            log::trace!("{} map value to rounded {}", self.item.control_type, value);
         }
 
         if auto.is_some() && self.item.automatic.is_none() {
