@@ -1,3 +1,4 @@
+use enum_iterator::{all, cardinality, first, last, next, previous, reverse_all, Sequence};
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::FromPrimitive;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -147,7 +148,9 @@ pub(crate) struct Control {
     #[serde(flatten)]
     item: ControlDefinition,
     #[serde(skip)]
-    pub value: Option<i32>,
+    pub value: Option<f32>,
+    #[serde(skip)]
+    pub auto_value: Option<f32>,
     #[serde(skip)]
     pub description: Option<String>,
     #[serde(skip)]
@@ -164,6 +167,7 @@ impl Control {
         Control {
             item,
             value,
+            auto_value: None,
             auto: None,
             state: ControlState::Off,
             description: None,
@@ -183,13 +187,17 @@ impl Control {
         self
     }
 
-    pub fn wire_scale_factor(mut self, wire_scale_factor: i32) -> Self {
+    pub fn wire_scale_factor(mut self, wire_scale_factor: f32) -> Self {
         self.item.wire_scale_factor = Some(wire_scale_factor);
+        if self.item.wire_scale_factor != self.item.max_value && self.item.step_value.is_none() {
+            self.item.step_value =
+                Some(self.item.max_value.unwrap_or(1.) / self.item.wire_scale_factor.unwrap_or(1.));
+        }
 
         self
     }
 
-    pub fn wire_offset(mut self, wire_offset: i32) -> Self {
+    pub fn wire_offset(mut self, wire_offset: f32) -> Self {
         self.item.wire_offset = Some(wire_offset);
 
         self
@@ -207,7 +215,7 @@ impl Control {
         self
     }
 
-    pub fn new_numeric(control_type: ControlType, min_value: i32, max_value: i32) -> Self {
+    pub fn new_numeric(control_type: ControlType, min_value: f32, max_value: f32) -> Self {
         let min_value = Some(min_value);
         let max_value = Some(max_value);
         let control = Self::new(ControlDefinition {
@@ -218,9 +226,9 @@ impl Control {
             default_value: min_value,
             min_value,
             max_value,
-            step_value: Some(1),
+            step_value: Some(1.),
             wire_scale_factor: max_value,
-            wire_offset: Some(0),
+            wire_offset: Some(0.),
             unit: None,
             descriptions: None,
             valid_values: None,
@@ -233,8 +241,8 @@ impl Control {
 
     pub fn new_auto(
         control_type: ControlType,
-        min_value: i32,
-        max_value: i32,
+        min_value: f32,
+        max_value: f32,
         automatic: AutomaticValue,
     ) -> Self {
         let min_value = Some(min_value);
@@ -247,9 +255,9 @@ impl Control {
             default_value: min_value,
             min_value,
             max_value,
-            step_value: Some(1),
+            step_value: Some(1.),
             wire_scale_factor: max_value,
-            wire_offset: Some(0),
+            wire_offset: Some(0.),
             unit: None,
             descriptions: None,
             valid_values: None,
@@ -260,17 +268,18 @@ impl Control {
     }
 
     pub fn new_list(control_type: ControlType, descriptions: &[&str]) -> Self {
+        let description_count = ((descriptions.len() as i32) - 1) as f32;
         Self::new(ControlDefinition {
             control_type,
             name: control_type.to_string(),
             automatic: None,
             //has_off: false,
-            default_value: Some(0),
-            min_value: Some(0),
-            max_value: Some((descriptions.len() as i32) - 1),
-            step_value: Some(1),
-            wire_scale_factor: Some((descriptions.len() as i32) - 1),
-            wire_offset: Some(0),
+            default_value: Some(0.),
+            min_value: Some(0.),
+            max_value: Some(description_count),
+            step_value: Some(1.),
+            wire_scale_factor: Some(description_count),
+            wire_offset: Some(0.),
             unit: None,
             descriptions: Some(
                 descriptions
@@ -292,12 +301,12 @@ impl Control {
             name: control_type.to_string(),
             automatic: None,
             //has_off: false,
-            default_value: Some(0),
-            min_value: Some(0),
-            max_value: Some((descriptions.len() as i32) - 1),
-            step_value: Some(1),
-            wire_scale_factor: Some((descriptions.len() as i32) - 1),
-            wire_offset: Some(0),
+            default_value: Some(0.),
+            min_value: Some(0.),
+            max_value: Some(((descriptions.len() as i32) - 1) as f32),
+            step_value: Some(1.),
+            wire_scale_factor: Some(((descriptions.len() as i32) - 1) as f32),
+            wire_offset: Some(0.),
             unit: None,
             descriptions: Some(descriptions),
             valid_values: None,
@@ -389,8 +398,12 @@ impl Control {
             return self.description.clone().unwrap_or_else(|| "".to_string());
         }
 
+        if self.auto.unwrap_or(false) && self.auto_value.is_some() {
+            return self.auto_value.unwrap().to_string();
+        }
+
         self.value
-            .unwrap_or(self.item.default_value.unwrap_or(0))
+            .unwrap_or(self.item.default_value.unwrap_or(0.))
             .to_string()
     }
 
@@ -401,24 +414,30 @@ impl Control {
     ///
     pub fn set(
         &mut self,
-        mut value: i32,
+        mut value: f32,
+        mut auto_value: Option<f32>,
         auto: Option<bool>,
         state: ControlState,
     ) -> Result<Option<()>, ControlError> {
         if let (Some(wire_scale_factor), Some(max_value)) =
             (self.item.wire_scale_factor, self.item.max_value)
         {
+            // SCALE MAPPING...
+            // One of the _only_ reasons we use f32 is because Navico wire format for some things is
+            // tenths of degrees. To make things uniform we map these to a float with .1 precision.
             if wire_scale_factor != max_value {
-                value = (((value as i64) * (max_value as i64)) / (wire_scale_factor as i64)) as i32;
+                value = value * max_value / wire_scale_factor;
+
+                auto_value = auto_value.map(|v| v * max_value / wire_scale_factor);
             }
         }
         if let (Some(min_value), Some(max_value)) = (self.item.min_value, self.item.max_value) {
-            if self.item.wire_offset.unwrap_or(0) == -1
+            if self.item.wire_offset.unwrap_or(0.) == -1.
                 && value > max_value
-                && value <= 2 * max_value
+                && value <= 2. * max_value
             {
                 // debug!("{} value {} -> ", self.item.control_type, value);
-                value -= 2 * max_value;
+                value -= 2. * max_value;
                 // debug!("{} ..... {}", self.item.control_type, value);
             }
 
@@ -440,8 +459,9 @@ impl Control {
 
         if auto.is_some() && self.item.automatic.is_none() {
             Err(ControlError::NoAuto(self.item.control_type))
-        } else if self.value != Some(value) || self.auto != auto {
+        } else if self.value != Some(value) || self.auto_value != auto_value || self.auto != auto {
             self.value = Some(value);
+            self.auto_value = auto_value;
             self.auto = auto;
             self.state = state;
             self.needs_refresh = false;
@@ -482,9 +502,16 @@ pub(crate) struct AutomaticValue {
     //#[serde(skip)]
     //pub(crate) auto_descriptions: Option<Vec<String>>,
     pub(crate) has_auto_adjustable: bool,
-    pub(crate) auto_adjust_min_value: i32,
-    pub(crate) auto_adjust_max_value: i32,
+    pub(crate) auto_adjust_min_value: f32,
+    pub(crate) auto_adjust_max_value: f32,
 }
+
+pub(crate) const HAS_AUTO_NOT_ADJUSTABLE: AutomaticValue = AutomaticValue {
+    has_auto: true,
+    has_auto_adjustable: false,
+    auto_adjust_min_value: 0.,
+    auto_adjust_max_value: 0.,
+};
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -499,17 +526,17 @@ pub(crate) struct ControlDefinition {
     #[serde(skip_serializing_if = "is_false")]
     pub(crate) is_string_value: bool,
     #[serde(skip)]
-    default_value: Option<i32>,
+    default_value: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) min_value: Option<i32>,
+    pub(crate) min_value: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) max_value: Option<i32>,
+    pub(crate) max_value: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    step_value: Option<i32>,
+    step_value: Option<f32>,
     #[serde(skip)]
-    wire_scale_factor: Option<i32>,
+    wire_scale_factor: Option<f32>,
     #[serde(skip)]
-    wire_offset: Option<i32>,
+    wire_offset: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) unit: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -531,6 +558,7 @@ impl ControlDefinition {}
 #[derive(
     Eq,
     PartialEq,
+    PartialOrd,
     Hash,
     Copy,
     Clone,
@@ -539,6 +567,7 @@ impl ControlDefinition {}
     Deserialize_repr,
     FromPrimitive,
     ToPrimitive,
+    Sequence,
 )]
 #[repr(u8)]
 // The order is the one in which we deem the representation is "right"
@@ -675,9 +704,9 @@ pub enum ControlError {
     #[error("Control {0} not supported on this radar")]
     NotSupported(ControlType),
     #[error("Control {0} value {1} is lower than minimum value {2}")]
-    TooLow(ControlType, i32, i32),
+    TooLow(ControlType, f32, f32),
     #[error("Control {0} value {1} is higher than maximum value {2}")]
-    TooHigh(ControlType, i32, i32),
+    TooHigh(ControlType, f32, f32),
     #[error("Control {0} value {1} is not a legal value")]
     Invalid(ControlType, String),
     #[error("Control {0} does not support Auto")]

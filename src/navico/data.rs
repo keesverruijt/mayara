@@ -135,7 +135,7 @@ impl NavicoDataReceiver {
 
         if let Some(control) = info.controls.get(&ControlType::DopplerTrailsOnly) {
             if let Some(value) = control.value {
-                let value = value > 0;
+                let value = value > 0.;
                 trails.set_doppler_trail_only(value);
             }
         }

@@ -335,13 +335,15 @@ impl RadarInfo {
     pub fn set(
         &mut self,
         control_type: &ControlType,
-        value: i32,
+        value: f32,
         auto: Option<bool>,
         state: ControlState,
     ) -> Result<Option<()>, ControlError> {
         let control = {
             if let Some(control) = self.controls.get_mut(control_type) {
-                Ok(control.set(value, auto, state)?.map(|_| control.clone()))
+                Ok(control
+                    .set(value, None, auto, state)?
+                    .map(|_| control.clone()))
             } else {
                 Err(ControlError::NotSupported(*control_type))
             }
@@ -370,9 +372,9 @@ impl RadarInfo {
 
         let control = {
             if let Some(control) = self.controls.get_mut(control_type) {
-                let value = control.value.unwrap_or(0);
+                let value = control.value.unwrap_or(0.);
                 Ok(control
-                    .set(value, Some(auto), state)?
+                    .set(value, None, Some(auto), state)?
                     .map(|_| control.clone()))
             } else {
                 Err(ControlError::NotSupported(*control_type))
@@ -392,7 +394,7 @@ impl RadarInfo {
         &mut self,
         control_type: &ControlType,
         auto: bool,
-        value: i32,
+        value: f32,
     ) -> Result<Option<()>, ControlError> {
         let state = if auto {
             ControlState::Auto
@@ -406,21 +408,15 @@ impl RadarInfo {
     pub fn set_value_with_many_auto(
         &mut self,
         control_type: &ControlType,
-        value: i32,
-        auto_value: i32,
+        value: f32,
+        auto_value: f32,
     ) -> Result<Option<()>, ControlError> {
         let control = {
             if let Some(control) = self.controls.get_mut(control_type) {
-                let auto = control.auto.unwrap_or(false);
-                if auto {
-                    Ok(control
-                        .set(auto_value, Some(true), ControlState::Auto)?
-                        .map(|_| control.clone()))
-                } else {
-                    Ok(control
-                        .set(value, Some(false), ControlState::Manual)?
-                        .map(|_| control.clone()))
-                }
+                let auto = control.auto;
+                Ok(control
+                    .set(value, Some(auto_value), auto, ControlState::Auto)?
+                    .map(|_| control.clone()))
             } else {
                 Err(ControlError::NotSupported(*control_type))
             }
@@ -450,7 +446,7 @@ impl RadarInfo {
                         .parse::<i32>()
                         .map_err(|_| ControlError::Invalid(control_type.clone(), value))?;
                     control
-                        .set(i, None, ControlState::Manual)
+                        .set(i as f32, None, None, ControlState::Manual)
                         .map(|_| Some(control.clone()))
                 }
             } else {
@@ -469,6 +465,7 @@ impl RadarInfo {
 
     fn get_description(control: &Control) -> Option<String> {
         if let (Some(value), Some(descriptions)) = (control.value, &control.item().descriptions) {
+            let value = value as i32;
             if value >= 0 && value < (descriptions.len() as i32) {
                 return descriptions.get(&value).cloned();
             }

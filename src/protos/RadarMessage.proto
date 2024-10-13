@@ -39,7 +39,7 @@ message RadarMessage {
     }
     message ControlValue {
         string          id          = 1; // See /v1/api/radars content JSON map 'controls'
-        int32           value       = 2;
+        float           value       = 2;
         optional bool   auto        = 3;
         optional string description = 4; // Possible English string explaining value
     }

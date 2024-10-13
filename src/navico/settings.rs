@@ -1,8 +1,9 @@
+use enum_iterator::next;
 use std::collections::HashMap;
 
 use crate::{
     radar::RadarInfo,
-    settings::{AutomaticValue, Control, ControlType, Controls},
+    settings::{AutomaticValue, Control, ControlType, Controls, HAS_AUTO_NOT_ADJUSTABLE},
 };
 
 use super::Model;
@@ -22,33 +23,21 @@ pub fn new(model: Option<&str>) -> Controls {
 
     controls.insert(
         ControlType::AntennaHeight,
-        Control::new_numeric(ControlType::AntennaHeight, 0, 9900)
-            .wire_scale_factor(99000) // we report cm but network has mm
+        Control::new_numeric(ControlType::AntennaHeight, 0., 9900.)
+            .wire_scale_factor(99000.) // we report cm but network has mm
             .unit("cm"),
     );
     controls.insert(
         ControlType::BearingAlignment,
-        Control::new_numeric(ControlType::BearingAlignment, -180, 180)
+        Control::new_numeric(ControlType::BearingAlignment, -180., 180.)
             .unit("Deg")
-            .wire_scale_factor(1800)
-            .wire_offset(-1),
+            .wire_scale_factor(1800.)
+            .wire_offset(-1.),
     );
     controls.insert(
         ControlType::Gain,
-        Control::new_auto(
-            ControlType::Gain,
-            0,
-            100,
-            AutomaticValue {
-                has_auto: true,
-                //auto_values: 1,
-                //auto_descriptions: None,
-                has_auto_adjustable: false,
-                auto_adjust_min_value: 0,
-                auto_adjust_max_value: 0,
-            },
-        )
-        .wire_scale_factor(255),
+        Control::new_auto(ControlType::Gain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE)
+            .wire_scale_factor(255.),
     );
     controls.insert(
         ControlType::InterferenceRejection,
@@ -66,7 +55,7 @@ pub fn new(model: Option<&str>) -> Controls {
     );
     controls.insert(
         ControlType::Rain,
-        Control::new_numeric(ControlType::Rain, 0, 100).wire_scale_factor(255),
+        Control::new_numeric(ControlType::Rain, 0., 100.).wire_scale_factor(255.),
     );
     controls.insert(
         ControlType::TargetBoost,
@@ -75,14 +64,14 @@ pub fn new(model: Option<&str>) -> Controls {
 
     controls.insert(
         ControlType::OperatingHours,
-        Control::new_numeric(ControlType::OperatingHours, 0, i32::MAX)
+        Control::new_numeric(ControlType::OperatingHours, 0., f32::MAX)
             .read_only(true)
             .unit("h"),
     );
 
     controls.insert(
         ControlType::RotationSpeed,
-        Control::new_numeric(ControlType::RotationSpeed, 0, 990)
+        Control::new_numeric(ControlType::RotationSpeed, 0., 990.)
             .read_only(true)
             .unit("dRPM"),
     );
@@ -105,18 +94,11 @@ pub fn new(model: Option<&str>) -> Controls {
         ControlType::SideLobeSuppression,
         Control::new_auto(
             ControlType::SideLobeSuppression,
-            0,
-            100,
-            AutomaticValue {
-                has_auto: true,
-                //auto_values: 1,
-                //auto_descriptions: None,
-                has_auto_adjustable: false,
-                auto_adjust_min_value: 0,
-                auto_adjust_max_value: 0,
-            },
+            0.,
+            100.,
+            HAS_AUTO_NOT_ADJUSTABLE,
         )
-        .wire_scale_factor(255),
+        .wire_scale_factor(255.),
     );
 
     Controls::new_base(controls)
@@ -149,15 +131,15 @@ pub fn update_when_model_known(controls: &mut Controls, model: Model, radar_info
     }
 
     let max_value = (match model {
-        Model::Unknown => 0,
-        Model::BR24 => 24,
-        Model::Gen3 => 36,
-        Model::Gen4 => 48,
-        Model::HALO => 96,
-    }) * 1852;
-    let mut range_control = Control::new_numeric(ControlType::Range, 0, max_value)
+        Model::Unknown => 0.,
+        Model::BR24 => 24.,
+        Model::Gen3 => 36.,
+        Model::Gen4 => 48.,
+        Model::HALO => 96.,
+    }) * 1852.;
+    let mut range_control = Control::new_numeric(ControlType::Range, 0., max_value)
         .unit("m")
-        .wire_scale_factor(10 * max_value); // Radar sends and receives in decimeters
+        .wire_scale_factor(10. * max_value); // Radar sends and receives in decimeters
     if let Some(range_detection) = &radar_info.range_detection {
         if range_detection.complete {
             range_control.set_valid_values(range_detection.ranges.clone());
@@ -178,62 +160,21 @@ pub fn update_when_model_known(controls: &mut Controls, model: Model, radar_info
             Control::new_list(ControlType::AccentLight, &["Off", "Low", "Medium", "High"]),
         );
 
-        controls.insert(
-            ControlType::NoTransmitStart1,
-            Control::new_numeric(ControlType::NoTransmitStart1, -180, 180)
-                .unit("Deg")
-                .wire_scale_factor(1800)
-                .wire_offset(-1),
-        );
-        controls.insert(
-            ControlType::NoTransmitStart2,
-            Control::new_numeric(ControlType::NoTransmitStart2, -180, 180)
-                .unit("Deg")
-                .wire_scale_factor(1800)
-                .wire_offset(-1),
-        );
-        controls.insert(
-            ControlType::NoTransmitStart3,
-            Control::new_numeric(ControlType::NoTransmitStart3, -180, 180)
-                .unit("Deg")
-                .wire_scale_factor(1800)
-                .wire_offset(-1),
-        );
-        controls.insert(
-            ControlType::NoTransmitStart4,
-            Control::new_numeric(ControlType::NoTransmitStart4, -180, 180)
-                .unit("Deg")
-                .wire_scale_factor(1800)
-                .wire_offset(-1),
-        );
-        controls.insert(
-            ControlType::NoTransmitEnd1,
-            Control::new_numeric(ControlType::NoTransmitEnd1, -180, 180)
-                .unit("Deg")
-                .wire_scale_factor(1800)
-                .wire_offset(-1),
-        );
-        controls.insert(
-            ControlType::NoTransmitEnd2,
-            Control::new_numeric(ControlType::NoTransmitEnd2, -180, 180)
-                .unit("Deg")
-                .wire_scale_factor(1800)
-                .wire_offset(-1),
-        );
-        controls.insert(
-            ControlType::NoTransmitEnd3,
-            Control::new_numeric(ControlType::NoTransmitEnd3, -180, 180)
-                .unit("Deg")
-                .wire_scale_factor(1800)
-                .wire_offset(-1),
-        );
-        controls.insert(
-            ControlType::NoTransmitEnd4,
-            Control::new_numeric(ControlType::NoTransmitEnd4, -180, 180)
-                .unit("Deg")
-                .wire_scale_factor(1800)
-                .wire_offset(-1),
-        );
+        let mut ct = ControlType::NoTransmitStart1;
+        while ct <= ControlType::NoTransmitEnd4 {
+            controls.insert(
+                ct,
+                Control::new_numeric(ct, -180., 180.)
+                    .unit("Deg")
+                    .wire_scale_factor(1800.)
+                    .wire_offset(-1.),
+            );
+            if let Some(n) = next(&ct) {
+                ct = n;
+            } else {
+                break;
+            }
+        }
 
         controls.insert(
             // TODO: Investigate mapping on 4G
@@ -245,35 +186,21 @@ pub fn update_when_model_known(controls: &mut Controls, model: Model, radar_info
             ControlType::Sea,
             Control::new_auto(
                 ControlType::Sea,
-                0,
-                100,
+                0.,
+                100.,
                 AutomaticValue {
                     has_auto: true,
-                    //auto_values: 100,
-                    //auto_descriptions: None,
                     has_auto_adjustable: true,
-                    auto_adjust_min_value: -50,
-                    auto_adjust_max_value: 50,
+                    auto_adjust_min_value: -50.,
+                    auto_adjust_max_value: 50.,
                 },
             ),
         );
     } else {
         controls.insert(
             ControlType::Sea,
-            Control::new_auto(
-                ControlType::Sea,
-                0,
-                100,
-                AutomaticValue {
-                    has_auto: true,
-                    //auto_values: 1,
-                    //auto_descriptions: None,
-                    has_auto_adjustable: false,
-                    auto_adjust_min_value: 0,
-                    auto_adjust_max_value: 0,
-                },
-            )
-            .wire_scale_factor(255),
+            Control::new_auto(ControlType::Sea, 0., 100., HAS_AUTO_NOT_ADJUSTABLE)
+                .wire_scale_factor(255.),
         );
     }
 
@@ -326,8 +253,8 @@ pub fn update_when_model_known(controls: &mut Controls, model: Model, radar_info
         );
         controls.insert(
             ControlType::DopplerSpeedThreshold,
-            Control::new_numeric(ControlType::DopplerSpeedThreshold, 0, 99)
-                .wire_scale_factor(99 * 16)
+            Control::new_numeric(ControlType::DopplerSpeedThreshold, 0., 99.)
+                .wire_scale_factor(99. * 16.)
                 .unit("cm/s"),
         );
         controls.insert(

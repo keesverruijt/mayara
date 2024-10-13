@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     radar::RadarInfo,
-    settings::{AutomaticValue, Control, ControlType, Controls},
+    settings::{Control, ControlType, Controls, HAS_AUTO_NOT_ADJUSTABLE},
 };
 
 pub fn new() -> Controls {
@@ -15,67 +15,29 @@ pub fn new() -> Controls {
 
     controls.insert(
         ControlType::AntennaHeight,
-        Control::new_numeric(ControlType::AntennaHeight, 0, 9900)
-            .wire_scale_factor(99000) // we report cm but network has mm
-            .unit("cm"),
+        Control::new_numeric(ControlType::AntennaHeight, 0., 9900.).unit("cm"),
     );
     controls.insert(
         ControlType::BearingAlignment,
-        Control::new_numeric(ControlType::BearingAlignment, -180, 180)
+        Control::new_numeric(ControlType::BearingAlignment, -180., 180.)
             .unit("Deg")
-            .wire_scale_factor(1800)
-            .wire_offset(-1),
+            .wire_scale_factor(1800.)
+            .wire_offset(-1.),
     );
     controls.insert(
         ControlType::Gain,
-        Control::new_auto(
-            ControlType::Gain,
-            0,
-            100,
-            AutomaticValue {
-                has_auto: true,
-                //auto_values: 1,
-                //auto_descriptions: None,
-                has_auto_adjustable: false,
-                auto_adjust_min_value: 0,
-                auto_adjust_max_value: 0,
-            },
-        )
-        .wire_scale_factor(255),
+        Control::new_auto(ControlType::Gain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE)
+            .wire_scale_factor(255.),
     );
     controls.insert(
         ControlType::Sea,
-        Control::new_auto(
-            ControlType::Sea,
-            0,
-            100,
-            AutomaticValue {
-                has_auto: true,
-                //auto_values: 1,
-                //auto_descriptions: None,
-                has_auto_adjustable: false,
-                auto_adjust_min_value: 0,
-                auto_adjust_max_value: 0,
-            },
-        )
-        .wire_scale_factor(255),
+        Control::new_auto(ControlType::Sea, 0., 100., HAS_AUTO_NOT_ADJUSTABLE)
+            .wire_scale_factor(255.),
     );
     controls.insert(
         ControlType::Rain,
-        Control::new_auto(
-            ControlType::Rain,
-            0,
-            100,
-            AutomaticValue {
-                has_auto: true,
-                //auto_values: 1,
-                //auto_descriptions: None,
-                has_auto_adjustable: false,
-                auto_adjust_min_value: 0,
-                auto_adjust_max_value: 0,
-            },
-        )
-        .wire_scale_factor(255),
+        Control::new_auto(ControlType::Rain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE)
+            .wire_scale_factor(255.),
     );
     controls.insert(
         ControlType::TargetBoost,
@@ -84,14 +46,14 @@ pub fn new() -> Controls {
 
     controls.insert(
         ControlType::OperatingHours,
-        Control::new_numeric(ControlType::OperatingHours, 0, i32::MAX)
+        Control::new_numeric(ControlType::OperatingHours, 0., f32::MAX)
             .read_only(true)
             .unit("h"),
     );
 
     controls.insert(
         ControlType::RotationSpeed,
-        Control::new_numeric(ControlType::RotationSpeed, 0, 990)
+        Control::new_numeric(ControlType::RotationSpeed, 0., 990.)
             .read_only(true)
             .unit("dRPM"),
     );
@@ -114,18 +76,11 @@ pub fn new() -> Controls {
         ControlType::SideLobeSuppression,
         Control::new_auto(
             ControlType::SideLobeSuppression,
-            0,
-            100,
-            AutomaticValue {
-                has_auto: true,
-                //auto_values: 1,
-                //auto_descriptions: None,
-                has_auto_adjustable: false,
-                auto_adjust_min_value: 0,
-                auto_adjust_max_value: 0,
-            },
+            0.,
+            100.,
+            HAS_AUTO_NOT_ADJUSTABLE,
         )
-        .wire_scale_factor(255),
+        .wire_scale_factor(255.),
     );
 
     Controls::new_base(controls)
@@ -157,10 +112,10 @@ pub fn update_when_model_known(controls: &mut Controls, radar_info: &RadarInfo) 
         controls.set_user_name(user_name);
     }
 
-    let max_value = 48 * 1852;
-    let mut range_control = Control::new_numeric(ControlType::Range, 0, max_value)
+    let max_value = 48. * 1852.;
+    let mut range_control = Control::new_numeric(ControlType::Range, 0., max_value)
         .unit("m")
-        .wire_scale_factor(10 * max_value); // Radar sends and receives in decimeters
+        .wire_scale_factor(10. * max_value); // Radar sends and receives in decimeters
     if let Some(range_detection) = &radar_info.range_detection {
         if range_detection.complete {
             range_control.set_valid_values(range_detection.ranges.clone());
@@ -170,16 +125,16 @@ pub fn update_when_model_known(controls: &mut Controls, radar_info: &RadarInfo) 
 
     controls.insert(
         ControlType::NoTransmitStart1,
-        Control::new_numeric(ControlType::NoTransmitStart1, -180, 180)
-            .wire_scale_factor(1800)
-            .wire_offset(-1),
+        Control::new_numeric(ControlType::NoTransmitStart1, -180., 180.)
+            .wire_scale_factor(1800.)
+            .wire_offset(-1.),
     );
     controls.insert(
         ControlType::NoTransmitEnd1,
-        Control::new_numeric(ControlType::NoTransmitEnd1, -180, 180)
+        Control::new_numeric(ControlType::NoTransmitEnd1, -180., 180.)
             .unit("Deg")
-            .wire_scale_factor(1800)
-            .wire_offset(-1),
+            .wire_scale_factor(1800.)
+            .wire_offset(-1.),
     );
 
     controls.insert(
@@ -203,8 +158,6 @@ pub fn update_when_model_known(controls: &mut Controls, radar_info: &RadarInfo) 
     );
     controls.insert(
         ControlType::DopplerSpeedThreshold,
-        Control::new_numeric(ControlType::DopplerSpeedThreshold, 0, 1594)
-            .wire_scale_factor(1594 * 16)
-            .unit("cm/s"),
+        Control::new_numeric(ControlType::DopplerSpeedThreshold, 0., 1000.),
     );
 }
