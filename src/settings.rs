@@ -1,4 +1,3 @@
-use enum_iterator::{all, cardinality, first, last, next, previous, reverse_all, Sequence};
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::FromPrimitive;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -21,27 +20,6 @@ use thiserror::Error;
 /// To cater for this, we keep the state of these settings in generalized state
 /// structures in Rust.
 ///
-
-#[derive(Clone, Copy, Debug, Serialize)]
-pub enum ControlState {
-    Off,
-    Manual,
-    Auto, // TODO: radar_pi had multiple for Garmin, lets see if we can do this better
-}
-
-impl Display for ControlState {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                ControlState::Off => "Off",
-                ControlState::Manual => "Manual",
-                ControlState::Auto => "Auto",
-            }
-        )
-    }
-}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Controls {
@@ -127,6 +105,8 @@ pub struct ControlValue {
     pub value: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -137,6 +117,7 @@ impl ControlValue {
             id,
             value,
             auto: None,
+            enabled: None,
             error: None,
         }
     }
@@ -156,7 +137,7 @@ pub(crate) struct Control {
     #[serde(skip)]
     pub auto: Option<bool>,
     #[serde(skip)]
-    pub state: ControlState,
+    pub enabled: Option<bool>,
     #[serde(skip)]
     pub needs_refresh: bool, // True when it has been changed and client needs to know value (again)
 }
@@ -169,7 +150,7 @@ impl Control {
             value,
             auto_value: None,
             auto: None,
-            state: ControlState::Off,
+            enabled: None,
             description: None,
             needs_refresh: false,
         }
@@ -187,9 +168,9 @@ impl Control {
         self
     }
 
-    pub fn wire_scale_factor(mut self, wire_scale_factor: f32) -> Self {
+    pub fn wire_scale_factor(mut self, wire_scale_factor: f32, with_step: bool) -> Self {
         self.item.wire_scale_factor = Some(wire_scale_factor);
-        if self.item.wire_scale_factor != self.item.max_value && self.item.step_value.is_none() {
+        if with_step {
             self.item.step_value =
                 Some(self.item.max_value.unwrap_or(1.) / self.item.wire_scale_factor.unwrap_or(1.));
         }
@@ -215,6 +196,12 @@ impl Control {
         self
     }
 
+    pub fn has_enabled(mut self) -> Self {
+        self.item.has_enabled = true;
+
+        self
+    }
+
     pub fn new_numeric(control_type: ControlType, min_value: f32, max_value: f32) -> Self {
         let min_value = Some(min_value);
         let max_value = Some(max_value);
@@ -222,7 +209,7 @@ impl Control {
             control_type,
             name: control_type.to_string(),
             automatic: None,
-            //has_off: false,
+            has_enabled: false,
             default_value: min_value,
             min_value,
             max_value,
@@ -251,7 +238,7 @@ impl Control {
             control_type,
             name: control_type.to_string(),
             automatic: Some(automatic),
-            //has_off: false,
+            has_enabled: false,
             default_value: min_value,
             min_value,
             max_value,
@@ -273,7 +260,7 @@ impl Control {
             control_type,
             name: control_type.to_string(),
             automatic: None,
-            //has_off: false,
+            has_enabled: false,
             default_value: Some(0.),
             min_value: Some(0.),
             max_value: Some(description_count),
@@ -300,7 +287,7 @@ impl Control {
             control_type,
             name: control_type.to_string(),
             automatic: None,
-            //has_off: false,
+            has_enabled: false,
             default_value: Some(0.),
             min_value: Some(0.),
             max_value: Some(((descriptions.len() as i32) - 1) as f32),
@@ -320,7 +307,7 @@ impl Control {
             control_type,
             name: control_type.to_string(),
             automatic: None,
-            //has_off: false,
+            has_enabled: false,
             default_value: None,
             min_value: None,
             max_value: None,
@@ -407,6 +394,17 @@ impl Control {
             .to_string()
     }
 
+    pub fn set_auto(&mut self, auto: bool) {
+        self.needs_refresh = self.auto != Some(auto);
+        log::info!(
+            "Setting {} auto {} changed: {}",
+            self.item.control_type,
+            auto,
+            self.needs_refresh
+        );
+        self.auto = Some(auto);
+    }
+
     /// Set the control to a (maybe new) value + auto state
     ///
     /// Return Ok(Some(())) when the value changed or it always needs
@@ -417,20 +415,24 @@ impl Control {
         mut value: f32,
         mut auto_value: Option<f32>,
         auto: Option<bool>,
-        state: ControlState,
+        enabled: Option<bool>,
     ) -> Result<Option<()>, ControlError> {
+        // SCALE MAPPING
         if let (Some(wire_scale_factor), Some(max_value)) =
             (self.item.wire_scale_factor, self.item.max_value)
         {
-            // SCALE MAPPING...
             // One of the _only_ reasons we use f32 is because Navico wire format for some things is
             // tenths of degrees. To make things uniform we map these to a float with .1 precision.
             if wire_scale_factor != max_value {
+                log::info!("{} map value {}", self.item.control_type, value);
                 value = value * max_value / wire_scale_factor;
 
                 auto_value = auto_value.map(|v| v * max_value / wire_scale_factor);
+                log::info!("{} map value to scaled {}", self.item.control_type, value);
             }
         }
+
+        // RANGE MAPPING
         if let (Some(min_value), Some(max_value)) = (self.item.min_value, self.item.max_value) {
             if self.item.wire_offset.unwrap_or(0.) == -1.
                 && value > max_value
@@ -457,13 +459,35 @@ impl Control {
             }
         }
 
+        if let Some(step) = self.item.step_value {
+            match step {
+                0.1 => {
+                    value = (value * 10.) as i32 as f32 / 10.;
+                    auto_value = auto_value.map(|value| (value * 10.) as i32 as f32 / 10.);
+                }
+                1.0 => {
+                    value = value as i32 as f32;
+                    auto_value = auto_value.map(|value| value as i32 as f32);
+                }
+                _ => {
+                    value = (value / step).round() * step;
+                    auto_value = auto_value.map(|value| (value / step).round() * step);
+                }
+            }
+            log::info!("{} map value to rounded {}", self.item.control_type, value);
+        }
+
         if auto.is_some() && self.item.automatic.is_none() {
             Err(ControlError::NoAuto(self.item.control_type))
-        } else if self.value != Some(value) || self.auto_value != auto_value || self.auto != auto {
+        } else if self.value != Some(value)
+            || self.auto_value != auto_value
+            || self.auto != auto
+            || self.enabled != enabled
+        {
             self.value = Some(value);
             self.auto_value = auto_value;
             self.auto = auto;
-            self.state = state;
+            self.enabled = enabled;
             self.needs_refresh = false;
 
             Ok(Some(()))
@@ -480,7 +504,6 @@ impl Control {
         if &self.description != &value {
             self.description = value;
             self.needs_refresh = false;
-            self.state = ControlState::Manual;
             log::trace!("Set {} to {:?}", self.item.control_type, self.description);
             Some(())
         } else if self.needs_refresh {
@@ -523,6 +546,8 @@ pub(crate) struct ControlDefinition {
     //has_off: bool,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     automatic: Option<AutomaticValue>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub(crate) has_enabled: bool,
     #[serde(skip_serializing_if = "is_false")]
     pub(crate) is_string_value: bool,
     #[serde(skip)]
@@ -567,7 +592,6 @@ impl ControlDefinition {}
     Deserialize_repr,
     FromPrimitive,
     ToPrimitive,
-    Sequence,
 )]
 #[repr(u8)]
 // The order is the one in which we deem the representation is "right"

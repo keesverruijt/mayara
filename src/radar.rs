@@ -20,9 +20,7 @@ pub(crate) mod trail;
 use crate::config::Persistence;
 use crate::locator::LocatorId;
 use crate::protos::RadarMessage::RadarMessage;
-use crate::settings::{
-    Control, ControlError, ControlMessage, ControlState, ControlType, ControlValue, Controls,
-};
+use crate::settings::{Control, ControlError, ControlMessage, ControlType, ControlValue, Controls};
 use crate::Cli;
 
 pub(crate) type SpokeBearing = u16;
@@ -332,17 +330,43 @@ impl RadarInfo {
         }
     }
 
+    pub fn set_value_auto_enabled(
+        &mut self,
+        control_type: &ControlType,
+        value: f32,
+        auto: Option<bool>,
+        enabled: Option<bool>,
+    ) -> Result<Option<()>, ControlError> {
+        let control = {
+            if let Some(control) = self.controls.get_mut(control_type) {
+                Ok(control
+                    .set(value, None, auto, enabled)?
+                    .map(|_| control.clone()))
+            } else {
+                Err(ControlError::NotSupported(*control_type))
+            }
+        }?;
+
+        // If the control changed, control.set returned Some(control)
+        if let Some(control) = control {
+            self.broadcast_protobuf(&control);
+            self.broadcast_json(&control);
+            Ok(Some(()))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn set(
         &mut self,
         control_type: &ControlType,
         value: f32,
         auto: Option<bool>,
-        state: ControlState,
     ) -> Result<Option<()>, ControlError> {
         let control = {
             if let Some(control) = self.controls.get_mut(control_type) {
                 Ok(control
-                    .set(value, None, auto, state)?
+                    .set(value, None, auto, None)?
                     .map(|_| control.clone()))
             } else {
                 Err(ControlError::NotSupported(*control_type))
@@ -363,46 +387,22 @@ impl RadarInfo {
         &mut self,
         control_type: &ControlType,
         auto: bool,
-    ) -> Result<Option<()>, ControlError> {
-        let state = if auto {
-            ControlState::Auto
+    ) -> Result<(), ControlError> {
+        if let Some(control) = self.controls.get_mut(control_type) {
+            control.set_auto(auto);
         } else {
-            ControlState::Manual
+            return Err(ControlError::NotSupported(*control_type));
         };
-
-        let control = {
-            if let Some(control) = self.controls.get_mut(control_type) {
-                let value = control.value.unwrap_or(0.);
-                Ok(control
-                    .set(value, None, Some(auto), state)?
-                    .map(|_| control.clone()))
-            } else {
-                Err(ControlError::NotSupported(*control_type))
-            }
-        }?;
-
-        if let Some(control) = control {
-            self.broadcast_protobuf(&control);
-            self.broadcast_json(&control);
-            Ok(Some(()))
-        } else {
-            Ok(None)
-        }
+        Ok(())
     }
 
-    pub fn set_auto(
+    pub fn set_value_auto(
         &mut self,
         control_type: &ControlType,
         auto: bool,
         value: f32,
     ) -> Result<Option<()>, ControlError> {
-        let state = if auto {
-            ControlState::Auto
-        } else {
-            ControlState::Manual
-        };
-
-        self.set(control_type, value, Some(auto), state)
+        self.set(control_type, value, Some(auto))
     }
 
     pub fn set_value_with_many_auto(
@@ -415,7 +415,7 @@ impl RadarInfo {
             if let Some(control) = self.controls.get_mut(control_type) {
                 let auto = control.auto;
                 Ok(control
-                    .set(value, Some(auto_value), auto, ControlState::Auto)?
+                    .set(value, Some(auto_value), auto, None)?
                     .map(|_| control.clone()))
             } else {
                 Err(ControlError::NotSupported(*control_type))
@@ -446,7 +446,7 @@ impl RadarInfo {
                         .parse::<i32>()
                         .map_err(|_| ControlError::Invalid(control_type.clone(), value))?;
                     control
-                        .set(i as f32, None, None, ControlState::Manual)
+                        .set(i as f32, None, None, None)
                         .map(|_| Some(control.clone()))
                 }
             } else {
@@ -478,6 +478,7 @@ impl RadarInfo {
             id: control.item().control_type,
             value: control.value(),
             auto: control.auto,
+            enabled: control.enabled,
             error: None,
         };
 
@@ -503,6 +504,7 @@ impl RadarInfo {
             id: control.item().control_type,
             value: control.value(),
             auto: control.auto,
+            enabled: control.enabled,
             error,
         };
 

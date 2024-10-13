@@ -6,6 +6,7 @@ const { div, label, input, button, select, option } = van.tags
 
 const prefix = 'myr_';
 const auto_postfix = '_auto';
+const enabled_postfix = '_enabled';
 
 var myr_radar;
 var myr_controls;
@@ -24,6 +25,12 @@ function registerRangeCallback(callback) {
   myr_range_callbacks.push(callback);
 }
 
+const ReadOnlyValue = (id, name) =>
+  div({class: 'myr_control'},
+    label({ for: prefix + id }, name),
+    div({ class: 'myr_numeric', id: prefix + id })
+  )
+
 const StringValue = (id, name) =>
   div({class: 'myr_control'},
     label({ for: prefix + id }, name),
@@ -32,22 +39,28 @@ const StringValue = (id, name) =>
 
 const NumericValue = (id, name) =>
   div({class: 'myr_control'},
-    label({ for: prefix + id }, name),
     div({ class: 'myr_numeric' }),
+    label({ for: prefix + id }, name),
     input({ type: 'number', id: prefix + id, onchange: e => do_change(e), oninput: e => do_input(e) })
   )
     
 const RangeValue = (id, name, min, max, def, descriptions) =>
   div({ class: 'myr_control' },
-    label({ for: prefix + id }, name),
     div({ class: 'myr_description' }),
-    input({ type: 'range', id: prefix + id, min, max, value: def, onchange: e => do_change(e)})
+    label({ for: prefix + id }, name),
+    input({ type: 'range', id: prefix + id, min, max, value: def, onchange: e => do_change(e)})    
   )
      
 const AutoButton = (id) =>
-  div(
+  div( { class: 'myr_button' },
+    label({ for: prefix + id + auto_postfix, class: 'myr_auto_label' }, 'Auto'),
     input({ type: 'checkbox', class: 'myr_auto', id: prefix + id + auto_postfix, onchange: e => do_change_auto(e) }),
-    label({ for: prefix + id + auto_postfix }, 'Auto'),
+  )
+     
+const EnabledButton = (id) =>
+  div( { class: 'myr_button' },
+    label({ for: prefix + id + enabled_postfix, class: 'myr_enabled_label' }, 'Enabled'),
+    input({ type: 'checkbox', class: 'myr_enabled', id: prefix + id + enabled_postfix, onchange: e => do_change_enabled(e) }),
   )
 
 const SelectValue = (id, name, validValues, descriptions) => {
@@ -174,7 +187,7 @@ function setControl(v) {
     let n = i.parentNode.querySelector('.myr_numeric');
     if (n) {
       if (control.unit) {
-        n.innerHTML = v.value.toString() + " " + control.unit;
+        n.innerHTML = v.value + " " + control.unit;
       } else {
         n.innerHTML = v.value;
       }
@@ -182,22 +195,43 @@ function setControl(v) {
     let d = i.parentNode.querySelector('.myr_description');
     if (d) {
       let description = (control.descriptions) ? control.descriptions[v.value] : undefined;
-      if (!description && control.hasAutoAdjustable && v['auto']) {
-        description = "A" + ((v.value > 0) ? "+" + v.value : "") + ((v.value < 0) ? v.value : "");
-        if (n) {
-          n.min = control.autoAdjustMinValue;
-          n.max = control.autoAdjustMaxValue;
+      if (!description && control.hasAutoAdjustable) {
+        if (v['auto']) {
+          description = "A" + ((v.value > 0) ? "+" + v.value : "") + ((v.value < 0) ? v.value : "");
+          i.min = control.autoAdjustMinValue;
+          i.max = control.autoAdjustMaxValue;
         }
-      }
+        else {
+          i.min = control.minValue;
+          i.max = control.maxValue;
+        }
+      } 
       if (!description) description = v.value;
       d.innerHTML = description;
     }
+
     if (control.hasAuto && 'auto' in v) {
       let checkbox = i.parentNode.querySelector('.myr_auto');
       if (checkbox) {
         checkbox.checked = v.auto;
       }
+      let display = (v.auto && !control.hasAutoAdjustable) ? 'none' : 'block';
+      if (n) { n.style.display = display; }
+      if (d) { d.style.display = display; }
+      i.style.display = display;
     }
+
+    if (control.hasEnabled && 'enabled' in v) {
+      let checkbox = i.parentNode.querySelector('.myr_enabled');
+      if (checkbox) {
+        checkbox.checked = v.enabled;
+      }
+      let display = (v.enabled) ? 'block' : 'none';
+      if (n) { n.style.display = display; }
+      if (d) { d.style.display = display; }
+      i.style.display = display;
+    }
+
     if (control.name == 'Range') {
       if (control.descriptions[v.value]) {
         let unit = control.descriptions[v.value].split(/(\s+)/);
@@ -229,20 +263,26 @@ function buildControls() {
     if (v.name == 'Range') {
       van.add(c, SelectValue(999, 'Range units', [0, 1], { "0": "Metric", "1": "Nautic" }));
     }
-    van.add(c, (v['isStringValue'])
-      ? StringValue(k, v.name)
-      : ('validValues' in v)
-        ? SelectValue(k, v.name, v['validValues'], v['descriptions'])
-          : ('maxValue' in v && v.maxValue <= 100)
-            ? RangeValue(k, v.name, v.minValue, v.maxValue, 0, 'descriptions' in v)
-            : NumericValue(k, v.name));
     if (v['isReadOnly']) {
-      get_element_by_server_id(k).setAttribute('readonly', 'true');
-    } else if (v['isStringValue']) {
+      van.add(c, ReadOnlyValue(k, v.name));
+    }
+    else if (v['isStringValue']) {
+      van.add(c, StringValue(k, v.name));
       van.add(get_element_by_server_id(k).parentNode, SetButton());
+    }
+    else if ('validValues' in v) {
+      van.add(c, SelectValue(k, v.name, v['validValues'], v['descriptions']));
+    }
+    else if ('maxValue' in v && v.maxValue <= 100)
+    { van.add(c, RangeValue(k, v.name, v.minValue, v.maxValue, 0, 'descriptions' in v)); }
+    else {
+      van.add(c, NumericValue(k, v.name));
     }
     if (v['hasAuto']) {
       van.add(get_element_by_server_id(k).parentNode, AutoButton(k));
+    }
+    if (v['hasEnabled']) {
+      van.add(get_element_by_server_id(k).parentNode, EnabledButton(k));
     }
   }
 }

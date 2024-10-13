@@ -21,23 +21,23 @@ pub fn new() -> Controls {
         ControlType::BearingAlignment,
         Control::new_numeric(ControlType::BearingAlignment, -180., 180.)
             .unit("Deg")
-            .wire_scale_factor(1800.)
+            .wire_scale_factor(1800., true)
             .wire_offset(-1.),
     );
     controls.insert(
         ControlType::Gain,
         Control::new_auto(ControlType::Gain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE)
-            .wire_scale_factor(255.),
+            .wire_scale_factor(255., false),
     );
     controls.insert(
         ControlType::Sea,
         Control::new_auto(ControlType::Sea, 0., 100., HAS_AUTO_NOT_ADJUSTABLE)
-            .wire_scale_factor(255.),
+            .wire_scale_factor(255., false),
     );
     controls.insert(
         ControlType::Rain,
         Control::new_auto(ControlType::Rain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE)
-            .wire_scale_factor(255.),
+            .wire_scale_factor(255., false),
     );
     controls.insert(
         ControlType::TargetBoost,
@@ -80,7 +80,7 @@ pub fn new() -> Controls {
             100.,
             HAS_AUTO_NOT_ADJUSTABLE,
         )
-        .wire_scale_factor(255.),
+        .wire_scale_factor(255., false),
     );
 
     Controls::new_base(controls)
@@ -115,7 +115,7 @@ pub fn update_when_model_known(controls: &mut Controls, radar_info: &RadarInfo) 
     let max_value = 48. * 1852.;
     let mut range_control = Control::new_numeric(ControlType::Range, 0., max_value)
         .unit("m")
-        .wire_scale_factor(10. * max_value); // Radar sends and receives in decimeters
+        .wire_scale_factor(10. * max_value, false); // Radar sends and receives in decimeters
     if let Some(range_detection) = &radar_info.range_detection {
         if range_detection.complete {
             range_control.set_valid_values(range_detection.ranges.clone());
@@ -126,14 +126,14 @@ pub fn update_when_model_known(controls: &mut Controls, radar_info: &RadarInfo) 
     controls.insert(
         ControlType::NoTransmitStart1,
         Control::new_numeric(ControlType::NoTransmitStart1, -180., 180.)
-            .wire_scale_factor(1800.)
+            .wire_scale_factor(1800., true)
             .wire_offset(-1.),
     );
     controls.insert(
         ControlType::NoTransmitEnd1,
         Control::new_numeric(ControlType::NoTransmitEnd1, -180., 180.)
             .unit("Deg")
-            .wire_scale_factor(1800.)
+            .wire_scale_factor(1800., true)
             .wire_offset(-1.),
     );
 

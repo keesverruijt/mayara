@@ -10,7 +10,7 @@ use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
 use crate::locator::{LocatorId, RadarListenAddress, RadarLocator};
 use crate::radar::{DopplerMode, Legend, RadarInfo, SharedRadars};
-use crate::settings::ControlValue;
+use crate::settings::{ControlType, ControlValue};
 use crate::util::c_string;
 use crate::util::PrintableSlice;
 
@@ -476,3 +476,26 @@ pub fn create_br24_locator() -> Box<dyn RadarLocator + Send> {
     let locator = NavicoBR24Locator {};
     Box::new(locator)
 }
+
+const BLANKING_SETS: [(usize, ControlType, ControlType); 4] = [
+    (
+        0,
+        ControlType::NoTransmitStart1,
+        ControlType::NoTransmitEnd1,
+    ),
+    (
+        1,
+        ControlType::NoTransmitStart2,
+        ControlType::NoTransmitEnd2,
+    ),
+    (
+        2,
+        ControlType::NoTransmitStart3,
+        ControlType::NoTransmitEnd3,
+    ),
+    (
+        3,
+        ControlType::NoTransmitStart4,
+        ControlType::NoTransmitEnd4,
+    ),
+];

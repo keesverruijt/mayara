@@ -97,12 +97,14 @@ impl NavigationData {
                         stream.peer_addr().unwrap()
                     );
                     if self.receive_loop(stream, &subsys).await.is_ok() {
+                        log::info!("SK receive_loop break");
                         break;
                     }
                 }
                 Err(_e) => {} // Just loop
             }
         }
+        log::info!("SK run_loop end");
 
         if let Ok(r) = mdns.shutdown() {
             if let Ok(r) = r.recv() {

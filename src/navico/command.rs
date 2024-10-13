@@ -1,6 +1,6 @@
 use log::{debug, trace};
 use num_traits::ToPrimitive;
-use std::cmp::min;
+use std::cmp::{max, min};
 use tokio::net::UdpSocket;
 
 use crate::radar::{RadarError, RadarInfo, SharedRadars};
@@ -69,8 +69,19 @@ impl Command {
         Ok(())
     }
 
-    fn mod_degrees(a: i32) -> i32 {
-        (a + 720) % 360
+    fn scale_100_to_byte(a: f32) -> u8 {
+        // Map range 0..100 to 0..255
+        let mut r = a * 255.0 / 100.0;
+        if r > 255.0 {
+            r = 255.0;
+        } else if r < 0.0 {
+            r = 0.0;
+        }
+        r as u8
+    }
+
+    fn mod_deci_degrees(a: i32) -> i32 {
+        (a + 7200) % 3600
     }
 
     fn near(a: i32, b: i32) -> bool {
@@ -121,8 +132,9 @@ impl Command {
     pub async fn set_control(&mut self, cv: &ControlValue) -> Result<(), RadarError> {
         let value = cv
             .value
-            .parse::<i32>()
+            .parse::<f32>()
             .map_err(|_| RadarError::MissingValue(cv.id))?;
+        let deci_value = (value * 10.0) as i32;
         let auto: u8 = if cv.auto.unwrap_or(false) { 1 } else { 0 };
 
         let mut cmd = Vec::with_capacity(6);
@@ -136,20 +148,20 @@ impl Command {
             }
 
             ControlType::Range => {
-                let decimeters: i32 = self.valid_range(value) * 10;
+                let decimeters: i32 = self.valid_range(deci_value / 10) * 10; //TODO
                 log::trace!("range {value} -> {decimeters}");
 
                 cmd.extend_from_slice(&[0x03, 0xc1]);
                 cmd.extend_from_slice(&decimeters.to_le_bytes());
             }
             ControlType::BearingAlignment => {
-                let value: i16 = Self::mod_degrees(value) as i16 * 10;
+                let value: i16 = Self::mod_deci_degrees(deci_value) as i16;
 
                 cmd.extend_from_slice(&[0x05, 0xc1]);
                 cmd.extend_from_slice(&value.to_le_bytes());
             }
             ControlType::Gain => {
-                let v = min((value + 1) * 255 / 100, 255) as u8;
+                let v = Self::scale_100_to_byte(value);
                 let auto = auto as u32;
 
                 cmd.extend_from_slice(&[0x06, 0xc1, 0x00, 0x00, 0x00, 0x00]);
@@ -181,7 +193,7 @@ impl Command {
                         cmd.extend_from_slice(&[0x11, 0xc1, 0x01, 0x00, value as i8 as u8, 0x04]);
                     }
                 } else {
-                    let v: i32 = min((value + 1) * 255 / 100, 255);
+                    let v: u32 = Self::scale_100_to_byte(value) as u32;
                     let auto = auto as u32;
 
                     cmd.extend_from_slice(&[0x06, 0xc1, 0x02]);
@@ -190,11 +202,11 @@ impl Command {
                 }
             }
             ControlType::Rain => {
-                let v = min((value + 1) * 255 / 100, 255) as u8;
+                let v = Self::scale_100_to_byte(value);
                 cmd.extend_from_slice(&[0x06, 0xc1, 0x04, 0, 0, 0, 0, 0, 0, 0, v]);
             }
             ControlType::SideLobeSuppression => {
-                let v = min((value + 1) * 255 / 100, 255) as u8;
+                let v = Self::scale_100_to_byte(value);
 
                 cmd.extend_from_slice(&[0x06, 0xc1, 0x05, 0, 0, 0, auto, 0, 0, 0, v]);
             }
@@ -256,7 +268,7 @@ impl Command {
                 cmd.extend_from_slice(&value.to_le_bytes());
             }
             ControlType::AntennaHeight => {
-                let value = value as u16 * 10;
+                let value = deci_value as u16;
                 cmd.extend_from_slice(&[0x30, 0xc1, 0x01, 0, 0, 0]);
                 cmd.extend_from_slice(&value.to_le_bytes());
                 cmd.extend_from_slice(&[0, 0]);
@@ -272,8 +284,8 @@ impl Command {
         log::info!("{}: Send command {:02X?}", self.info.key(), cmd);
         self.send(&cmd).await?;
 
-        if self.fake_errors && cv.id == ControlType::Rain && value > 10 {
-            return Self::generate_fake_error(value);
+        if self.fake_errors && cv.id == ControlType::Rain && value > 10. {
+            return Self::generate_fake_error(value as i32);
         }
         Ok(())
     }

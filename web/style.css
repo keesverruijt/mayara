@@ -35,11 +35,30 @@ div.myr_control {
 }
 
 div.myr_description {
+  z-index: 10;
   display: block;
+  float: right;
+  right:0;
+  top:0;
+}
+
+div.myr_button {
+  display: block;
+}
+
+div.myr_button::after {
+  content: "";
+  clear: both;
+  display: table;
+}
+
+label.myr_auto_label,label.myr_enabled_label,input.myr_auto,input.myr_enabled {
+  float: left;
 }
 
 label {
   display: block;
+  max-width: 150px;
 }
 
 input {

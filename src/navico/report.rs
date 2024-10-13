@@ -11,7 +11,7 @@ use tokio::time::{sleep, sleep_until, Instant};
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::radar::{DopplerMode, RadarError, RadarInfo, RangeDetection, SharedRadars};
-use crate::settings::{ControlMessage, ControlState, ControlType, ControlValue};
+use crate::settings::{ControlMessage, ControlType, ControlValue};
 use crate::util::{c_string, c_wide_string, create_udp_multicast_listen};
 
 use super::command::Command;
@@ -430,11 +430,7 @@ impl NavicoReportReceiver {
 
     async fn pass_to_data_receiver(&mut self, cv: &ControlValue) -> Result<(), RadarError> {
         let value = cv.value.parse::<f32>().unwrap_or(0.);
-        if self
-            .info
-            .set(&cv.id, value, cv.auto, ControlState::Manual)
-            .is_err()
-        {
+        if self.info.set(&cv.id, value, cv.auto).is_err() {
             log::warn!("Cannot set {} to {}", cv.id, value);
         }
 
@@ -471,14 +467,8 @@ impl NavicoReportReceiver {
         }
     }
 
-    fn set(
-        &mut self,
-        control_type: &ControlType,
-        value: f32,
-        auto: Option<bool>,
-        state: ControlState,
-    ) {
-        match self.info.set(control_type, value, auto, state) {
+    fn set(&mut self, control_type: &ControlType, value: f32, auto: Option<bool>) {
+        match self.info.set(control_type, value, auto) {
             Err(e) => {
                 error!("{}: {}", self.key, e.to_string());
             }
@@ -486,11 +476,11 @@ impl NavicoReportReceiver {
                 if log::log_enabled!(log::Level::Debug) {
                     let control = self.info.controls.get(control_type).unwrap();
                     log::trace!(
-                        "{}: Control '{}' new value {} state {}",
+                        "{}: Control '{}' new value {} enabled {:?}",
                         self.key,
                         control_type,
                         control.value(),
-                        control.state
+                        control.enabled
                     );
                 }
             }
@@ -499,11 +489,11 @@ impl NavicoReportReceiver {
     }
 
     fn set_value(&mut self, control_type: &ControlType, value: f32) {
-        self.set(control_type, value, None, ControlState::Manual)
+        self.set(control_type, value, None)
     }
 
-    fn set_auto(&mut self, control_type: &ControlType, value: f32, auto: u8) {
-        match self.info.set_auto(control_type, auto > 0, value) {
+    fn set_value_auto(&mut self, control_type: &ControlType, value: f32, auto: u8) {
+        match self.info.set_value_auto(control_type, auto > 0, value) {
             Err(e) => {
                 error!("{}: {}", self.key, e.to_string());
             }
@@ -817,13 +807,13 @@ impl NavicoReportReceiver {
         if self.model == Model::HALO {
             self.set_value(&ControlType::Mode, mode as f32);
         }
-        self.set_auto(&ControlType::Gain, gain as f32, gain_auto);
+        self.set_value_auto(&ControlType::Gain, gain as f32, gain_auto);
         if self.model != Model::HALO {
-            self.set_auto(&ControlType::Sea, sea as f32, sea_auto);
+            self.set_value_auto(&ControlType::Sea, sea as f32, sea_auto);
         } else {
             self.info
                 .set_auto_state(&ControlType::Sea, sea_auto > 0)
-                .unwrap();
+                .unwrap(); // Only crashes if control not supported which would be an internal bug
         }
         self.set_value(&ControlType::Rain, rain as f32);
         self.set_value(
@@ -900,29 +890,6 @@ impl NavicoReportReceiver {
         Ok(())
     }
 
-    const BLANKING_SETS: [(usize, ControlType, ControlType); 4] = [
-        (
-            0,
-            ControlType::NoTransmitStart1,
-            ControlType::NoTransmitEnd1,
-        ),
-        (
-            1,
-            ControlType::NoTransmitStart2,
-            ControlType::NoTransmitEnd2,
-        ),
-        (
-            2,
-            ControlType::NoTransmitStart3,
-            ControlType::NoTransmitEnd3,
-        ),
-        (
-            3,
-            ControlType::NoTransmitStart4,
-            ControlType::NoTransmitEnd4,
-        ),
-    ];
-
     ///
     /// Blanking (No Transmit) report as seen on HALO 2006
     ///
@@ -934,17 +901,15 @@ impl NavicoReportReceiver {
         let name = c_string(&report.name);
         self.set_string(&ControlType::ModelName, name.unwrap_or("").to_string());
 
-        for (i, start, end) in Self::BLANKING_SETS {
+        for (i, start, end) in super::BLANKING_SETS {
             let blanking = &report.blanking[i];
             let start_angle = i16::from_le_bytes(blanking.start_angle);
             let end_angle = i16::from_le_bytes(blanking.end_angle);
-            let state = if blanking.enabled > 0 {
-                ControlState::Manual
-            } else {
-                ControlState::Off
-            };
-            self.set(&start, start_angle as f32, None, state);
-            self.set(&end, end_angle as f32, None, state);
+            let enabled = Some(blanking.enabled > 0);
+            self.info
+                .set_value_auto_enabled(&start, start_angle as f32, None, enabled)?;
+            self.info
+                .set_value_auto_enabled(&end, end_angle as f32, None, enabled)?;
         }
 
         Ok(())
@@ -966,17 +931,15 @@ impl NavicoReportReceiver {
             self.model
         );
 
-        for (i, start, end) in Self::BLANKING_SETS {
+        for (i, start, end) in super::BLANKING_SETS {
             let blanking = &report.blanking[i];
             let start_angle = i16::from_le_bytes(blanking.start_angle);
             let end_angle = i16::from_le_bytes(blanking.end_angle);
-            let state = if blanking.enabled > 0 {
-                ControlState::Manual
-            } else {
-                ControlState::Off
-            };
-            self.set(&start, start_angle as f32, None, state);
-            self.set(&end, end_angle as f32, None, state);
+            let enabled = Some(blanking.enabled > 0);
+            self.info
+                .set_value_auto_enabled(&start, start_angle as f32, None, enabled)?;
+            self.info
+                .set_value_auto_enabled(&end, end_angle as f32, None, enabled)?;
         }
 
         Ok(())
@@ -1041,7 +1004,7 @@ impl NavicoReportReceiver {
             self.set_value_with_many_auto(
                 &ControlType::Sea,
                 sea_clutter as f32,
-                auto_sea_clutter.into(),
+                auto_sea_clutter as f32,
             );
         }
         self.set_value(
@@ -1049,7 +1012,7 @@ impl NavicoReportReceiver {
             local_interference_rejection as f32,
         );
         self.set_value(&ControlType::ScanSpeed, scan_speed as f32);
-        self.set_auto(
+        self.set_value_auto(
             &ControlType::SideLobeSuppression,
             sidelobe_suppression as f32,
             sidelobe_suppression_auto,
