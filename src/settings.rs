@@ -775,12 +775,27 @@ mod test {
 
     #[test]
     fn serialize_control_value() {
-        let json = r#"{"id":"2","value":"49"}"#;
+        let json = r#"{"id":"3","value":"49","auto":true,"enabled":false}"#;
 
         match serde_json::from_str::<ControlValue>(&json) {
             Ok(cv) => {
                 assert_eq!(cv.id, ControlType::Gain);
                 assert_eq!(cv.value, "49");
+                assert_eq!(cv.auto, Some(true));
+                assert_eq!(cv.enabled, Some(false));
+            }
+            Err(e) => {
+                panic!("Error {e}");
+            }
+        }
+        let json = r#"{"id":"3","value":"49"}"#;
+
+        match serde_json::from_str::<ControlValue>(&json) {
+            Ok(cv) => {
+                assert_eq!(cv.id, ControlType::Gain);
+                assert_eq!(cv.value, "49");
+                assert_eq!(cv.auto, None);
+                assert_eq!(cv.enabled, None);
             }
             Err(e) => {
                 panic!("Error {e}");
