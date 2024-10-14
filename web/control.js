@@ -300,6 +300,10 @@ function do_change(e) {
   if (checkbox) {
     message.auto = checkbox.checked;
   }
+  checkbox = document.getElementById(v.id + enabled_postfix);
+  if (checkbox) {
+    message.enabled = checkbox.checked;
+  }
   let cv = JSON.stringify(message);
   myr_webSocket.send(cv);
   console.log(myr_controls[id].name + "-> " + cv);
@@ -308,9 +312,19 @@ function do_change(e) {
 function do_change_auto(e) {
   let checkbox = e.target;
   let id = html_to_server_id(checkbox.id);
-  let v = document.getElementById(auto_to_value_id(checkbox.id));
-  console.log("change auto" + e + " " + id + "=" + v.value + " auto=" + checkbox.checked);
+  let v = document.getElementById(html_to_value_id(checkbox.id));
+  console.log("change auto " + e + " " + id + "=" + v.value + " auto=" + checkbox.checked);
   let cv = JSON.stringify({ id: id, value: v.value, auto: checkbox.checked });
+  myr_webSocket.send(cv);
+  console.log(myr_controls[id].name + "-> " + cv);
+}
+
+function do_change_enabled(e) {
+  let checkbox = e.target;
+  let id = html_to_server_id(checkbox.id);
+  let v = document.getElementById(html_to_value_id(checkbox.id));
+  console.log("change enabled " + e + " " + id + "=" + v.value + " enabled=" + checkbox.checked);
+  let cv = JSON.stringify({ id: id, value: v.value, enabled: checkbox.checked });
   myr_webSocket.send(cv);
   console.log(myr_controls[id].name + "-> " + cv);
 }
@@ -340,16 +354,16 @@ function html_to_server_id(id) {
   if (r.startsWith(prefix)) {
     r = r.substr(prefix.length);
   }
-  if (r.endsWith(auto_postfix)) {
-    r = r.substr(0, r.length - auto_postfix.length);
-  }
-  return r;
+  return html_to_value_id(r);
 }
 
-function auto_to_value_id(id) {
+function html_to_value_id(id) {
   let r = id;
   if (r.endsWith(auto_postfix)) {
     r = r.substr(0, r.length - auto_postfix.length);
+  }
+  if (r.endsWith(enabled_postfix)) {
+    r = r.substr(0, r.length - enabled_postfix.length);
   }
   return r;
 }
