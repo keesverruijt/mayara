@@ -1,6 +1,4 @@
 use log::{debug, trace};
-use num_traits::ToPrimitive;
-use std::cmp::{max, min};
 use tokio::net::UdpSocket;
 
 use crate::radar::{RadarError, RadarInfo, SharedRadars};

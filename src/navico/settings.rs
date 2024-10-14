@@ -152,7 +152,7 @@ pub fn update_when_model_known(controls: &mut Controls, model: Model, radar_info
             ControlType::Mode,
             Control::new_list(
                 ControlType::Mode,
-                &["Custom", "Harbor", "Offshore", "Unknown", "Weather", "Bird"],
+                &["Custom", "Harbor", "Offshore", "Buoy", "Weather", "Bird"],
             ),
         );
         controls.insert(
@@ -212,7 +212,7 @@ pub fn update_when_model_known(controls: &mut Controls, model: Model, radar_info
         Control::new_list(
             ControlType::ScanSpeed,
             if model == Model::HALO {
-                &["Normal", "Medium", "", "Fast"]
+                &["Normal", "Medium", "Medium Plus", "Fast"]
             } else {
                 &["Normal", "Fast"]
             },
