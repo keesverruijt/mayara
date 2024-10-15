@@ -84,7 +84,7 @@ async fn main() -> Result<()> {
         warn!("Output mode activated; 'protobuf' formatted RadarMessage sent to stdout");
     }
 
-    let signal_k = signalk::NavigationData::new();
+    let signal_k = signalk::NavigationData::new(args.clone());
     let radars = SharedRadars::new(args.clone());
     let radars_clone1 = radars.clone();
 

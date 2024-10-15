@@ -1,6 +1,6 @@
 use atomic_float::AtomicF64;
 use futures_util::future::select_ok;
-use mdns_sd::{Error, ServiceDaemon, ServiceEvent};
+use mdns_sd::{Error, IfKind, ServiceDaemon, ServiceEvent};
 use serde_json::Value;
 use std::{
     collections::HashSet,
@@ -15,7 +15,7 @@ use tokio::io::{AsyncBufReadExt, BufWriter};
 use tokio::{io::AsyncWriteExt, net::TcpStream};
 use tokio_graceful_shutdown::SubsystemHandle;
 
-use crate::radar::RadarError;
+use crate::{radar::RadarError, Cli};
 
 /// The hostname of the devices we are searching for.
 /// Every Chromecast will respond to the service name in this example.
@@ -47,15 +47,25 @@ pub(crate) fn get_position_i64() -> (Option<i64>, Option<i64>) {
     }
     return (None, None);
 }
-pub(crate) struct NavigationData {}
+pub(crate) struct NavigationData {
+    args: Cli,
+}
 
 impl NavigationData {
-    pub(crate) fn new() -> Self {
-        NavigationData {}
+    pub(crate) fn new(args: Cli) -> Self {
+        NavigationData { args }
     }
 
     pub(crate) async fn run(self, subsys: SubsystemHandle) -> Result<(), Error> {
         let mdns = ServiceDaemon::new().expect("Failed to create daemon");
+
+        if self.args.interface.is_some() {
+            let _ = mdns.disable_interface(IfKind::All);
+            let _ = mdns.enable_interface(IfKind::Name(
+                self.args.interface.as_ref().unwrap().to_string(),
+            ));
+        }
+
         let mut known_addresses: HashSet<SocketAddr> = HashSet::new();
 
         let tcp_locator = mdns.browse(TCP_SERVICE_NAME)?;
