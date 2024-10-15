@@ -1,6 +1,10 @@
 #!/bin/sh
 
-set -euo pipefail
+set -eu
+
+[ -d work ] && rm -rf work/
+mkdir -p work
+cp -r ../Cargo* ../*.rs ../src ../web work
 
 docker buildx build --no-cache -t keesverruijt/mayara:latest .
 

@@ -14,8 +14,8 @@ RUN curl -sSf https://sh.rustup.rs | bash -s -- -y
 
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-RUN git clone https://github.com/keesverruijt/mayara.git && \
-    cd mayara && cargo build --release
+COPY work work
+RUN cd work && cargo build --release
 
 FROM wdantuma/signalk-radar-demo:latest
 
@@ -29,7 +29,7 @@ COPY samples/halo_and_0183.pcap .
 RUN chmod +x start.sh
 RUN rm -rf mayara || :
 
-COPY --from=build /src/mayara/target/release/mayara /app/mayara
+COPY --from=build /src/work/target/release/mayara /app/mayara
 
 RUN apk add strace tcpdump
 
