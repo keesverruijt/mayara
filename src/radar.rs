@@ -818,9 +818,9 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
         legend.pixels.push(Lookup {
             r#type: PixelType::DopplerApproaching,
             color: Color {
-                r: 0,
+                r: 200,
                 g: 200,
-                b: 200,
+                b: 0,
                 a: OPAQUE,
             },
         });
