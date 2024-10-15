@@ -12,15 +12,23 @@
                 "args": [
                     "build",
                     "--bin=mayara",
-                    "--package=mayara"
+                    "--package=mayara",
                 ],
                 "filter": {
                     "name": "mayara",
                     "kind": "bin"
                 }
             },
-            "args": [],
+            "args": [ 
+                    
+               ],
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "attach",
+            "name": "Attach to running 'mayara'",
+            "program": "${workspaceFolder}/target/mayara",
         },
         {
             "type": "lldb",
