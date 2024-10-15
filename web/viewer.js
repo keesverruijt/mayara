@@ -1,6 +1,6 @@
 
 import { loadRadar, registerRadarCallback, registerRangeCallback }  from "./control.js";
-import "./proto/protobuf.js";
+import "./protobuf/protobuf.js";
 
 const prefix = 'myr_';
 
@@ -35,6 +35,11 @@ window.onload = function () {
   window.onresize = function(){ redrawCanvas(); }
 }
 
+function restart(id) {
+  setTimeout(loadRadar(id), 5000);
+}
+
+
 function radarLoaded(r) {
   radar = r;
 
@@ -44,26 +49,24 @@ function radarLoaded(r) {
   expandLegend();
 
   webSocket = new WebSocket(radar.streamUrl);
+  webSocket.binaryType = "arraybuffer";
 
   webSocket.onopen = (e) => {
     console.log("websocket open: " + JSON.stringify(e));
   }
   webSocket.onclose = (e) => {
     console.log("websocket close: " + e);
-    restart(id);
+    restart(radar.id);
   }
   webSocket.onmessage = (e) => {
-    if ('bytes' in e.data) {
-      if (RadarMessage) {
-        e.data.bytes().then((a) => {
-          var message = RadarMessage.decode(a);
-          if (message.spokes) {
-            for (let i = 0; i < message.spokes.length; i++) {
-              drawSpoke(message.spokes[i]);
-            }
-          }
-        });
-        
+    if (RadarMessage) {
+      let buf = e.data;
+      let bytes = new Uint8Array(buf);
+      var message = RadarMessage.decode(bytes);
+      if (message.spokes) {
+        for (let i = 0; i < message.spokes.length; i++) {
+          drawSpoke(message.spokes[i]);
+        }
       }
     }
   }
@@ -76,7 +79,8 @@ function expandLegend() {
     let color = legend[i].color;
     a.push(hexToRGBA(color));
   }
-
+  a[0][3] = 255;
+  
   rgbaLegend = a;
 }
 

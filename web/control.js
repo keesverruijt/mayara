@@ -27,7 +27,7 @@ function registerRangeCallback(callback) {
 
 const ReadOnlyValue = (id, name) =>
   div({class: 'myr_control'},
-    label({ for: prefix + id }, name),
+    div(name),
     div({ class: 'myr_numeric', id: prefix + id })
   )
 
@@ -76,7 +76,7 @@ const SelectValue = (id, name, validValues, descriptions) => {
   return r;
 }
 
-const SetButton = () => button({ onclick: e => do_button(e) }, 'Set')
+const SetButton = () => button({ type: 'button', onclick: e => do_button(e) }, 'Set')
  
 class TemporaryMessage {
   timeoutId;
@@ -139,6 +139,7 @@ function loadRadar(id) {
 }
 
 function restart(id) {
+  console.log("restart(" + id + ")");
   setTimeout(loadRadar(id), 15000);
 }
 

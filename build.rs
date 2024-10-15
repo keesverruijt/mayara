@@ -12,6 +12,7 @@ fn main() {
         .cargo_out_dir("protos")
         .run_from_script();
 
+    /*
     let body = reqwest::blocking::get(
         "https://cdn.rawgit.com/dcodeIO/protobuf.js/6.11.0/dist/protobuf.min.js",
     )
@@ -36,6 +37,7 @@ fn main() {
     dest_path.push("web");
     dest_path.push("protobuf.js");
     fs::write(&dest_path, body).unwrap();
+    */
 
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let mut src_path = PathBuf::from("src");
@@ -43,6 +45,7 @@ fn main() {
     src_path.push("RadarMessage.proto");
     let mut dest_path = PathBuf::from(&out_dir);
     dest_path.push("web");
+    fs::create_dir_all(&dest_path).unwrap();
     dest_path.push("RadarMessage.proto");
     fs::copy(&src_path, &dest_path).unwrap();
 
