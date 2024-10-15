@@ -780,23 +780,15 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
             r#type: PixelType::Normal,
             color: Color {
                 // red starts at 2/3 and peaks at end
-                r: if v >= two_thirds {
-                    (start + ((v - two_thirds) as f32) * delta) as u8
-                } else {
-                    0
-                },
+                r: if v >= two_thirds { 200 } else { 0 },
                 // green starts at 1/3 and peaks at 2/3
                 g: if v >= one_third && v < two_thirds {
-                    (start + ((v - one_third) as f32) * delta) as u8
+                    200
                 } else {
                     0
                 },
                 // blue peaks at 1/3
-                b: if v < one_third {
-                    (start + (v as f32) * (WHITE / (pixel_values as f32))) as u8
-                } else {
-                    0
-                },
+                b: if v < one_third { 200 } else { 0 },
                 a: OPAQUE,
             },
         });
