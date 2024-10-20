@@ -9,19 +9,7 @@ class render_webgl {
     this.dom = canvas_dom;
     this.background_dom = canvas_background_dom;
 
-    this.gl =
-      this.dom.getContext("webgl") || this.dom.getContext("experimental-webgl");
-    if (!this.gl instanceof WebGLRenderingContext) {
-      throw new Error("No WebGL present");
-    }
-    this.shaderProgram = this.#initShaderProgram(
-      this.#vertexShaderText,
-      this.#fragmentShaderTextSquare
-    );
-    if (!this.shaderProgram) {
-      throw new Error("Unable to initialize the shader program");
-    }
-    this.gl.useProgram(this.shaderProgram);
+    this.gl = init(this.dom);
 
     this.actual_range = 0;
   }
@@ -32,7 +20,7 @@ class render_webgl {
   setSpokes(spokes, max_spoke_len) {
     this.spokes = spokes;
     this.max_spoke_len = max_spoke_len;
-    this.#loadTexture();
+    this.data = loadTexture(this.gl, spokes, max_spoke_len);
   }
 
   // An updated range, and an optional array of descriptions. The array may be null.
@@ -82,34 +70,12 @@ class render_webgl {
   // A number of spokes has been received and now is a good time to render
   // them to the screen. Usually every 14-32 spokes.
   render() {
-    if (!this.data) {
+    if (!this.data || !this.spokes) {
       return;
     }
-
     let gl = this.gl;
-
-    // We tell the GPU to draw a square from (-1,-1) to (+1,+1)
-    // The fragment shader morphs this into a circle.
-
-    /*============= Drawing the Quad ================*/
-
-    this.#updateTexture();
-
-    // Clear the canvas
-    gl.clearColor(0.1, 0.4, 0.4, 1.0);
-    gl.enable(gl.DEPTH_TEST);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-
-    // Set the view port
-    gl.viewport(0, 0, this.width, this.height);
-
-    const samplerLocation = gl.getUniformLocation(
-      this.shaderProgram,
-      "uSampler"
-    );
-    gl.uniform1i(samplerLocation, 0);
-
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    updateTexture(gl, this.data, this.spokes, this.max_spoke_len);
+    draw(gl);
   }
 
   // Called on initial setup and whenever the canvas size changes.
@@ -184,168 +150,155 @@ class render_webgl {
     this.background_ctx.fillText("Range " + this.range, 5, 60);
     this.background_ctx.fillText("Spoke " + this.actual_range, 5, 80);
   }
+}
 
-  #vertexShaderText = `
-    attribute vec4 aPosition;
-    attribute vec2 aTexCoord;
-    varying highp vec2 vTexCoord;
-    void main(void) {
-        gl_Position = aPosition;
-        vTexCoord = aTexCoord;
-    }
-    `;
+const vertexShaderSource = `
+  attribute vec4 a_position;
+  attribute vec2 a_texCoord;
+  varying vec2 v_texCoord;
 
-  #fragmentShaderText = `
-    precision highp float;
+  void main() {
+    gl_Position = a_position;
+    v_texCoord = a_texCoord;
+  }
+`;
 
-    varying highp vec2 vTexCoord;
-    uniform sampler2D uSampler;
-    void main()
-    {
-       float d = length(vTexCoord.xy);
-       if (d >= 1.0) 
-          discard;
-       float a = atan(vTexCoord.y, vTexCoord.x) / 6.28318;
-       gl_FragColor = texture2D(uSampler, vec2(d, a));
-    }
-    `;
+const fragmentShaderSource = `
+  precision mediump float;
+  varying vec2 v_texCoord;
+  uniform sampler2D u_polarColorData;
 
-  #fragmentShaderTextSquare = `
-    varying highp vec2 vTexCoord;
-    uniform sampler2D uSampler;
-    void main(void) {
-        gl_FragColor = texture2D(uSampler, vTexCoord);
-    }
-    `;
+  void main() {
+    // Convert texture coordinates into polar coordinates
+    vec2 centeredCoords = v_texCoord - vec2(0.5, 0.5); // Center the coords at (0.5, 0.5)
+    float r = length(centeredCoords); // Compute the radius
+    float theta = atan(centeredCoords.y, centeredCoords.x); // Compute the angle (theta)
+    
+    // Normalize theta to be in the range [0, 1] for texture sampling
+    float normalizedTheta = 1 - (theta + 3.14159265) / (2.0 * 3.14159265); // Map [-π, π] to [0, 1]
 
-  //
-  // Initialize a shader program, so WebGL knows how to draw our data
-  //
-  #initShaderProgram(vsSource, fsSource) {
-    const vertexShader = this.#loadShader(this.gl.VERTEX_SHADER, vsSource);
-    const fragmentShader = this.#loadShader(this.gl.FRAGMENT_SHADER, fsSource);
+    // Sample the color from the polar data texture
+    vec4 color = texture2D(u_polarColorData, vec2(r, normalizedTheta));
 
-    // Create the shader program
+    // Output the color
+    gl_FragColor = color;
+  }
+`;
 
-    const shaderProgram = this.gl.createProgram();
-    this.gl.attachShader(shaderProgram, vertexShader);
-    this.gl.attachShader(shaderProgram, fragmentShader);
-    this.gl.linkProgram(shaderProgram);
+function createShader(gl, type, source) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    console.error("Shader compile failed: ", gl.getShaderInfoLog(shader));
+    gl.deleteShader(shader);
+    return null;
+  }
+  return shader;
+}
 
-    // If creating the shader program failed, alert
+function createProgram(gl, vertexShader, fragmentShader) {
+  const program = gl.createProgram();
+  gl.attachShader(program, vertexShader);
+  gl.attachShader(program, fragmentShader);
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    console.error("Program link failed: ", gl.getProgramInfoLog(program));
+    gl.deleteProgram(program);
+    return null;
+  }
+  return program;
+}
 
-    if (!this.gl.getProgramParameter(shaderProgram, this.gl.LINK_STATUS)) {
-      throw new Error(
-        `Unable to initialize the shader program: ${this.gl.getProgramInfoLog(
-          shaderProgram
-        )}`
-      );
-    }
+function init(canvas) {
+  const gl = canvas.getContext("webgl");
 
-    return shaderProgram;
+  if (!gl) {
+    throw new Error("WebGL not supported");
   }
 
-  //
-  // creates a shader of the given type, uploads the source and
-  // compiles it.
-  //
-  #loadShader(type, source) {
-    const shader = this.gl.createShader(type);
+  const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+  const fragmentShader = createShader(
+    gl,
+    gl.FRAGMENT_SHADER,
+    fragmentShaderSource
+  );
+  const program = createProgram(gl, vertexShader, fragmentShader);
 
-    // Send the source to the shader object
+  const positionBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  const positions = [-1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0];
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
 
-    this.gl.shaderSource(shader, source);
+  const texCoordBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+  const texCoords = [0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(texCoords), gl.STATIC_DRAW);
 
-    // Compile the shader program
+  gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+  gl.clear(gl.COLOR_BUFFER_BIT);
 
-    this.gl.compileShader(shader);
+  gl.useProgram(program);
 
-    // See if it compiled successfully
+  const positionLocation = gl.getAttribLocation(program, "a_position");
+  gl.enableVertexAttribArray(positionLocation);
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
 
-    if (!this.gl.getShaderParameter(shader, this.gl.COMPILE_STATUS)) {
-      throw new Error(
-        `An error occurred compiling the shaders: ${this.gl.getShaderInfoLog(
-          shader
-        )}`
-      );
-      gl.deleteShader(shader);
-      return null;
-    }
+  const texCoordLocation = gl.getAttribLocation(program, "a_texCoord");
+  gl.enableVertexAttribArray(texCoordLocation);
+  gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+  gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
 
-    return shader;
+  const samplerLocation = gl.getUniformLocation(program, "u_polarColorData");
+  gl.uniform1i(samplerLocation, 0);
+
+  const texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+
+  return gl;
+}
+
+function draw(gl) {
+  // Clear the canvas
+  gl.clearColor(0.1, 0.3, 0.1, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+
+  // Set the view port
+  gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+
+  // Draw the square via two triangles. This is morphed to polar data
+  // by the fragment shader.
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+function loadTexture(gl, spokes, max_spoke_len) {
+  let data = new Uint8Array(spokes * max_spoke_len * 4);
+
+  // For now fill with fake data
+  for (let i = 0; i < data.length; i++) {
+    data[i * 4] = i & 255;
+    data[i * 4 + 3] = 255;
   }
 
-  #loadTexture() {
-    let gl = this.gl;
-    if (this.max_spoke_len === undefined || this.spokes === undefined) {
-      return;
-    }
-    let width = this.max_spoke_len;
-    let height = this.spokes;
+  return data;
+}
 
-    const texture = gl.createTexture();
-    this.data = new Uint8Array(width * height * 4);
-    for (let i = 0; i < this.data.length; i++) {
-      this.data[i * 4] = i & 255;
-      this.data[i * 4 + 3] = 255;
-    }
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-
-    this.#updateTexture();
-  }
-
-  #updateTexture() {
-    let gl = this.gl;
-
-    if (this.max_spoke_len === undefined || this.spokes === undefined) {
-      return;
-    }
-
-    gl.texImage2D(
-      gl.TEXTURE_2D,
-      0,
-      gl.RGBA,
-      this.max_spoke_len,
-      this.spokes,
-      0,
-      gl.RGBA,
-      gl.UNSIGNED_BYTE,
-      this.data
-    );
-    gl.generateMipmap(gl.TEXTURE_2D);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  }
-
-  #loadVertex() {
-    let gl = this.gl;
-
-    const positionBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-    const positions = [-1.0, 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, -1.0];
-    // const positions = [-0.9, 0.9, 0.9, 0.9, -0.9, -0.9, 0.9, -0.9];
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
-    const positionLocation = gl.getAttribLocation(
-      this.shaderProgram,
-      "aPosition"
-    );
-    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
-    gl.enableVertexAttribArray(positionLocation);
-
-    const texCoordBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
-    //const texCoords = [0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0];
-    const texCoords = [-1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0];
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(texCoords), gl.STATIC_DRAW);
-    const texCoordLocation = gl.getAttribLocation(
-      this.shaderProgram,
-      "aTexCoord"
-    );
-    gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
-    gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
-    gl.enableVertexAttribArray(texCoordLocation);
-  }
+function updateTexture(gl, data, spokes, max_spoke_len) {
+  gl.texImage2D(
+    gl.TEXTURE_2D,
+    0,
+    gl.RGBA,
+    max_spoke_len,
+    spokes,
+    0,
+    gl.RGBA,
+    gl.UNSIGNED_BYTE,
+    data
+  );
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 }
