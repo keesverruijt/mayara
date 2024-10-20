@@ -13,6 +13,7 @@ use tokio_graceful_shutdown::SubsystemHandle;
 use crate::radar::{DopplerMode, RadarError, RadarInfo, RangeDetection, SharedRadars};
 use crate::settings::{ControlMessage, ControlType, ControlValue};
 use crate::util::{c_string, c_wide_string, create_udp_multicast_listen};
+use crate::Cli;
 
 use super::command::Command;
 use super::{DataUpdate, Model};
@@ -23,6 +24,7 @@ pub struct NavicoReportReceiver {
     buf: Vec<u8>,
     sock: Option<UdpSocket>,
     radars: SharedRadars,
+    args: Cli,
     model: Model,
     command_sender: Command,
     data_tx: Sender<DataUpdate>,
@@ -279,6 +281,7 @@ impl NavicoReportReceiver {
         let key = info.key();
 
         let command_sender = Command::new(info.clone(), model.clone(), radars.clone());
+        let args = radars.cli_args();
 
         NavicoReportReceiver {
             key: key,
@@ -286,6 +289,7 @@ impl NavicoReportReceiver {
             buf: Vec::with_capacity(1000),
             sock: None,
             radars,
+            args,
             model,
             command_sender,
             range_timeout: None,
@@ -561,7 +565,7 @@ impl NavicoReportReceiver {
 
     // If range detection is in progress, go to the next range
     async fn process_range(&mut self, range: i32) -> Result<(), RadarError> {
-        if self.info.range_detection.is_none() {
+        if self.info.range_detection.is_none() && !self.args.replay {
             if let Some(control) = self.info.controls.get(&ControlType::Range) {
                 self.info.range_detection = Some(RangeDetection::new(
                     control.item().min_value.unwrap() as i32,
