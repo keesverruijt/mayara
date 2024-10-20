@@ -4,5 +4,8 @@
     "editor.formatOnSave": true,
     "editor.formatOnSaveMode": "file",
     "editor.formatOnType": true,
-    "editor.defaultFormatter": "rust-lang.rust-analyzer"
+    "editor.defaultFormatter": "rust-lang.rust-analyzer",
+    "[javascript]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    }
 }
