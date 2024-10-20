@@ -34,7 +34,18 @@ class render_webgl {
   // The index is the byte value in the spoke.
   // Each entry contains a four byte array of colors and alpha (x,y,z,a).
   setLegend(l) {
-    this.legend = l;
+    // Create a Uint8Array to hold RGBA data for the color table
+    const colorTableData = new Uint8Array(256 * 4); // RGBA for each index
+
+    // Fill the array with example color data (you would replace this with your actual RGBA data)
+    for (let i = 0; i < l.length; i++) {
+      colorTableData[i * 4] = l[i][0]; // Red channel
+      colorTableData[i * 4 + 1] = l[i][1];
+      colorTableData[i * 4 + 2] = l[i][2]; // Blue channel
+      colorTableData[i * 4 + 3] = l[i][3];
+    }
+
+    loadColorTableTexture(this.gl, colorTableData);
   }
 
   // A new spoke has been received.
@@ -53,17 +64,14 @@ class render_webgl {
       this.actual_range = spoke.range;
       this.redrawCanvas();
     }
-    for (
-      let i = 0, idx = spoke.angle * this.max_spoke_len * 4;
-      i < spoke.data.length;
-      i++, idx += 4
-    ) {
-      let v = spoke.data[i];
-
-      this.data[idx + 0] = this.legend[v][0];
-      this.data[idx + 1] = this.legend[v][1];
-      this.data[idx + 2] = this.legend[v][2];
-      this.data[idx + 3] = this.legend[v][3];
+    let offset = spoke.angle * this.max_spoke_len;
+    this.data.set(spoke.data, offset);
+    if (spoke.data.length < this.max_spoke_len) {
+      this.data.fill(
+        0,
+        offset + spoke.data.length,
+        offset + this.max_spoke_len
+      );
     }
   }
 
@@ -152,10 +160,10 @@ class render_webgl {
   }
 }
 
-const vertexShaderSource = `
-  attribute vec4 a_position;
-  attribute vec2 a_texCoord;
-  varying vec2 v_texCoord;
+const vertexShaderSource = `#version 300 es
+  in vec4 a_position;
+  in vec2 a_texCoord;
+  out vec2 v_texCoord;
 
   void main() {
     gl_Position = a_position;
@@ -163,11 +171,15 @@ const vertexShaderSource = `
   }
 `;
 
-const fragmentShaderSource = `
+const fragmentShaderSource = `#version 300 es
   precision mediump float;
-  varying vec2 v_texCoord;
-  uniform sampler2D u_polarColorData;
 
+  in vec2 v_texCoord;
+  out vec4 color;
+
+  uniform sampler2D u_polarIndexData; // Polar data texture (contains indices)
+  uniform sampler2D u_colorTable;     // Color table texture (contains RGBA values)
+  
   void main() {
     // Convert texture coordinates into polar coordinates
     vec2 centeredCoords = v_texCoord - vec2(0.5, 0.5); // Center the coords at (0.5, 0.5)
@@ -175,13 +187,15 @@ const fragmentShaderSource = `
     float theta = atan(centeredCoords.y, centeredCoords.x); // Compute the angle (theta)
     
     // Normalize theta to be in the range [0, 1] for texture sampling
-    float normalizedTheta = 1 - (theta + 3.14159265) / (2.0 * 3.14159265); // Map [-π, π] to [0, 1]
+    float normalizedTheta = 1.0 - (theta + 3.14159265) / (2.0 * 3.14159265); // Map [-π, π] to [0, 1]
 
-    // Sample the color from the polar data texture
-    vec4 color = texture2D(u_polarColorData, vec2(r, normalizedTheta));
+     // Sample the index from the polar data texture
+    float index = texture(u_polarIndexData, vec2(r, normalizedTheta)).r;
 
-    // Output the color
-    gl_FragColor = color;
+    // Use the index to look up the color in the color table (1D texture)
+    vec4 color1 = texture(u_colorTable, vec2(index, 0.0)); 
+    // color = vec4(index * 8.0, color1.r, color1.b, 1.0);
+    color = color1;
   }
 `;
 
@@ -211,10 +225,10 @@ function createProgram(gl, vertexShader, fragmentShader) {
 }
 
 function init(canvas) {
-  const gl = canvas.getContext("webgl");
+  const gl = canvas.getContext("webgl2");
 
   if (!gl) {
-    throw new Error("WebGL not supported");
+    throw new Error("WebGL2 not supported");
   }
 
   const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
@@ -250,11 +264,15 @@ function init(canvas) {
   gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
   gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
 
-  const samplerLocation = gl.getUniformLocation(program, "u_polarColorData");
-  gl.uniform1i(samplerLocation, 0);
-
+  gl.activeTexture(gl.TEXTURE0);
   const texture = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, texture);
+  const samplerLocation = gl.getUniformLocation(program, "u_polarIndexData");
+  gl.uniform1i(samplerLocation, 0);
+
+  gl.activeTexture(gl.TEXTURE1);
+  const colorLocation = gl.getUniformLocation(program, "u_colorTable");
+  gl.uniform1i(colorLocation, 1);
 
   return gl;
 }
@@ -273,26 +291,21 @@ function draw(gl) {
 }
 
 function loadTexture(gl, spokes, max_spoke_len) {
-  let data = new Uint8Array(spokes * max_spoke_len * 4);
-
-  // For now fill with fake data
-  for (let i = 0; i < data.length; i++) {
-    data[i * 4] = i & 255;
-    data[i * 4 + 3] = 255;
-  }
+  let data = new Uint8Array(spokes * max_spoke_len);
 
   return data;
 }
 
 function updateTexture(gl, data, spokes, max_spoke_len) {
+  gl.activeTexture(gl.TEXTURE0);
   gl.texImage2D(
     gl.TEXTURE_2D,
     0,
-    gl.RGBA,
+    gl.R8,
     max_spoke_len,
     spokes,
     0,
-    gl.RGBA,
+    gl.RED,
     gl.UNSIGNED_BYTE,
     data
   );
@@ -301,4 +314,31 @@ function updateTexture(gl, data, spokes, max_spoke_len) {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+}
+
+function loadColorTableTexture(gl, legend) {
+  // Create texture for color table
+  gl.activeTexture(gl.TEXTURE1);
+  const texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.texImage2D(
+    gl.TEXTURE_2D,
+    0,
+    gl.RGBA8,
+    legend.length / 4,
+    1,
+    0,
+    gl.RGBA,
+    gl.UNSIGNED_BYTE,
+    legend
+  );
+
+  // Set texture parameters
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+  return texture;
 }
