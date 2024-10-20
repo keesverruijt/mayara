@@ -1,5 +1,7 @@
 "use strict";
 
+export { RANGE_SCALE };
+
 import {
   loadRadar,
   registerRadarCallback,
@@ -10,11 +12,14 @@ import "./protobuf/protobuf.js";
 const prefix = "myr_";
 
 import { render_2d } from "./render_2d.js";
+import { render_webgl } from "./render_webgl.js";
 import { render_webgl2 } from "./render_webgl_v2.js";
 
 var webSocket;
 var RadarMessage;
 var renderer;
+
+const RANGE_SCALE = 0.9; // Factor by which we fill the (w,h) canvas with the outer radar range ring
 
 registerRadarCallback(radarLoaded);
 registerRangeCallback(rangeUpdate);
@@ -22,6 +27,7 @@ registerRangeCallback(rangeUpdate);
 window.onload = function () {
   const urlParams = new URLSearchParams(window.location.search);
   const id = urlParams.get("id");
+  const draw = urlParams.get("draw");
 
   protobuf.load("./proto/RadarMessage.proto", function (err, root) {
     if (err) throw err;
@@ -30,10 +36,22 @@ window.onload = function () {
   });
 
   try {
-    renderer = new render_webgl2(
-      document.getElementById("myr_canvas_webgl"),
-      document.getElementById("myr_canvas_background")
-    );
+    if (draw == "2d") {
+      renderer = new render_2d(
+        document.getElementById("myr_canvas"),
+        document.getElementById("myr_canvas_background")
+      );
+    } else if (draw == "gl") {
+      renderer = new render_webgl(
+        document.getElementById("myr_canvas_webgl"),
+        document.getElementById("myr_canvas_background")
+      );
+    } else {
+      renderer = new render_webgl2(
+        document.getElementById("myr_canvas_webgl"),
+        document.getElementById("myr_canvas_background")
+      );
+    }
   } catch (e) {
     console.log(e);
     console.log("Falling back on 2d context");
@@ -44,6 +62,10 @@ window.onload = function () {
   }
 
   loadRadar(id);
+
+  window.onresize = function () {
+    renderer.redrawCanvas();
+  };
 };
 
 function restart(id) {
@@ -108,8 +130,6 @@ function hexToRGBA(hex) {
   return a;
 }
 
-function rangeUpdate(control, range) {
-  renderer.setRange(range);
-  renderer.setRangeControl(control);
-  renderer.drawRings();
+function rangeUpdate(range, descriptions) {
+  renderer.setRange(range, descriptions);
 }

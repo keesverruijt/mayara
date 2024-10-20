@@ -1,6 +1,10 @@
 export { render_webgl2 };
 
+import { RANGE_SCALE } from "./viewer.js";
+
 class render_webgl2 {
+  // The constructor gets two canvases, the real drawing one and one for background data
+  // such as range circles etc.
   constructor(canvas_dom, canvas_background_dom) {
     this.dom = canvas_dom;
     this.background_dom = canvas_background_dom;
@@ -100,12 +104,9 @@ class render_webgl2 {
     this.heading = 0;
 
     this.redrawCanvas();
-    window.onresize = function () {
-      this.redrawCanvas();
-    };
   }
 
-  angleToBearing(angle) {
+  #angleToBearing(angle) {
     let h = this.heading - 90;
     if (h < 0) {
       h += 360;
@@ -115,6 +116,9 @@ class render_webgl2 {
     return angle;
   }
 
+  // This is called as soon as it is clear what the number of spokes and their max length is
+  // Some brand vary the spoke length with data or range, but a promise is made about the
+  // max length.
   setSpokes(spokes, max_spoke_len) {
     this.spokes = spokes;
     this.max_spoke_len = max_spoke_len;
@@ -141,16 +145,18 @@ class render_webgl2 {
     this.y = y;
   }
 
-  setRange(r) {
-    this.range = r;
+  // An updated range, and an optional array of descriptions. The array may be null.
+  setRange(range, descriptions) {
+    this.range = range;
+    this.rangeDescriptions = descriptions;
+    this.redrawCanvas();
   }
 
-  setRangeControl(c) {
-    this.rangeControl = c;
-  }
-
+  // A new "legend" of what each byte means in terms of suggested color and meaning.
+  // The index is the byte value in the spoke.
+  // Each entry contains a four byte array of colors and alpha (x,y,z,a).
   setLegend(l) {
-    this.legend = l;
+    // Scale the data to OpenGL scaling values (u8 -> float(1.0))
     let a = Array();
     for (let i = 0; i < Object.keys(l).length; i++) {
       let color = l[i];
@@ -163,113 +169,14 @@ class render_webgl2 {
     this.legend = a;
   }
 
-  setTransformationMatrix() {
-    let scale = (2 * this.actual_range) / this.range;
-
-    this.transform_matrix = new Float32Array([
-      (scale * this.beam_length) / this.width,
-      0.0,
-      0.0,
-      0.0,
-      0.0,
-      (scale * this.beam_length) / this.height,
-      0.0,
-      0.0,
-      0.0,
-      0.0,
-      1.0,
-      0.0,
-      0.0,
-      0.0,
-      0.0,
-      1.0,
-    ]);
-    this.gl.uniformMatrix4fv(
-      this.transform_matrix_location,
-      false,
-      this.transform_matrix
-    );
-
-    this.background_ctx.fillStyle = "lightgreen";
-    this.background_ctx.fillText("Beamlength " + this.beam_length, 5, 40);
-    this.background_ctx.fillText("Range " + this.range, 5, 60);
-    this.background_ctx.fillText("Spoke " + this.actual_range, 5, 80);
-  }
-
-  redrawCanvas() {
-    var parent = this.dom.parentNode,
-      styles = getComputedStyle(parent),
-      w = parseInt(styles.getPropertyValue("width"), 10),
-      h = parseInt(styles.getPropertyValue("height"), 10);
-
-    this.dom.width = w;
-    this.dom.height = h;
-    this.background_dom.width = w;
-    this.background_dom.height = h;
-
-    this.width = this.dom.width;
-    this.height = this.dom.height;
-    this.center_x = this.width / 2;
-    this.center_y = this.height / 2;
-    this.beam_length = Math.trunc(Math.max(this.center_x, this.center_y) * 0.9);
-    this.background_ctx = this.background_dom.getContext("2d");
-
-    this.drawRings();
-
-    this.gl.viewport(0, 0, w, h);
-
-    this.vertices = [];
-    this.verticeColors = [];
-  }
-
-  drawRings() {
-    this.background_ctx.setTransform(1, 0, 0, 1, 0, 0);
-    this.background_ctx.clearRect(0, 0, this.width, this.height);
-
-    this.background_ctx.strokeStyle = "white";
-    this.background_ctx.fillStyle = "white";
-    this.background_ctx.font = "bold 16px/1 Verdana, Geneva, sans-serif";
-    for (let i = 0; i <= 4; i++) {
-      this.background_ctx.beginPath();
-      this.background_ctx.arc(
-        this.center_x,
-        this.center_y,
-        (i * this.beam_length) / 4,
-        0,
-        2 * Math.PI
-      );
-      this.background_ctx.stroke();
-      if (i > 0 && this.range) {
-        let r = Math.trunc((this.range * i) / 4);
-        console.log("i=" + i + " range=" + this.range + " r=" + r);
-
-        let text =
-          this.rangeControl &&
-          this.rangeControl.descriptions &&
-          this.rangeControl.descriptions[r]
-            ? this.rangeControl.descriptions[r]
-            : undefined;
-        if (text === undefined) {
-          if (r % 1000 == 0) {
-            text = r / 1000 + " km";
-          } else {
-            text = r + " m";
-          }
-        }
-        this.background_ctx.fillText(
-          text,
-          this.center_x + (i * this.beam_length * 1.41) / 8,
-          this.center_y + (i * this.beam_length * -1.41) / 8
-        );
-      }
-    }
-
-    this.background_ctx.fillStyle = "lightblue";
-    this.background_ctx.fillText("MAYARA (WEBGL CONTEXT)", 5, 20);
-
-    this.setTransformationMatrix();
-  }
-
+  // A new spoke has been received.
+  // The spoke object contains:
+  // - angle: the angle [0, max_spokes> relative to the front of the boat, clockwise.
+  // - bearing: optional angle [0, max_spokes> relative to true north.
+  // - range: actual range for furthest pixel, this can be (very) different from the
+  //          official range passed via range().
+  // - data: spoke data from closest to furthest from radome. Each byte value can be
+  //         looked up in the legend.
   drawSpoke(spoke) {
     if (!this.x) {
       return;
@@ -277,13 +184,12 @@ class render_webgl2 {
     let gl = this.gl;
 
     if (this.actual_range != spoke.range) {
-      gl.clear(gl.COLOR_BUFFER_BIT);
       this.actual_range = spoke.range;
-      this.setTransformationMatrix();
+      this.#drawRings();
     }
     let spokeBearing = spoke.has_bearing
       ? spoke.bearing
-      : this.angleToBearing(spoke.angle);
+      : this.#angleToBearing(spoke.angle);
     let ba = spokeBearing + 1;
     if (ba > this.spokes - 1) {
       ba = 0;
@@ -321,6 +227,8 @@ class render_webgl2 {
     }
   }
 
+  // A number of spokes has been received and now is a good time to render
+  // them to the screen. Usually every 14-32 spokes.
   render() {
     if (!this.x) {
       return;
@@ -346,5 +254,114 @@ class render_webgl2 {
 
     this.vertices = [];
     this.verticeColors = [];
+  }
+
+  // Called on initial setup and whenever the canvas size changes.
+  redrawCanvas() {
+    var parent = this.dom.parentNode,
+      styles = getComputedStyle(parent),
+      w = parseInt(styles.getPropertyValue("width"), 10),
+      h = parseInt(styles.getPropertyValue("height"), 10);
+
+    this.dom.width = w;
+    this.dom.height = h;
+    this.background_dom.width = w;
+    this.background_dom.height = h;
+
+    this.width = this.dom.width;
+    this.height = this.dom.height;
+    this.center_x = this.width / 2;
+    this.center_y = this.height / 2;
+    this.beam_length = Math.trunc(
+      Math.max(this.center_x, this.center_y) * RANGE_SCALE
+    );
+    this.background_ctx = this.background_dom.getContext("2d");
+
+    this.#drawRings();
+
+    this.gl.viewport(0, 0, w, h);
+
+    this.vertices = [];
+    this.verticeColors = [];
+  }
+
+  #drawRings() {
+    this.background_ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this.background_ctx.clearRect(0, 0, this.width, this.height);
+
+    this.background_ctx.strokeStyle = "white";
+    this.background_ctx.fillStyle = "white";
+    this.background_ctx.font = "bold 16px/1 Verdana, Geneva, sans-serif";
+    for (let i = 0; i <= 4; i++) {
+      this.background_ctx.beginPath();
+      this.background_ctx.arc(
+        this.center_x,
+        this.center_y,
+        (i * this.beam_length) / 4,
+        0,
+        2 * Math.PI
+      );
+      this.background_ctx.stroke();
+      if (i > 0 && this.range) {
+        let r = Math.trunc((this.range * i) / 4);
+        console.log("i=" + i + " range=" + this.range + " r=" + r);
+
+        let text = this.rangeDescriptions
+          ? this.rangeDescriptions[r]
+          : undefined;
+        if (text === undefined) {
+          if (r % 1000 == 0) {
+            text = r / 1000 + " km";
+          } else {
+            text = r + " m";
+          }
+        }
+        this.background_ctx.fillText(
+          text,
+          this.center_x + (i * this.beam_length * 1.41) / 8,
+          this.center_y + (i * this.beam_length * -1.41) / 8
+        );
+      }
+    }
+
+    this.background_ctx.fillStyle = "lightblue";
+    this.background_ctx.fillText("MAYARA (WEBGL ALT)", 5, 20);
+
+    this.#setTransformationMatrix();
+  }
+
+  #setTransformationMatrix() {
+    let scale = (RANGE_SCALE * this.actual_range) / this.range;
+
+    this.transform_matrix = new Float32Array([
+      scale * ((2 * this.beam_length) / this.width),
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      scale * ((2 * this.beam_length) / this.height),
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+    ]);
+    this.gl.uniformMatrix4fv(
+      this.transform_matrix_location,
+      false,
+      this.transform_matrix
+    );
+
+    this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+
+    this.background_ctx.fillStyle = "lightgreen";
+    this.background_ctx.fillText("Beamlength " + this.beam_length, 5, 40);
+    this.background_ctx.fillText("Range " + this.range, 5, 60);
+    this.background_ctx.fillText("Spoke " + this.actual_range, 5, 80);
   }
 }

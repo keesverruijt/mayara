@@ -1,32 +1,39 @@
 export { render_2d };
 
+import { RANGE_SCALE } from "./viewer.js";
+
 class render_2d {
+  // The constructor gets two canvases, the real drawing one and one for background data
+  // such as range circles etc.
   constructor(canvas_dom, canvas_background_dom) {
     this.dom = canvas_dom;
     this.background_dom = canvas_background_dom;
     this.redrawCanvas();
-    window.onresize = function () {
-      this.redrawCanvas();
-    };
   }
 
+  // This is called as soon as it is clear what the number of spokes and their max length is
+  // Some brand vary the spoke length with data or range, but a promise is made about the
+  // max length.
   setSpokes(spokes, max_spoke_len) {
     this.spokes = spokes;
     this.max_spoke_len = max_spoke_len;
   }
 
-  setRange(r) {
-    this.range = r;
+  // An updated range, and an optional array of descriptions. The array may be null.
+  setRange(range, descriptions) {
+    this.range = range;
+    this.rangeDescriptions = descriptions;
+    this.redrawCanvas();
   }
 
-  setRangeControl(c) {
-    this.rangeControl = c;
-  }
-
+  // A new "legend" of what each byte means in terms of suggested color and meaning.
+  // The index is the byte value in the spoke.
+  // Each entry contains a four byte array of colors and alpha (x,y,z,a).
   setLegend(l) {
     this.legend = l;
   }
 
+  // Called on initial setup and whenever the canvas size changes.
   redrawCanvas() {
     var parent = this.dom.parentNode,
       styles = getComputedStyle(parent),
@@ -42,7 +49,9 @@ class render_2d {
     this.height = this.dom.height;
     this.center_x = this.width / 2;
     this.center_y = this.height / 2;
-    this.beam_length = Math.trunc(Math.max(this.center_x, this.center_y) * 0.9);
+    this.beam_length = Math.trunc(
+      Math.max(this.center_x, this.center_y) * RANGE_SCALE
+    );
     this.ctx = this.dom.getContext("2d", { alpha: true });
     this.background_ctx = this.background_dom.getContext("2d");
 
@@ -52,56 +61,22 @@ class render_2d {
     this.pattern_ctx = this.pattern.getContext("2d");
     this.image = this.pattern_ctx.createImageData(2048, 1);
 
-    this.drawRings();
+    this.#drawRings();
   }
 
-  drawRings() {
-    this.background_ctx.setTransform(1, 0, 0, 1, 0, 0);
-    this.background_ctx.clearRect(0, 0, this.width, this.height);
-
-    this.background_ctx.strokeStyle = "white";
-    this.background_ctx.fillStyle = "white";
-    this.background_ctx.font = "bold 16px/1 Verdana, Geneva, sans-serif";
-    for (let i = 0; i <= 4; i++) {
-      this.background_ctx.beginPath();
-      this.background_ctx.arc(
-        this.center_x,
-        this.center_y,
-        (i * this.beam_length) / 4,
-        0,
-        2 * Math.PI
-      );
-      this.background_ctx.stroke();
-      if (i > 0 && this.range && this.rangeControl) {
-        let r = Math.trunc((this.range * i) / 4);
-        console.log("i=" + i + " range=" + this.range + " r=" + r);
-        let text = this.rangeControl.descriptions[r]
-          ? this.rangeControl.descriptions[r]
-          : undefined;
-        if (text === undefined) {
-          if (r % 1000 == 0) {
-            text = r / 1000 + " km";
-          } else {
-            text = r + " m";
-          }
-        }
-        this.background_ctx.fillText(
-          text,
-          this.center_x + (i * this.beam_length * 1.41) / 8,
-          this.center_y + (i * this.beam_length * -1.41) / 8
-        );
-      }
-    }
-
-    this.background_ctx.fillStyle = "lightblue";
-    this.background_ctx.fillText("MAYARA (2D CONTEXT)", 5, 20);
-  }
-
+  // A new spoke has been received.
+  // The spoke object contains:
+  // - angle: the angle [0, max_spokes> relative to the front of the boat, clockwise.
+  // - bearing: optional angle [0, max_spokes> relative to true north.
+  // - range: actual range for furthest pixel, this can be (very) different from the
+  //          official range passed via range().
+  // - data: spoke data from closest to furthest from radome. Each byte value can be
+  //         looked up in the legend.
   drawSpoke(spoke) {
     let a =
       (2 * Math.PI * ((spoke.angle + (this.spokes * 3) / 4) % this.spokes)) /
       this.spokes;
-    let pixels_per_item = (this.beam_length * 0.9) / spoke.data.length;
+    let pixels_per_item = (this.beam_length * RANGE_SCALE) / spoke.data.length;
     if (this.range) {
       pixels_per_item = (pixels_per_item * spoke.range) / this.range;
     }
@@ -132,5 +107,49 @@ class render_2d {
     this.ctx.fill();
   }
 
+  // A number of spokes has been received and now is a good time to render
+  // them to the screen. Usually every 14-32 spokes.
   render() {}
+
+  #drawRings() {
+    this.background_ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this.background_ctx.clearRect(0, 0, this.width, this.height);
+
+    this.background_ctx.strokeStyle = "white";
+    this.background_ctx.fillStyle = "white";
+    this.background_ctx.font = "bold 16px/1 Verdana, Geneva, sans-serif";
+    for (let i = 0; i <= 4; i++) {
+      this.background_ctx.beginPath();
+      this.background_ctx.arc(
+        this.center_x,
+        this.center_y,
+        (i * this.beam_length) / 4,
+        0,
+        2 * Math.PI
+      );
+      this.background_ctx.stroke();
+      if (i > 0 && this.range) {
+        let r = Math.trunc((this.range * i) / 4);
+        console.log("i=" + i + " range=" + this.range + " r=" + r);
+        let text = this.rangeDescriptions
+          ? this.rangeDescriptions[r]
+          : undefined;
+        if (text === undefined) {
+          if (r % 1000 == 0) {
+            text = r / 1000 + " km";
+          } else {
+            text = r + " m";
+          }
+        }
+        this.background_ctx.fillText(
+          text,
+          this.center_x + (i * this.beam_length * 1.41) / 8,
+          this.center_y + (i * this.beam_length * -1.41) / 8
+        );
+      }
+    }
+
+    this.background_ctx.fillStyle = "lightblue";
+    this.background_ctx.fillText("MAYARA (2D CONTEXT)", 5, 20);
+  }
 }

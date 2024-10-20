@@ -282,8 +282,9 @@ function setControl(v) {
     }
 
     if (control.name == "Range") {
-      if (control.descriptions && control.descriptions[v.value]) {
-        let unit = control.descriptions[v.value].split(/(\s+)/);
+      let r = parseFloat(v.value);
+      if (control.descriptions && control.descriptions[r]) {
+        let unit = control.descriptions[r].split(/(\s+)/);
         // Filter either on 'nm' or 'm'
         if (unit.length == 3) {
           let units = get_element_by_server_id(999);
@@ -292,7 +293,7 @@ function setControl(v) {
         }
       }
       myr_range_callbacks.forEach((cb) => {
-        cb(control, v.value);
+        cb(r, control.descriptions);
       });
     }
     if (v.error) {
