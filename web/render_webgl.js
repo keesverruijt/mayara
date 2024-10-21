@@ -9,7 +9,60 @@ class render_webgl {
     this.dom = canvas_dom;
     this.background_dom = canvas_background_dom;
 
-    this.gl = init(this.dom);
+    const gl = this.dom.getContext("webgl2");
+    if (!gl) {
+      throw new Error("WebGL2 not supported");
+    }
+
+    const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+    const fragmentShader = createShader(
+      gl,
+      gl.FRAGMENT_SHADER,
+      fragmentShaderSource
+    );
+    const program = createProgram(gl, vertexShader, fragmentShader);
+
+    const positionBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    const positions = [-1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0];
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+
+    const texCoordBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+    const texCoords = [0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(texCoords), gl.STATIC_DRAW);
+
+    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    gl.useProgram(program);
+
+    const positionLocation = gl.getAttribLocation(program, "a_position");
+    gl.enableVertexAttribArray(positionLocation);
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+    const texCoordLocation = gl.getAttribLocation(program, "a_texCoord");
+    gl.enableVertexAttribArray(texCoordLocation);
+    gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+    gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
+
+    gl.activeTexture(gl.TEXTURE0);
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    const samplerLocation = gl.getUniformLocation(program, "u_polarIndexData");
+    gl.uniform1i(samplerLocation, 0);
+
+    gl.activeTexture(gl.TEXTURE1);
+    const colorLocation = gl.getUniformLocation(program, "u_colorTable");
+    gl.uniform1i(colorLocation, 1);
+
+    this.transform_matrix_location = gl.getUniformLocation(
+      program,
+      "u_transform"
+    );
+
+    this.gl = gl;
 
     this.actual_range = 0;
   }
@@ -151,6 +204,63 @@ class render_webgl {
     this.background_ctx.fillStyle = "lightblue";
     this.background_ctx.fillText("MAYARA (WEBGL CONTEXT)", 5, 20);
 
+    this.#setTransformationMatrix();
+  }
+
+  #setTransformationMatrix() {
+    const scale = (1.0 * this.actual_range) / this.range;
+    // Define your rotation angle in radians (90 degrees)
+    const angle = Math.PI / 2;
+
+    const scaling_matrix = new Float32Array([
+      scale * ((2 * this.beam_length) / this.width),
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      scale * ((2 * this.beam_length) / this.height),
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+    ]);
+
+    // Create a rotation matrix around the z-axis
+    const rotation_matrix = new Float32Array([
+      Math.cos(angle),
+      -Math.sin(angle),
+      0.0,
+      0.0,
+      Math.sin(angle),
+      Math.cos(angle),
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+    ]);
+
+    // Multiply the rotation matrix by the scaling matrix
+    let transformation_matrix = new Float32Array(16);
+    multiply(transformation_matrix, scaling_matrix, rotation_matrix);
+
+    this.gl.uniformMatrix4fv(
+      this.transform_matrix_location,
+      false,
+      transformation_matrix
+    );
+
     this.gl.clear(this.gl.COLOR_BUFFER_BIT);
 
     this.background_ctx.fillStyle = "lightgreen";
@@ -165,8 +275,10 @@ const vertexShaderSource = `#version 300 es
   in vec2 a_texCoord;
   out vec2 v_texCoord;
 
+  uniform mat4 u_transform;
+
   void main() {
-    gl_Position = a_position;
+    gl_Position = u_transform * a_position;
     v_texCoord = a_texCoord;
   }
 `;
@@ -183,7 +295,7 @@ const fragmentShaderSource = `#version 300 es
   void main() {
     // Convert texture coordinates into polar coordinates
     vec2 centeredCoords = v_texCoord - vec2(0.5, 0.5); // Center the coords at (0.5, 0.5)
-    float r = length(centeredCoords); // Compute the radius
+    float r = length(centeredCoords) * 2.0; // Compute the radius
     float theta = atan(centeredCoords.y, centeredCoords.x); // Compute the angle (theta)
     
     // Normalize theta to be in the range [0, 1] for texture sampling
@@ -193,9 +305,7 @@ const fragmentShaderSource = `#version 300 es
     float index = texture(u_polarIndexData, vec2(r, normalizedTheta)).r;
 
     // Use the index to look up the color in the color table (1D texture)
-    vec4 color1 = texture(u_colorTable, vec2(index, 0.0)); 
-    // color = vec4(index * 8.0, color1.r, color1.b, 1.0);
-    color = color1;
+    color = texture(u_colorTable, vec2(index, 0.0)); 
   }
 `;
 
@@ -222,59 +332,6 @@ function createProgram(gl, vertexShader, fragmentShader) {
     return null;
   }
   return program;
-}
-
-function init(canvas) {
-  const gl = canvas.getContext("webgl2");
-
-  if (!gl) {
-    throw new Error("WebGL2 not supported");
-  }
-
-  const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
-  const fragmentShader = createShader(
-    gl,
-    gl.FRAGMENT_SHADER,
-    fragmentShaderSource
-  );
-  const program = createProgram(gl, vertexShader, fragmentShader);
-
-  const positionBuffer = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-  const positions = [-1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0];
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
-
-  const texCoordBuffer = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
-  const texCoords = [0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0];
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(texCoords), gl.STATIC_DRAW);
-
-  gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-  gl.clear(gl.COLOR_BUFFER_BIT);
-
-  gl.useProgram(program);
-
-  const positionLocation = gl.getAttribLocation(program, "a_position");
-  gl.enableVertexAttribArray(positionLocation);
-  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-  gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
-
-  const texCoordLocation = gl.getAttribLocation(program, "a_texCoord");
-  gl.enableVertexAttribArray(texCoordLocation);
-  gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
-  gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
-
-  gl.activeTexture(gl.TEXTURE0);
-  const texture = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  const samplerLocation = gl.getUniformLocation(program, "u_polarIndexData");
-  gl.uniform1i(samplerLocation, 0);
-
-  gl.activeTexture(gl.TEXTURE1);
-  const colorLocation = gl.getUniformLocation(program, "u_colorTable");
-  gl.uniform1i(colorLocation, 1);
-
-  return gl;
 }
 
 function draw(gl) {
@@ -341,4 +398,61 @@ function loadColorTableTexture(gl, legend) {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 
   return texture;
+}
+
+function multiply(out, a, b) {
+  let a00 = a[0],
+    a01 = a[1],
+    a02 = a[2],
+    a03 = a[3];
+  let a10 = a[4],
+    a11 = a[5],
+    a12 = a[6],
+    a13 = a[7];
+  let a20 = a[8],
+    a21 = a[9],
+    a22 = a[10],
+    a23 = a[11];
+  let a30 = a[12],
+    a31 = a[13],
+    a32 = a[14],
+    a33 = a[15];
+
+  // Cache only the current line of the second matrix
+  let b0 = b[0],
+    b1 = b[1],
+    b2 = b[2],
+    b3 = b[3];
+  out[0] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+  out[1] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+  out[2] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+  out[3] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+
+  b0 = b[4];
+  b1 = b[5];
+  b2 = b[6];
+  b3 = b[7];
+  out[4] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+  out[5] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+  out[6] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+  out[7] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+
+  b0 = b[8];
+  b1 = b[9];
+  b2 = b[10];
+  b3 = b[11];
+  out[8] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+  out[9] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+  out[10] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+  out[11] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+
+  b0 = b[12];
+  b1 = b[13];
+  b2 = b[14];
+  b3 = b[15];
+  out[12] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+  out[13] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+  out[14] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+  out[15] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+  return out;
 }
