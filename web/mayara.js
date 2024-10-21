@@ -15,7 +15,7 @@ const RadarEntry = (id, name) =>
     td(
       { class: "myr" },
       a(
-        { href: "/viewer.html?id=" + id + "&draw=gl" },
+        { href: "/viewer.html?id=" + id + "&draw=alt" },
         name + " PPI (WebGL alt)"
       )
     ),

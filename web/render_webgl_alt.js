@@ -1,8 +1,8 @@
-export { render_webgl2 };
+export { render_webgl_alt };
 
 import { RANGE_SCALE } from "./viewer.js";
 
-class render_webgl2 {
+class render_webgl_alt {
   // The constructor gets two canvases, the real drawing one and one for background data
   // such as range circles etc.
   constructor(canvas_dom, canvas_background_dom) {

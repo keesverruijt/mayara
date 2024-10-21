@@ -13,7 +13,7 @@ const prefix = "myr_";
 
 import { render_2d } from "./render_2d.js";
 import { render_webgl } from "./render_webgl.js";
-import { render_webgl2 } from "./render_webgl_v2.js";
+import { render_webgl_alt } from "./render_webgl_alt.js";
 
 var webSocket;
 var RadarMessage;
@@ -41,13 +41,13 @@ window.onload = function () {
         document.getElementById("myr_canvas"),
         document.getElementById("myr_canvas_background")
       );
-    } else if (draw == "gl") {
-      renderer = new render_webgl(
+    } else if (draw == "alt") {
+      renderer = new render_webgl_alt(
         document.getElementById("myr_canvas_webgl"),
         document.getElementById("myr_canvas_background")
       );
     } else {
-      renderer = new render_webgl2(
+      renderer = new render_webgl(
         document.getElementById("myr_canvas_webgl"),
         document.getElementById("myr_canvas_background")
       );
