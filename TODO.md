@@ -2,12 +2,16 @@
 
 Working:
 
-* Start, logging.
+* Start, logging
 * Detect BR24, 3G, 4G and HALO radars
+* Provide webserver for static and dynamic pages
+* Serve navico radar data
+* Control navico radar (tested with 4G and HALO)
+* Detect Furuno radar (tested with DRS4D-NXT)
 
 Work in Progress:
 
-* Read data from Navico
+* Read data from Furuno
 * Detect Garmin xHD (but not yet know if different from HD)
 
 TODO:
