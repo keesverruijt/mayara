@@ -19,6 +19,8 @@ mod locator;
 mod navico;
 mod protos;
 mod radar;
+#[cfg(feature = "raymarine")]
+mod raymarine;
 mod settings;
 mod signalk;
 mod util;

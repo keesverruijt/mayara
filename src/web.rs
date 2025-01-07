@@ -2,7 +2,7 @@ use axum::{
     debug_handler,
     extract::{
         ws::{Message, WebSocket},
-        ConnectInfo, Host, Path, State, WebSocketUpgrade,
+        ConnectInfo, Path, State, WebSocketUpgrade,
     },
     http::Uri,
     response::{IntoResponse, Response},
@@ -10,6 +10,7 @@ use axum::{
     Json, Router,
 };
 use axum_embed::ServeEmbed;
+use hyper;
 use log::{debug, trace};
 use miette::Result;
 use rust_embed::RustEmbed;
@@ -80,8 +81,8 @@ impl Web {
 
         let app = Router::new()
             .route(RADAR_URI, get(get_radars))
-            .route(&format!("{}{}", SPOKES_URI, ":key"), get(spokes_handler))
-            .route(&format!("{}{}", CONTROL_URI, ":key"), get(control_handler))
+            .route(&format!("{}{}", SPOKES_URI, "{key}"), get(spokes_handler))
+            .route(&format!("{}{}", CONTROL_URI, "{key}"), get(control_handler))
             .nest_service("/proto", proto_assets)
             .nest_service("/", serve_assets)
             .with_state(self)
@@ -145,11 +146,17 @@ impl RadarApi {
 // Signal K radar API says this returns something like:
 //    {"radar-0":{"id":"radar-0","name":"Navico","spokes":2048,"maxSpokeLen":1024,"streamUrl":"http://localhost:3001/v1/api/stream/radar-0"}}
 //
+#[debug_handler]
 async fn get_radars(
     State(state): State<Web>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Host(host): Host,
+    headers: hyper::header::HeaderMap,
 ) -> Response {
+    let host: String = match headers.get(axum::http::header::HOST) {
+        Some(host) => host.to_str().unwrap_or("localhost").to_string(),
+        None => "localhost".to_string(),
+    };
+
     debug!("Radar state request from {} for host '{}'", addr, host);
 
     let host = format!(
@@ -229,7 +236,7 @@ async fn spokes_stream(
                 match r {
                     Ok(message) => {
                         let len = message.len();
-                        let ws_message = Message::Binary(message);
+                        let ws_message = Message::Binary(message.into());
                         if let Err(e) = socket.send(ws_message).await {
                             debug!("Error on send to websocket: {}", e);
                             break;
@@ -300,7 +307,7 @@ async fn control_stream(
                     Some(message) => {
                         let message = serde_json::to_string(&message).unwrap();
                         trace!("Sending {:?}", message);
-                        let ws_message = Message::Text(message);
+                        let ws_message = Message::Text(message.into());
 
                         if let Err(e) = socket.send(ws_message).await {
                             log::error!("send to websocket client: {e}");
@@ -320,7 +327,7 @@ async fn control_stream(
                     Ok(message) => {
                         let message: String = serde_json::to_string(&message).unwrap();
                         trace!("Sending {:?}", message);
-                        let ws_message = Message::Text(message);
+                        let ws_message = Message::Text(message.into());
 
                         if let Err(e) = socket.send(ws_message).await {
                             log::error!("send to websocket client: {e}");

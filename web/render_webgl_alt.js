@@ -8,6 +8,7 @@ class render_webgl_alt {
   constructor(canvas_dom, canvas_background_dom) {
     this.dom = canvas_dom;
     this.background_dom = canvas_background_dom;
+    this.background_ctx = this.background_dom.getContext("2d");
 
     let gl = this.dom.getContext("webgl2", {
       preserveDrawingBuffer: true,
@@ -145,10 +146,8 @@ class render_webgl_alt {
     this.y = y;
   }
 
-  // An updated range, and an optional array of descriptions. The array may be null.
-  setRange(range, descriptions) {
+  setRange(range) {
     this.range = range;
-    this.rangeDescriptions = descriptions;
     this.redrawCanvas();
   }
 
@@ -185,7 +184,7 @@ class render_webgl_alt {
 
     if (this.actual_range != spoke.range) {
       this.actual_range = spoke.range;
-      this.#drawRings();
+      this.redrawCanvas();
     }
     let spokeBearing = spoke.has_bearing
       ? spoke.bearing
@@ -275,59 +274,15 @@ class render_webgl_alt {
     this.beam_length = Math.trunc(
       Math.max(this.center_x, this.center_y) * RANGE_SCALE
     );
-    this.background_ctx = this.background_dom.getContext("2d");
 
-    this.#drawRings();
+    this.drawBackgroundCallback(this, "MAYARA (WebGL Alt)");
+
+    this.#setTransformationMatrix();
 
     this.gl.viewport(0, 0, w, h);
 
     this.vertices = [];
     this.verticeColors = [];
-  }
-
-  #drawRings() {
-    this.background_ctx.setTransform(1, 0, 0, 1, 0, 0);
-    this.background_ctx.clearRect(0, 0, this.width, this.height);
-
-    this.background_ctx.strokeStyle = "white";
-    this.background_ctx.fillStyle = "white";
-    this.background_ctx.font = "bold 16px/1 Verdana, Geneva, sans-serif";
-    for (let i = 0; i <= 4; i++) {
-      this.background_ctx.beginPath();
-      this.background_ctx.arc(
-        this.center_x,
-        this.center_y,
-        (i * this.beam_length) / 4,
-        0,
-        2 * Math.PI
-      );
-      this.background_ctx.stroke();
-      if (i > 0 && this.range) {
-        let r = Math.trunc((this.range * i) / 4);
-        console.log("i=" + i + " range=" + this.range + " r=" + r);
-
-        let text = this.rangeDescriptions
-          ? this.rangeDescriptions[r]
-          : undefined;
-        if (text === undefined) {
-          if (r % 1000 == 0) {
-            text = r / 1000 + " km";
-          } else {
-            text = r + " m";
-          }
-        }
-        this.background_ctx.fillText(
-          text,
-          this.center_x + (i * this.beam_length * 1.41) / 8,
-          this.center_y + (i * this.beam_length * -1.41) / 8
-        );
-      }
-    }
-
-    this.background_ctx.fillStyle = "lightblue";
-    this.background_ctx.fillText("MAYARA (WEBGL ALT)", 5, 20);
-
-    this.#setTransformationMatrix();
   }
 
   #setTransformationMatrix() {

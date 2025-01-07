@@ -77,14 +77,14 @@ impl FurunoDataReceiver {
     }
 
     async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
-        let mut buf = Vec::with_capacity(1024);
+        let mut buf = Vec::with_capacity(1500);
 
         loop {
             tokio::select! { biased;
                 _ = subsys.on_shutdown_requested() => {
                     return Err(RadarError::Shutdown);
                 },
-                r = self.rx.recv() => {
+                _r = self.rx.recv() => {
                   // self.handle_data_update(r);
                 },
                 r = self.sock.as_ref().unwrap().recv_buf_from(&mut buf)  => {
@@ -123,6 +123,6 @@ impl FurunoDataReceiver {
     }
 
     fn process_frame(&mut self, data: &mut Vec<u8>) {
-        trace!("Received spoke {:?}", data);
+        log::info!("Received spoke {:?}", data);
     }
 }

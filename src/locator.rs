@@ -23,7 +23,7 @@ use tokio::time::sleep;
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::radar::{RadarError, SharedRadars};
-use crate::{furuno, navico, util, Cli};
+use crate::{furuno, navico, raymarine, util, Cli};
 
 const LOCATOR_PACKET_BUFFER_LEN: usize = 300; // Long enough for any location packet
 
@@ -32,6 +32,7 @@ pub enum LocatorId {
     GenBR24,
     Gen3Plus,
     Furuno,
+    Raymarine,
 }
 
 impl LocatorId {
@@ -41,6 +42,7 @@ impl LocatorId {
             GenBR24 => "Navico BR24",
             Gen3Plus => "Navico 3G/4G/HALO",
             Furuno => "Furuno DRSxxxx",
+            Raymarine => "Raymarine",
         }
     }
 }
@@ -159,6 +161,16 @@ impl Locator {
             .eq_ignore_ascii_case("furuno")
         {
             furuno::create_locator().update_listen_addresses(&mut listen_addresses);
+        }
+        #[cfg(feature = "raymarine")]
+        if interface_state
+            .args
+            .brand
+            .as_ref()
+            .unwrap_or(&"raymarine".to_owned())
+            .eq_ignore_ascii_case("raymarine")
+        {
+            raymarine::create_locator().update_listen_addresses(&mut listen_addresses);
         }
 
         loop {

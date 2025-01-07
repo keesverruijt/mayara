@@ -5,7 +5,7 @@ export { RANGE_SCALE };
 import {
   loadRadar,
   registerRadarCallback,
-  registerRangeCallback,
+  registerControlCallback,
 } from "./control.js";
 import "./protobuf/protobuf.js";
 
@@ -18,11 +18,13 @@ import { render_webgl_alt } from "./render_webgl_alt.js";
 var webSocket;
 var RadarMessage;
 var renderer;
+var rangeDescriptions;
+var noTransmitAngles;
 
 const RANGE_SCALE = 0.9; // Factor by which we fill the (w,h) canvas with the outer radar range ring
 
 registerRadarCallback(radarLoaded);
-registerRangeCallback(rangeUpdate);
+registerControlCallback(controlUpdate);
 
 window.onload = function () {
   const urlParams = new URLSearchParams(window.location.search);
@@ -60,6 +62,8 @@ window.onload = function () {
       document.getElementById("myr_canvas_background")
     );
   }
+
+  renderer.setDrawBackgroundCallback(drawBackground);
 
   loadRadar(id);
 
@@ -130,6 +134,89 @@ function hexToRGBA(hex) {
   return a;
 }
 
-function rangeUpdate(range, descriptions) {
-  renderer.setRange(range, descriptions);
+function controlUpdate(range, control, controlValue) {
+  if (control.name == "Range" && control.descriptions) {
+    let range = parseFloat(controlValue.value);
+    rangeDescriptions = control.descriptions;
+    renderer.setRange(range);
+  }
+  if (control.name.startsWith("No Transmit")) {
+    let value = parseFloat(controlValue.value);
+    idx = extractNoTxZone(control.name);
+    start_end = extractStartEnd(control.name);
+    if (controlValue.enabled) {
+      noTransmitAngles[idx][start_end] = value;
+    } else {
+      noTransmitAngles[idx] = null;
+    }
+  }
+}
+
+function extractNoTxZone(name) {
+  const re = /(\d+)/;
+  let match = name.match(re);
+  if (match) {
+    return parseInt(match[1]);
+  }
+  return 0;
+}
+
+function extractStartEnd(name) {
+  return name.includes("start") ? 0 : 1;
+}
+
+function drawBackground(obj, txt) {
+  obj.background_ctx.setTransform(1, 0, 0, 1, 0, 0);
+  obj.background_ctx.clearRect(0, 0, obj.width, obj.height);
+
+  obj.background_ctx.strokeStyle = "white";
+  obj.background_ctx.fillStyle = "white";
+  obj.background_ctx.font = "bold 16px/1 Verdana, Geneva, sans-serif";
+  for (let i = 0; i <= 4; i++) {
+    obj.background_ctx.beginPath();
+    obj.background_ctx.arc(
+      obj.center_x,
+      obj.center_y,
+      (i * obj.beam_length) / 4,
+      0,
+      2 * Math.PI
+    );
+    obj.background_ctx.stroke();
+    if (i > 0 && obj.range) {
+      let r = Math.trunc((obj.range * i) / 4);
+      console.log("i=" + i + " range=" + obj.range + " r=" + r);
+      let text = rangeDescriptions ? rangeDescriptions[r] : undefined;
+      if (text === undefined) {
+        if (r % 1000 == 0) {
+          text = r / 1000 + " km";
+        } else {
+          text = r + " m";
+        }
+      }
+      obj.background_ctx.fillText(
+        text,
+        obj.center_x + (i * obj.beam_length * 1.41) / 8,
+        obj.center_y + (i * obj.beam_length * -1.41) / 8
+      );
+    }
+  }
+
+  obj.background_ctx.fillStyle = "lightgrey";
+
+  noTransmitAngles.forEach((e) => {
+    if (e && e[0]) {
+      obj.background_ctx.beginPath();
+      obj.background_ctx.arc(
+        obj.center_x,
+        obj.center_y,
+        obj.beam_length * 2,
+        (2 * Math.PI * e[0]) / obj.spokes,
+        (2 * Math.PI * e[1]) / obj.spokes
+      );
+      obj.background_ctx.fill();
+    }
+  });
+
+  obj.background_ctx.fillStyle = "lightblue";
+  this.background_ctx.fillText(txt, 5, 20);
 }

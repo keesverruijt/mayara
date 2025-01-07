@@ -11,6 +11,10 @@ class render_2d {
     this.redrawCanvas();
   }
 
+  setDrawBackgroundCallback(drawBackground) {
+    this.drawBackgroundCallback = drawBackground;
+  }
+
   // This is called as soon as it is clear what the number of spokes and their max length is
   // Some brand vary the spoke length with data or range, but a promise is made about the
   // max length.
@@ -19,10 +23,8 @@ class render_2d {
     this.max_spoke_len = max_spoke_len;
   }
 
-  // An updated range, and an optional array of descriptions. The array may be null.
-  setRange(range, descriptions) {
+  setRange(range) {
     this.range = range;
-    this.rangeDescriptions = descriptions;
     this.redrawCanvas();
   }
 
@@ -61,7 +63,7 @@ class render_2d {
     this.pattern_ctx = this.pattern.getContext("2d");
     this.image = this.pattern_ctx.createImageData(2048, 1);
 
-    this.#drawRings();
+    this.drawBackgroundCallback(this, "MAYARA (Canvas 2D)");
   }
 
   // A new spoke has been received.
@@ -110,46 +112,4 @@ class render_2d {
   // A number of spokes has been received and now is a good time to render
   // them to the screen. Usually every 14-32 spokes.
   render() {}
-
-  #drawRings() {
-    this.background_ctx.setTransform(1, 0, 0, 1, 0, 0);
-    this.background_ctx.clearRect(0, 0, this.width, this.height);
-
-    this.background_ctx.strokeStyle = "white";
-    this.background_ctx.fillStyle = "white";
-    this.background_ctx.font = "bold 16px/1 Verdana, Geneva, sans-serif";
-    for (let i = 0; i <= 4; i++) {
-      this.background_ctx.beginPath();
-      this.background_ctx.arc(
-        this.center_x,
-        this.center_y,
-        (i * this.beam_length) / 4,
-        0,
-        2 * Math.PI
-      );
-      this.background_ctx.stroke();
-      if (i > 0 && this.range) {
-        let r = Math.trunc((this.range * i) / 4);
-        console.log("i=" + i + " range=" + this.range + " r=" + r);
-        let text = this.rangeDescriptions
-          ? this.rangeDescriptions[r]
-          : undefined;
-        if (text === undefined) {
-          if (r % 1000 == 0) {
-            text = r / 1000 + " km";
-          } else {
-            text = r + " m";
-          }
-        }
-        this.background_ctx.fillText(
-          text,
-          this.center_x + (i * this.beam_length * 1.41) / 8,
-          this.center_y + (i * this.beam_length * -1.41) / 8
-        );
-      }
-    }
-
-    this.background_ctx.fillStyle = "lightblue";
-    this.background_ctx.fillText("MAYARA (2D CONTEXT)", 5, 20);
-  }
 }

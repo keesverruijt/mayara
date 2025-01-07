@@ -379,8 +379,8 @@ impl NavicoDataReceiver {
                     return None;
                 }
             },
-            LocatorId::Furuno => {
-                panic!("Furuno is not Navico");
+            _ => {
+                panic!("Incorrect Navico type");
             }
         }
     }
