@@ -5,10 +5,11 @@ import { RANGE_SCALE } from "./viewer.js";
 class render_webgl_alt {
   // The constructor gets two canvases, the real drawing one and one for background data
   // such as range circles etc.
-  constructor(canvas_dom, canvas_background_dom) {
+  constructor(canvas_dom, canvas_background_dom, drawBackground) {
     this.dom = canvas_dom;
     this.background_dom = canvas_background_dom;
     this.background_ctx = this.background_dom.getContext("2d");
+    this.drawBackgroundCallback = drawBackground;
 
     let gl = this.dom.getContext("webgl2", {
       preserveDrawingBuffer: true,

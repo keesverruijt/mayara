@@ -5,14 +5,11 @@ import { RANGE_SCALE } from "./viewer.js";
 class render_2d {
   // The constructor gets two canvases, the real drawing one and one for background data
   // such as range circles etc.
-  constructor(canvas_dom, canvas_background_dom) {
+  constructor(canvas_dom, canvas_background_dom, drawBackground) {
     this.dom = canvas_dom;
     this.background_dom = canvas_background_dom;
-    this.redrawCanvas();
-  }
-
-  setDrawBackgroundCallback(drawBackground) {
     this.drawBackgroundCallback = drawBackground;
+    this.redrawCanvas();
   }
 
   // This is called as soon as it is clear what the number of spokes and their max length is

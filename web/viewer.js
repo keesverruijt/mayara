@@ -41,17 +41,20 @@ window.onload = function () {
     if (draw == "2d") {
       renderer = new render_2d(
         document.getElementById("myr_canvas"),
-        document.getElementById("myr_canvas_background")
+        document.getElementById("myr_canvas_background"),
+        drawBackground
       );
     } else if (draw == "alt") {
       renderer = new render_webgl_alt(
         document.getElementById("myr_canvas_webgl"),
-        document.getElementById("myr_canvas_background")
+        document.getElementById("myr_canvas_background"),
+        drawBackground
       );
     } else {
       renderer = new render_webgl(
         document.getElementById("myr_canvas_webgl"),
-        document.getElementById("myr_canvas_background")
+        document.getElementById("myr_canvas_background"),
+        drawBackground
       );
     }
   } catch (e) {
@@ -59,11 +62,10 @@ window.onload = function () {
     console.log("Falling back on 2d context");
     renderer = new render_2d(
       document.getElementById("myr_canvas"),
-      document.getElementById("myr_canvas_background")
+      document.getElementById("myr_canvas_background"),
+      drawBackground
     );
   }
-
-  renderer.setDrawBackgroundCallback(drawBackground);
 
   loadRadar(id);
 
@@ -134,7 +136,7 @@ function hexToRGBA(hex) {
   return a;
 }
 
-function controlUpdate(range, control, controlValue) {
+function controlUpdate(control, controlValue) {
   if (control.name == "Range" && control.descriptions) {
     let range = parseFloat(controlValue.value);
     rangeDescriptions = control.descriptions;
@@ -203,20 +205,21 @@ function drawBackground(obj, txt) {
 
   obj.background_ctx.fillStyle = "lightgrey";
 
-  noTransmitAngles.forEach((e) => {
-    if (e && e[0]) {
-      obj.background_ctx.beginPath();
-      obj.background_ctx.arc(
-        obj.center_x,
-        obj.center_y,
-        obj.beam_length * 2,
-        (2 * Math.PI * e[0]) / obj.spokes,
-        (2 * Math.PI * e[1]) / obj.spokes
-      );
-      obj.background_ctx.fill();
-    }
-  });
-
+  if (typeof noTransmitAngles == "array") {
+    noTransmitAngles.forEach((e) => {
+      if (e && e[0]) {
+        obj.background_ctx.beginPath();
+        obj.background_ctx.arc(
+          obj.center_x,
+          obj.center_y,
+          obj.beam_length * 2,
+          (2 * Math.PI * e[0]) / obj.spokes,
+          (2 * Math.PI * e[1]) / obj.spokes
+        );
+        obj.background_ctx.fill();
+      }
+    });
+  }
   obj.background_ctx.fillStyle = "lightblue";
   this.background_ctx.fillText(txt, 5, 20);
 }
