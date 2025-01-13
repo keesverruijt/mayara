@@ -84,7 +84,7 @@ impl Web {
             .route(&format!("{}{}", SPOKES_URI, "{key}"), get(spokes_handler))
             .route(&format!("{}{}", CONTROL_URI, "{key}"), get(control_handler))
             .nest_service("/proto", proto_assets)
-            .nest_service("/", serve_assets)
+            .fallback_service(serve_assets)
             .with_state(self)
             .into_make_service_with_connect_info::<SocketAddr>();
 
