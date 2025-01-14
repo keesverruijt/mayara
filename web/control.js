@@ -67,6 +67,15 @@ const RangeValue = (id, name, min, max, def, descriptions) =>
     })
   );
 
+const ButtonValue = (id, name) =>
+  div(
+    { class: "myr_button" },
+    button(
+      { type: "button", id: prefix + id, onclick: (e) => do_change(e) },
+      name
+    )
+  );
+
 const AutoButton = (id) =>
   div(
     { class: "myr_button" },
@@ -320,7 +329,9 @@ function buildControls() {
     }
     if (v["isReadOnly"]) {
       van.add(c, ReadOnlyValue(k, v.name));
-    } else if (v["isStringValue"]) {
+    } else if (v["dataType"] == "button") {
+      van.add(c, ButtonValue(k, v.name));
+    } else if (v["dataType"] == "string") {
       van.add(c, StringValue(k, v.name));
       van.add(get_element_by_server_id(k).parentNode, SetButton());
     } else if ("validValues" in v) {

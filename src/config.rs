@@ -13,7 +13,7 @@ use crate::radar::{RadarInfo, RangeDetection};
 use crate::settings::ControlType;
 
 pub fn get_project_dirs() -> ProjectDirs {
-    directories::ProjectDirs::from("com", "keversoft", "target-mixer")
+    directories::ProjectDirs::from("net", "verruijt", "mayara")
         .expect("Cannot find project directories")
 }
 

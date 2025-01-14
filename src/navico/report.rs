@@ -565,12 +565,14 @@ impl NavicoReportReceiver {
 
     // If range detection is in progress, go to the next range
     async fn process_range(&mut self, range: i32) -> Result<(), RadarError> {
+        let mut range = range / 10;
         if self.info.range_detection.is_none() && !self.args.replay {
             if let Some(control) = self.info.controls.get(&ControlType::Range) {
                 self.info.range_detection = Some(RangeDetection::new(
-                    control.item().min_value.unwrap() as i32,
+                    0,
                     control.item().max_value.unwrap() as i32,
                 ));
+                range = 0;
             }
         }
 
@@ -580,13 +582,8 @@ impl NavicoReportReceiver {
             }
             let mut complete = false;
 
-            let range = range / 10; // Raw value is in decimeters
-
             if !range_detection.complete {
-                let mut next_range = Self::next_range(max(
-                    range_detection.min_range,
-                    max(range, range_detection.commanded_range),
-                ));
+                let mut next_range = Self::next_range(max(range, range_detection.commanded_range));
                 log::debug!(
                     "{}: Range detected range={}m commanded={}m -> next {}",
                     self.key,
@@ -595,11 +592,12 @@ impl NavicoReportReceiver {
                     next_range
                 );
 
-                if range
-                    > *range_detection
-                        .ranges
-                        .last()
-                        .unwrap_or(&(range_detection.min_range - 1))
+                if range > 0
+                    && range
+                        > *range_detection
+                            .ranges
+                            .last()
+                            .unwrap_or(&(range_detection.min_range - 1))
                 {
                     range_detection.ranges.push(range);
                     log::debug!(
@@ -610,7 +608,7 @@ impl NavicoReportReceiver {
                 }
                 if next_range > range_detection.max_range {
                     range_detection.complete = true;
-                    next_range = range_detection.saved_range;
+                    next_range = max(range_detection.saved_range, range_detection.ranges[0]);
                     complete = true;
                     log::info!(
                         "{}: Range detection complete, ranges: {:?}",
@@ -651,7 +649,8 @@ impl NavicoReportReceiver {
     ///
     fn next_range(r: i32) -> i32 {
         let metric = match r {
-            i32::MIN..75 => 75,
+            i32::MIN..50 => 50,
+            50..75 => 75,
             75..100 => 100,
             100..150 => 150,
             150..400 => r / 100 * 100 + 100,

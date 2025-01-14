@@ -1,3 +1,5 @@
+use std::cmp::{max, min};
+
 use log::{debug, trace};
 use tokio::net::UdpSocket;
 
@@ -115,7 +117,7 @@ impl Command {
 
             prev
         } else {
-            i
+            min(max(i, 50), 96 * 1852)
         }
     }
 

@@ -131,13 +131,13 @@ pub fn update_when_model_known(controls: &mut Controls, model: Model, radar_info
     }
 
     let max_value = (match model {
-        Model::Unknown => 0.,
+        Model::Unknown => 96.,
         Model::BR24 => 24.,
         Model::Gen3 => 36.,
         Model::Gen4 => 48.,
         Model::HALO => 96.,
     }) * 1852.;
-    let mut range_control = Control::new_numeric(ControlType::Range, 0., max_value)
+    let mut range_control = Control::new_numeric(ControlType::Range, 50., max_value)
         .unit("m")
         .wire_scale_factor(10. * max_value, true); // Radar sends and receives in decimeters
     if let Some(range_detection) = &radar_info.range_detection {
