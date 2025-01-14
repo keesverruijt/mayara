@@ -49,7 +49,7 @@ impl TrailBuffer {
     }
 
     pub fn update_relative_trails(&mut self, angle: SpokeBearing, data: &mut Vec<u8>) {
-        if self.trail_length_ms == 0 {
+        if self.trail_length_ms == 0 || self.rotation_speed_ms == 0 {
             return;
         }
         let max_trail_value = (self.trail_length_ms / self.rotation_speed_ms) as u16;

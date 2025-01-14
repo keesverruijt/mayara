@@ -20,7 +20,9 @@ pub(crate) mod trail;
 use crate::config::Persistence;
 use crate::locator::LocatorId;
 use crate::protos::RadarMessage::RadarMessage;
-use crate::settings::{Control, ControlError, ControlMessage, ControlType, ControlValue, Controls};
+use crate::settings::{
+    Control, ControlDataType, ControlError, ControlMessage, ControlType, ControlValue, Controls,
+};
 use crate::Cli;
 
 pub(crate) type SpokeBearing = u16;
@@ -439,7 +441,7 @@ impl RadarInfo {
     ) -> Result<Option<String>, ControlError> {
         let control = {
             if let Some(control) = self.controls.get_mut(control_type) {
-                if control.item().is_string_value {
+                if control.item().data_type == ControlDataType::String {
                     Ok(control.set_string(value).map(|_| control.clone()))
                 } else {
                     let i = value
@@ -755,8 +757,6 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
 
     const WHITE: f32 = 256.0;
     let pixels_with_color = pixel_values - 1;
-    let start = WHITE / 3.0;
-    let delta: f32 = (WHITE * 2.0) / (pixels_with_color as f32);
     let one_third = pixels_with_color / 3;
     let two_thirds = one_third * 2;
     legend.strong_return = two_thirds;

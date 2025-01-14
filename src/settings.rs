@@ -61,6 +61,11 @@ impl Controls {
 
         controls.insert(ControlType::TargetTrails, control);
 
+        controls.insert(
+            ControlType::ClearTrails,
+            Control::new_button(ControlType::ClearTrails),
+        );
+
         Controls { controls }
     }
 
@@ -220,7 +225,7 @@ impl Control {
             descriptions: None,
             valid_values: None,
             is_read_only: false,
-            is_string_value: false,
+            data_type: ControlDataType::Number,
             is_send_always: false,
         });
         control
@@ -249,7 +254,7 @@ impl Control {
             descriptions: None,
             valid_values: None,
             is_read_only: false,
-            is_string_value: false,
+            data_type: ControlDataType::Number,
             is_send_always: false,
         })
     }
@@ -277,7 +282,7 @@ impl Control {
             ),
             valid_values: None,
             is_read_only: false,
-            is_string_value: false,
+            data_type: ControlDataType::Number,
             is_send_always: false,
         })
     }
@@ -298,10 +303,11 @@ impl Control {
             descriptions: Some(descriptions),
             valid_values: None,
             is_read_only: false,
-            is_string_value: false,
+            data_type: ControlDataType::Number,
             is_send_always: false,
         })
     }
+
     pub fn new_string(control_type: ControlType) -> Self {
         let control = Self::new(ControlDefinition {
             control_type,
@@ -318,7 +324,29 @@ impl Control {
             descriptions: None,
             valid_values: None,
             is_read_only: true,
-            is_string_value: true,
+            data_type: ControlDataType::String,
+            is_send_always: false,
+        });
+        control
+    }
+
+    pub fn new_button(control_type: ControlType) -> Self {
+        let control = Self::new(ControlDefinition {
+            control_type,
+            name: control_type.to_string(),
+            automatic: None,
+            has_enabled: false,
+            default_value: None,
+            min_value: None,
+            max_value: None,
+            step_value: None,
+            wire_scale_factor: None,
+            wire_offset: None,
+            unit: None,
+            descriptions: None,
+            valid_values: None,
+            is_read_only: false,
+            data_type: ControlDataType::Button,
             is_send_always: false,
         });
         control
@@ -381,7 +409,7 @@ impl Control {
     // }
 
     pub fn value(&self) -> String {
-        if self.item.is_string_value {
+        if self.item.data_type == ControlDataType::String {
             return self.description.clone().unwrap_or_else(|| "".to_string());
         }
 
@@ -536,20 +564,27 @@ pub(crate) const HAS_AUTO_NOT_ADJUSTABLE: AutomaticValue = AutomaticValue {
     auto_adjust_max_value: 0.,
 };
 
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum ControlDataType {
+    Number,
+    String,
+    Button,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ControlDefinition {
     #[serde(skip)]
     pub(crate) control_type: ControlType,
     name: String,
+    pub(crate) data_type: ControlDataType,
     //#[serde(skip)]
     //has_off: bool,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     automatic: Option<AutomaticValue>,
     #[serde(skip_serializing_if = "is_false")]
     pub(crate) has_enabled: bool,
-    #[serde(skip_serializing_if = "is_false")]
-    pub(crate) is_string_value: bool,
     #[serde(skip)]
     default_value: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -571,7 +606,7 @@ pub(crate) struct ControlDefinition {
     #[serde(skip_serializing_if = "is_false")]
     is_read_only: bool,
     #[serde(skip)]
-    is_send_always: bool,
+    is_send_always: bool, // Whether the controlvalue is sent out to client in all state messages
 }
 
 fn is_false(v: &bool) -> bool {
@@ -596,7 +631,7 @@ impl ControlDefinition {}
 #[repr(u8)]
 // The order is the one in which we deem the representation is "right"
 // when present as a straight list of controls. This is the same order
-// as shown in the radar page for HALO.
+// as shown in the radar page for HALO on NOS MFDs.
 pub enum ControlType {
     Status,
     Range,
