@@ -185,7 +185,7 @@ function loadRadar(id) {
 
 function restart(id) {
   console.log("restart(" + id + ")");
-  setTimeout(loadRadar(id), 15000);
+  setTimeout(loadRadar, 15000, id);
 }
 
 function radarsLoaded(id, d) {

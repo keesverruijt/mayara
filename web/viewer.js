@@ -75,7 +75,7 @@ window.onload = function () {
 };
 
 function restart(id) {
-  setTimeout(loadRadar(id), 5000);
+  setTimeout(loadRadar, 15000, id);
 }
 
 function radarLoaded(r) {
