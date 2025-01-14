@@ -31,8 +31,17 @@ impl TrailBuffer {
         }
     }
 
-    pub fn set_relative_trails_revolutions(&mut self, seconds: u16) {
-        self.trail_length_ms = seconds as u32 * 1000;
+    pub fn set_relative_trails_length(&mut self, control_value: u16) {
+        let seconds: u32 = match control_value {
+            1 => 15,
+            2 => 30,
+            3 => 60,
+            4 => 3 * 60,
+            5 => 5 * 60,
+            6 => 10 * 60,
+            _ => 0,
+        };
+        self.trail_length_ms = seconds * 1000;
     }
 
     pub fn set_rotation_speed(&mut self, ms: u32) {

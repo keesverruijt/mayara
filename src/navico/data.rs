@@ -228,7 +228,7 @@ impl NavicoDataReceiver {
                 }
                 ControlType::TargetTrails => {
                     let value = cv.value.parse::<u16>().unwrap_or(0);
-                    self.trails.set_relative_trails_revolutions(value);
+                    self.trails.set_relative_trails_length(value);
                 }
                 _ => {}
             },

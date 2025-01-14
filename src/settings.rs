@@ -49,12 +49,12 @@ impl Controls {
 
         let descriptions = HashMap::from([
             (0, "Off".to_string()),
-            (15, "15s".to_string()),
-            (30, "30s".to_string()),
-            (60, "1 min".to_string()),
-            (180, "3 min".to_string()),
-            (300, "5 min".to_string()),
-            (600, "10 min".to_string()),
+            (1, "15s".to_string()),
+            (2, "30s".to_string()),
+            (3, "1 min".to_string()),
+            (4, "3 min".to_string()),
+            (5, "5 min".to_string()),
+            (6, "10 min".to_string()),
         ]);
 
         let control = Control::new_map(ControlType::TargetTrails, descriptions);
