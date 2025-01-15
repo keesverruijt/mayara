@@ -651,7 +651,7 @@ impl SharedRadars {
             }
 
             info!(
-                "Located a new radar: key '{}' id {} name '{}'",
+                "Found radar: key '{}' id {} name '{}'",
                 &new_info.key,
                 new_info.id,
                 new_info.user_name()
@@ -755,7 +755,6 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
         pixel_values = 255 - 32 - 2;
     }
 
-    const WHITE: f32 = 256.0;
     let pixels_with_color = pixel_values - 1;
     let one_third = pixels_with_color / 3;
     let two_thirds = one_third * 2;

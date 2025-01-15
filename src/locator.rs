@@ -132,7 +132,7 @@ impl Locator {
         let radars = &self.radars;
         let mut listen_addresses: Vec<RadarListenAddress> = Vec::new();
 
-        info!("Entering loop, listening for radars");
+        debug!("Entering loop, listening for radars");
         let mut interface_state = InterfaceState {
             args: self.radars.cli_args(),
             active_nic_addresses: Vec::new(),
@@ -196,7 +196,10 @@ impl Locator {
                 Err(RadarError::Shutdown)
             });
             set.spawn(async move {
-                sleep(Duration::from_millis(30000)).await;
+                if let Err(e) = util::wait_for_ip_addr_change().await {
+                    log::error!("Failed to wait for IP change: {e}");
+                    sleep(Duration::from_secs(30)).await;
+                }
                 Err(RadarError::Timeout)
             });
 
@@ -229,7 +232,7 @@ impl Locator {
                             Err(e) => {
                                 match e {
                                     RadarError::Shutdown => {
-                                        info!("Locator shutdown");
+                                        debug!("Locator shutdown");
                                         return Ok(());
                                     }
                                     RadarError::Timeout => {
@@ -304,11 +307,16 @@ fn create_listen_sockets(
 
     match NetworkInterface::show() {
         Ok(interfaces) => {
+            trace!("getifaddrs() dump {:#?}", interfaces);
             let mut sockets = Vec::new();
             for itf in interfaces {
                 let mut active: bool = false;
 
                 if only_interface.is_none() || only_interface.as_ref() == Some(&itf.name) {
+                    if util::is_wireless_interface(&itf.name) {
+                        trace!("Ignoring wireless interface '{}'", itf.name);
+                        continue;
+                    }
                     for nic_addr in itf.addr {
                         if let (IpAddr::V4(nic_ip), Some(IpAddr::V4(nic_netmask))) =
                             (nic_addr.ip(), nic_addr.netmask())
@@ -323,18 +331,15 @@ fn create_listen_sockets(
                                         .is_some()
                                     {
                                         info!(
-                                        "Interface '{}' became active or gained an IPv4 address, now listening on IP address {}/{} for radars",
-                                        itf.name,
-                                        &nic_ip,
-                                        nic_addr.netmask().unwrap()
-                                    );
+                                            "Searching for radars on interface '{}' address {} (added/modified)",
+                                            itf.name,
+                                            &nic_ip,
+                                        );
                                     } else {
                                         info!(
-                                        "Interface '{}' now listening on IP address {}/{} for radars",
-                                        itf.name,
-                                        &nic_ip,
-                                        &nic_netmask,
-                                    );
+                                            "Searching for radars on interface '{}' address {}",
+                                            itf.name, &nic_ip,
+                                        );
                                     }
                                     interface_state.active_nic_addresses.push(nic_ip.clone());
                                     interface_state.lost_nic_names.remove(&itf.name);
@@ -344,22 +349,6 @@ fn create_listen_sockets(
                                     if let SocketAddr::V4(listen_addr) =
                                         radar_listen_address.address
                                     {
-                                        log::trace!(
-                                            "addr {} is multicast: {}",
-                                            listen_addr.ip(),
-                                            listen_addr.ip().is_multicast()
-                                        );
-                                        log::trace!(
-                                            "match_ipv4({}, {}, {}) = {}",
-                                            nic_ip,
-                                            listen_addr.ip(),
-                                            nic_netmask,
-                                            util::match_ipv4(
-                                                &nic_ip,
-                                                listen_addr.ip(),
-                                                &nic_netmask,
-                                            )
-                                        );
                                         let socket = if !listen_addr.ip().is_multicast()
                                             && !util::match_ipv4(
                                                 &nic_ip,
@@ -367,7 +356,7 @@ fn create_listen_sockets(
                                                 &nic_netmask,
                                             ) {
                                             if only_interface.is_none() {
-                                                log::info!(
+                                                log::debug!(
                                                     "{}/{} does not match bcast {}",
                                                     nic_ip,
                                                     nic_netmask,
@@ -400,7 +389,7 @@ fn create_listen_sockets(
                                             }
                                         }
                                     } else {
-                                        warn!(
+                                        trace!(
                                             "Ignoring IPv6 address {:?}",
                                             &radar_listen_address.address
                                         );
@@ -425,7 +414,7 @@ fn create_listen_sockets(
                         .is_none()
                     {
                         if interface_state.first_loop {
-                            warn!("Interface '{}' does not have an IPv4 address", itf.name);
+                            trace!("Interface '{}' does not have an IPv4 address", itf.name);
                         } else {
                             warn!(
                                 "Interface '{}' became inactive or lost its IPv4 address",
@@ -445,6 +434,12 @@ fn create_listen_sockets(
                     interface_state.args.interface.clone().unwrap(),
                 ));
             }
+
+            log::trace!("lost_nic_names = {:?}", interface_state.lost_nic_names);
+            log::trace!(
+                "active_nic_addresses = {:?}",
+                interface_state.active_nic_addresses
+            );
             Ok(sockets)
         }
         Err(_) => Err(RadarError::EnumerationFailed),

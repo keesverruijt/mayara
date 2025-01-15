@@ -51,11 +51,6 @@ pub fn new() -> Controls {
         ),
     );
 
-    controls.insert(
-        ControlType::FirmwareVersion,
-        Control::new_string(ControlType::FirmwareVersion),
-    );
-
     let mut control = Control::new_list(
         ControlType::Status,
         &["Off", "Standby", "Transmit", "", "", "SpinningUp"],

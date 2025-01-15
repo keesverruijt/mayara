@@ -1,5 +1,13 @@
 // Various common functions
 
+use socket2::{Domain, Protocol, Type};
+use std::net::SocketAddrV4;
+use std::{
+    fmt, io,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+};
+use tokio::net::UdpSocket;
+
 pub fn c_string(bytes: &[u8]) -> Option<&str> {
     let bytes_without_null = match bytes.iter().position(|&b| b == 0) {
         Some(ix) => &bytes[..ix],
@@ -23,14 +31,6 @@ pub fn c_wide_string(bytes: &[u8]) -> String {
     }
     res
 }
-
-use socket2::{Domain, Protocol, Type};
-use std::net::SocketAddrV4;
-use std::{
-    fmt, io,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-};
-use tokio::net::UdpSocket;
 
 pub struct PrintableSlice<'a>(&'a [u8]);
 
@@ -136,7 +136,7 @@ fn bind_to_multicast(
 
     let socketaddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), addr.port());
     socket.bind(&socket2::SockAddr::from(socketaddr))?;
-    log::info!("Binding multicast socket to {}", socketaddr);
+    log::trace!("Binding multicast socket to {}", socketaddr);
 
     Ok(())
 }
@@ -173,7 +173,7 @@ fn bind_to_multicast(
 
     let socketaddr = SocketAddr::new(IpAddr::V4(*addr.ip()), addr.port());
     socket.bind(&socket2::SockAddr::from(socketaddr))?;
-    log::info!(
+    log::trace!(
         "Binding multicast socket to {} nic {}",
         socketaddr,
         nic_addr
@@ -197,7 +197,7 @@ fn bind_to_broadcast(
     let socketaddr = SocketAddr::new(IpAddr::V4(*nic_addr), addr.port());
 
     socket.bind(&socket2::SockAddr::from(socketaddr))?;
-    log::info!("Binding broadcast socket to {}", socketaddr);
+    log::trace!("Binding broadcast socket to {}", socketaddr);
     Ok(())
 }
 
@@ -212,7 +212,7 @@ fn bind_to_broadcast(
     let _ = nic_addr; // Not used on Linux
 
     socket.bind(&socket2::SockAddr::from(*addr))?;
-    log::info!("Binding broadcast socket to {}", *addr);
+    log::trace!("Binding broadcast socket to {}", *addr);
     Ok(())
 }
 
@@ -243,7 +243,7 @@ pub fn create_udp_listen(
         let socketaddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), addr.port());
 
         socket.bind(&socket2::SockAddr::from(socketaddr))?;
-        log::info!("Binding socket to {}", socketaddr);
+        log::trace!("Binding socket to {}", socketaddr);
     }
 
     let socket = UdpSocket::from_std(socket.into())?;
@@ -266,4 +266,122 @@ pub fn match_ipv4(addr: &Ipv4Addr, bcast: &Ipv4Addr, netmask: &Ipv4Addr) -> bool
     let r = addr & netmask;
     let b = bcast & netmask;
     r == b
+}
+
+#[cfg(target_os = "windows")]
+pub async fn wait_for_ip_addr_change() -> io::Result<()> {
+    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+}
+
+#[cfg(target_os = "macos")]
+pub async fn wait_for_ip_addr_change() -> io::Result<()> {
+    use libc::{RTM_DELADDR, RTM_IFINFO, RTM_NEWADDR};
+    use nix::sys::socket::MsgFlags;
+    use nix::sys::socket::{recv, socket, AddressFamily, SockFlag, SockType};
+    use std::io;
+    use std::os::unix::io::AsRawFd;
+    use tokio::io::unix::AsyncFd;
+
+    let sock = socket(AddressFamily::Route, SockType::Raw, SockFlag::empty(), None)?;
+
+    let async_sock = AsyncFd::new(sock)?;
+
+    let mut buf = vec![0u8; 4096];
+
+    'outer: loop {
+        // Receive messages from the socket
+        let count = loop {
+            let mut guard = async_sock.readable().await?;
+            match guard.try_io(|inner| {
+                recv(inner.as_raw_fd(), &mut buf, MsgFlags::MSG_DONTWAIT)
+                    .map_err(|e| io::Error::from_raw_os_error(e as i32))
+            }) {
+                Ok(result) => {
+                    break result?;
+                }
+                Err(_would_block) => {
+                    // try_io already cleared to file descriptor's readiness state
+                }
+            }
+        };
+
+        let mut offset = 0;
+        while offset < count {
+            // Parse the message header (assume a simple structure for example)
+            let hdr = unsafe { &*(buf.as_ptr().add(offset) as *const libc::rt_msghdr) };
+
+            match hdr.rtm_type as i32 {
+                RTM_NEWADDR => {
+                    log::debug!("New address added.");
+                    break 'outer;
+                }
+                RTM_DELADDR => {
+                    log::debug!("Address removed.");
+                    break 'outer;
+                }
+                RTM_IFINFO => {
+                    log::debug!("Interface information changed.");
+                    break 'outer;
+                }
+                _ => {}
+            }
+
+            offset += hdr.rtm_msglen as usize;
+        }
+    }
+    log::debug!("Found an IP address change");
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+pub async fn wait_for_ip_addr_change() {
+    // Create a NETLINK socket
+    let sock = socket(
+        AddressFamily::Netlink,
+        SockType::Raw,
+        SockFlag::empty(),
+        libc::NETLINK_ROUTE,
+    )?;
+
+    // Bind to the socket to listen for address changes
+    let addr = SockAddr::new_netlink(libc::getpid() as u32, 0);
+    bind(sock, &addr)?;
+
+    let mut buf = vec![0u8; 4096];
+
+    loop {
+        let size = recv(sock, &mut buf, 0)?;
+
+        let mut offset = 0;
+        while offset < size {
+            let hdr = unsafe { &*(buf.as_ptr().add(offset) as *const nlmsghdr) };
+
+            if hdr.nlmsg_type == RTM_NEWADDR {
+                println!("Detected a new address being added.");
+
+                let payload_ptr =
+                    unsafe { buf.as_ptr().add(offset + std::mem::size_of::<nlmsghdr>()) };
+                let payload_len = hdr.nlmsg_len as usize - std::mem::size_of::<nlmsghdr>();
+                let payload = unsafe { std::slice::from_raw_parts(payload_ptr, payload_len) };
+
+                // Further processing of the payload can be added here.
+                println!("Payload: {:?}", payload);
+            }
+
+            offset += hdr.nlmsg_len as usize;
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn is_wireless_interface(interface_name: &str) -> bool {
+    use system_configuration::dynamic_store::*;
+
+    let store = SCDynamicStoreBuilder::new("networkInterfaceInfo").build();
+
+    let key = format!("State:/Network/Interface/{}/AirPort", interface_name);
+    if let Some(_) = store.get(key.as_str()) {
+        return true;
+    }
+    false
 }

@@ -729,14 +729,15 @@ impl NavicoReportReceiver {
                         }
                         // this is just a response to the MFD sending 0x0a 0xc2,
                         // not sure what purpose it serves.
-                        return Ok(());
                     }
                     _ => {
-                        bail!("Unknown report 0x{:02x} 0xc6: {:02X?}", data[0], data);
+                        trace!("Unknown report 0x{:02x} 0xc6: {:02X?}", data[0], data);
                     }
                 }
+            } else {
+                trace!("Unknown report {:02X?} dropped", data)
             }
-            bail!("Unknown report {:02X?} dropped", data);
+            return Ok(());
         }
         let report_identification = data[0];
         match report_identification {
@@ -770,7 +771,7 @@ impl NavicoReportReceiver {
             _ => {
                 if !self.reported_unknown[report_identification as usize] {
                     self.reported_unknown[report_identification as usize] = true;
-                    bail!(
+                    trace!(
                         "Unknown report identification {} len {} data {:02X?} dropped",
                         report_identification,
                         data.len(),

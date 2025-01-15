@@ -20,6 +20,7 @@ bincode = "1.3.3"
 chrono = { version = "0.4.38", features = ["serde"] }
 clap = { version = "4.5.15", features = ["derive"] }
 clap-verbosity-flag = "2.2.1"
+core-foundation = "0.10.0"
 crossbeam = "0.8.4"
 directories = "5.0.1"
 enum-primitive-derive = "0.3.0"
@@ -32,6 +33,7 @@ log = "0.4.22"
 mdns-sd = "0.11.4"
 miette = { version = "7.2.0", features = ["fancy"] }
 network-interface = "2.0.0"
+nix = { version = "0.29.0", features = ["net", "socket"] }
 num-derive = "0.4.2"
 num-traits = "0.2.19"
 protobuf = "3.5.1"
@@ -41,6 +43,7 @@ serde_json = "1.0.125"
 serde_repr = "0.1.19"
 serde_with = { version = "3.9.0", features = ["macros"] }
 socket2 = "0.5.7"
+system-configuration = "0.6.1"
 terminal_size = "0.3.0"
 thiserror = "1.0.63"
 time = { version = "0.3.36", features = ["formatting"] }
