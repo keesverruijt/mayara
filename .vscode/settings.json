@@ -7,5 +7,11 @@
     "editor.defaultFormatter": "rust-lang.rust-analyzer",
     "[javascript]": {
         "editor.defaultFormatter": "esbenp.prettier-vscode"
-    }
+    },
+    "rust-targets.targets": [
+        "system",
+        "x86_64-pc-windows-gnu",
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-musl"
+    ]
 }

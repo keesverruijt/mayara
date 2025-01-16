@@ -277,44 +277,7 @@ pub async fn wait_for_ip_addr_change() -> io::Result<()> {
 pub(crate) use crate::network::macos::wait_for_ip_addr_change;
 
 #[cfg(target_os = "linux")]
-pub async fn wait_for_ip_addr_change() {
-    // Create a NETLINK socket
-    let sock = socket(
-        AddressFamily::Netlink,
-        SockType::Raw,
-        SockFlag::empty(),
-        libc::NETLINK_ROUTE,
-    )?;
-
-    // Bind to the socket to listen for address changes
-    let addr = SockAddr::new_netlink(libc::getpid() as u32, 0);
-    bind(sock, &addr)?;
-
-    let mut buf = vec![0u8; 4096];
-
-    loop {
-        let size = recv(sock, &mut buf, 0)?;
-
-        let mut offset = 0;
-        while offset < size {
-            let hdr = unsafe { &*(buf.as_ptr().add(offset) as *const nlmsghdr) };
-
-            if hdr.nlmsg_type == RTM_NEWADDR {
-                println!("Detected a new address being added.");
-
-                let payload_ptr =
-                    unsafe { buf.as_ptr().add(offset + std::mem::size_of::<nlmsghdr>()) };
-                let payload_len = hdr.nlmsg_len as usize - std::mem::size_of::<nlmsghdr>();
-                let payload = unsafe { std::slice::from_raw_parts(payload_ptr, payload_len) };
-
-                // Further processing of the payload can be added here.
-                println!("Payload: {:?}", payload);
-            }
-
-            offset += hdr.nlmsg_len as usize;
-        }
-    }
-}
+pub(crate) use crate::network::linux::wait_for_ip_addr_change;
 
 #[cfg(target_os = "macos")]
 pub fn is_wireless_interface(interface_name: &str) -> bool {
@@ -326,5 +289,15 @@ pub fn is_wireless_interface(interface_name: &str) -> bool {
     if let Some(_) = store.get(key.as_str()) {
         return true;
     }
+    false
+}
+
+#[cfg(target_os = "linux")]
+pub fn is_wireless_interface(_interface_name: &str) -> bool {
+    false
+}
+
+#[cfg(target_os = "windows")]
+pub fn is_wireless_interface(_interface_name: &str) -> bool {
     false
 }

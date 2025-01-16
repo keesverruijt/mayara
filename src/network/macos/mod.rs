@@ -8,10 +8,13 @@ use system_configuration::core_foundation::base::TCFType;
 use system_configuration::core_foundation::string::CFString;
 use system_configuration::dynamic_store::{SCDynamicStore, SCDynamicStoreBuilder};
 use system_configuration::sys::dynamic_store::SCDynamicStoreCreateRunLoopSource;
+use tokio_util::sync::CancellationToken;
 
 use crate::radar::RadarError;
 
-pub(crate) async fn wait_for_ip_addr_change() -> Result<(), RadarError> {
+pub(crate) async fn wait_for_ip_addr_change(
+    cancellation_token: CancellationToken,
+) -> Result<(), RadarError> {
     // Create a dynamic store session
     let store: SCDynamicStore = SCDynamicStoreBuilder::new("IPChangeMonitor").build();
 
@@ -46,29 +49,27 @@ pub(crate) async fn wait_for_ip_addr_change() -> Result<(), RadarError> {
     loop {
         match CFRunLoop::run_in_mode(
             unsafe { kCFRunLoopDefaultMode },
-            std::time::Duration::from_secs(1),
+            std::time::Duration::from_secs(2),
             true,
         ) {
             core_foundation::runloop::CFRunLoopRunResult::Finished => {
                 log::trace!("CFRunLoop finished.");
-                continue;
             }
             core_foundation::runloop::CFRunLoopRunResult::Stopped => {
                 log::trace!("CFRunLoop stopped.");
                 break;
             }
-            core_foundation::runloop::CFRunLoopRunResult::TimedOut => {
-                log::trace!("CFRunLoop timed out.");
-                continue;
-            }
+            core_foundation::runloop::CFRunLoopRunResult::TimedOut => {}
             core_foundation::runloop::CFRunLoopRunResult::HandledSource => {
                 log::trace!("CFRunLoop handled source.");
+                log::debug!("IP address changed.");
                 break;
             }
         }
+        if cancellation_token.is_cancelled() {
+            break;
+        }
     }
-
-    log::debug!("IP address changed.");
 
     // Stop the CFRunLoop from this thread
     unsafe {

@@ -175,6 +175,7 @@ impl Locator {
 
         loop {
             let cancellation_token = subsys.create_cancellation_token();
+            let child_token = cancellation_token.child_token();
 
             // create a list of sockets for all listen addresses
             let sockets = create_listen_sockets(&listen_addresses, &mut interface_state);
@@ -196,7 +197,7 @@ impl Locator {
                 Err(RadarError::Shutdown)
             });
             set.spawn(async move {
-                if let Err(e) = util::wait_for_ip_addr_change().await {
+                if let Err(e) = util::wait_for_ip_addr_change(child_token).await {
                     log::error!("Failed to wait for IP change: {e}");
                     sleep(Duration::from_secs(30)).await;
                 }
