@@ -274,64 +274,7 @@ pub async fn wait_for_ip_addr_change() -> io::Result<()> {
 }
 
 #[cfg(target_os = "macos")]
-pub async fn wait_for_ip_addr_change() -> io::Result<()> {
-    use libc::{RTM_DELADDR, RTM_IFINFO, RTM_NEWADDR};
-    use nix::sys::socket::MsgFlags;
-    use nix::sys::socket::{recv, socket, AddressFamily, SockFlag, SockType};
-    use std::io;
-    use std::os::unix::io::AsRawFd;
-    use tokio::io::unix::AsyncFd;
-
-    let sock = socket(AddressFamily::Route, SockType::Raw, SockFlag::empty(), None)?;
-
-    let async_sock = AsyncFd::new(sock)?;
-
-    let mut buf = vec![0u8; 4096];
-
-    'outer: loop {
-        // Receive messages from the socket
-        let count = loop {
-            let mut guard = async_sock.readable().await?;
-            match guard.try_io(|inner| {
-                recv(inner.as_raw_fd(), &mut buf, MsgFlags::MSG_DONTWAIT)
-                    .map_err(|e| io::Error::from_raw_os_error(e as i32))
-            }) {
-                Ok(result) => {
-                    break result?;
-                }
-                Err(_would_block) => {
-                    // try_io already cleared to file descriptor's readiness state
-                }
-            }
-        };
-
-        let mut offset = 0;
-        while offset < count {
-            // Parse the message header (assume a simple structure for example)
-            let hdr = unsafe { &*(buf.as_ptr().add(offset) as *const libc::rt_msghdr) };
-
-            match hdr.rtm_type as i32 {
-                RTM_NEWADDR => {
-                    log::debug!("New address added.");
-                    break 'outer;
-                }
-                RTM_DELADDR => {
-                    log::debug!("Address removed.");
-                    break 'outer;
-                }
-                RTM_IFINFO => {
-                    log::debug!("Interface information changed.");
-                    break 'outer;
-                }
-                _ => {}
-            }
-
-            offset += hdr.rtm_msglen as usize;
-        }
-    }
-    log::debug!("Found an IP address change");
-    Ok(())
-}
+pub(crate) use crate::network::macos::wait_for_ip_addr_change;
 
 #[cfg(target_os = "linux")]
 pub async fn wait_for_ip_addr_change() {

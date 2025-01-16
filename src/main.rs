@@ -26,6 +26,8 @@ mod signalk;
 mod util;
 mod web;
 
+mod network;
+
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Parser, Clone, Debug)]
