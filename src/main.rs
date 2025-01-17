@@ -58,6 +58,10 @@ pub struct Cli {
     /// Fake error mode, see below
     #[arg(long, default_value_t = false)]
     fake_errors: bool,
+
+    /// Allow wifi mode
+    #[arg(long, default_value_t = false)]
+    allow_wifi: bool,
 }
 
 #[tokio::main]
@@ -83,6 +87,10 @@ async fn main() -> Result<()> {
         warn!("Fake error mode activated, this does the following:");
         warn!(" * Any control operation on Rain Clutter beyond values 0..10 will fail");
         warn!(" * Failure for value 11..13 are all different");
+    }
+    if args.allow_wifi {
+        warn!("Allow WiFi mode activated, this does the following:");
+        warn!(" * Radars will be detected even on WiFi interfaces");
     }
     if args.output {
         warn!("Output mode activated; 'protobuf' formatted RadarMessage sent to stdout");

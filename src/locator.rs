@@ -305,6 +305,7 @@ fn create_listen_sockets(
     interface_state: &mut InterfaceState,
 ) -> Result<Vec<LocatorInfo>, RadarError> {
     let only_interface = &interface_state.args.interface;
+    let avoid_wifi = !interface_state.args.allow_wifi;
 
     match NetworkInterface::show() {
         Ok(interfaces) => {
@@ -314,7 +315,7 @@ fn create_listen_sockets(
                 let mut active: bool = false;
 
                 if only_interface.is_none() || only_interface.as_ref() == Some(&itf.name) {
-                    if util::is_wireless_interface(&itf.name) {
+                    if avoid_wifi && util::is_wireless_interface(&itf.name) {
                         trace!("Ignoring wireless interface '{}'", itf.name);
                         continue;
                     }
