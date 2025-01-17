@@ -24,6 +24,7 @@ crossbeam = "0.8.4"
 directories = "5.0.1"
 enum-primitive-derive = "0.3.0"
 env_logger = "0.11.5"
+futures = "0.3.31"
 futures-util = "0.3.31"
 headers = "0.4.0"
 hyper = "1.5.2"
@@ -56,8 +57,6 @@ system-configuration = "0.6.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 netlink-sys = { version = "0.8.4", features = ["tokio", "tokio_socket"] }
-netlink-packet-route = "0.21.0"
-netlink-packet-core = "0.7.0"
 rtnetlink = "0.14.1"
 
 [build-dependencies]

@@ -1,23 +1,41 @@
 use crate::radar::RadarError;
 
-use netlink_packet_core::{NetlinkMessage, NetlinkPayload};
-use netlink_packet_route::RouteNetlinkMessage;
-use netlink_sys::{constants::NETLINK_ROUTE, Socket, SocketAddr};
-use rtnetlink::constants::RTMGRP_IPV4_IFADDR;
-use tokio::io::unix::AsyncFd;
+use futures::stream::StreamExt;
+use libc::{RTM_DELADDR, RTM_NEWADDR};
+use netlink_sys::{AsyncSocket, SocketAddr};
+use rtnetlink::new_connection;
 use tokio_util::sync::CancellationToken;
+
+const RTNLGRP_IPV4_IFADDR: u32 = 5;
+
+const fn nl_mgrp(group: u32) -> u32 {
+    if group > 31 {
+        panic!("use netlink_sys::Socket::add_membership() for this group");
+    }
+    if group == 0 {
+        0
+    } else {
+        1 << (group - 1)
+    }
+}
 
 /// Waits asynchronously for an IPv4 address change on Linux.
 /// Completes when an address change is detected or the cancellation token is triggered.
 pub async fn wait_for_ip_addr_change(cancel_token: CancellationToken) -> Result<(), RadarError> {
-    // Create a netlink socket for routing events
-    let mut socket = Socket::new(NETLINK_ROUTE).map_err(|e| RadarError::Io(e))?;
+    let (mut conn, mut _handle, mut messages) = new_connection().map_err(|e| RadarError::Io(e))?;
 
-    let sockaddr_nl = SocketAddr::new(0, RTMGRP_IPV4_IFADDR);
-    socket.bind(&sockaddr_nl).map_err(|e| RadarError::Io(e))?;
+    // These flags specify what kinds of broadcast messages we want to listen
+    // for.
+    let groups = nl_mgrp(RTNLGRP_IPV4_IFADDR);
 
-    // Make the socket asynchronous
-    let async_socket = AsyncFd::new(socket)?;
+    let addr = SocketAddr::new(0, groups);
+    conn.socket_mut()
+        .socket_mut()
+        .bind(&addr)
+        .expect("Failed to bind");
+
+    // Spawn `Connection` to start polling netlink socket.
+    tokio::spawn(conn);
 
     log::trace!("Waiting for IP address change");
     loop {
@@ -29,44 +47,21 @@ pub async fn wait_for_ip_addr_change(cancel_token: CancellationToken) -> Result<
             }
 
             // Wait for messages on the socket
-            result = async_socket.readable() => {
-                let _ = result?; // Ensure readiness was successful
-
-                // Process the available data
-                let mut buf = vec![0; 4096];
-                match async_socket.get_ref().recv(&mut buf, 0) {
-                    Ok(len) => {
-                        buf.truncate(len);
-                        log::trace!("Received {} bytes", len);
-
-                        // Parse the netlink message
-                        if let Ok(message) = NetlinkMessage::<RouteNetlinkMessage>::deserialize(&buf) {
-                            match message.payload {
-                                NetlinkPayload::InnerMessage(RouteNetlinkMessage::NewAddress(_)) => {
-                                    // Detected a new IP address
-                                    log::trace!("Detected new IP address");
-                                    return Ok(());
-                                }
-                                NetlinkPayload::InnerMessage(RouteNetlinkMessage::DelAddress(_)) => {
-                                    // Detected a removed IP address
-                                    log::trace!("Detected removed IP address");
-                                    return Ok(());
-                                }
-                                _ => {
-                                    // Ignore other messages
-                                    log::trace!("Ignoring message: {:?}", message);
-                                }
-                            }
-                        } else {
-                            log::trace!("Failed to parse message");
-                        }
+            result = messages.next() => {
+                if let Some((message, _)) = result {
+                    if message.header.message_type == RTM_NEWADDR || message.header.message_type == RTM_DELADDR{
+                        log::trace!("Received IP address change");
+                        return Ok(());
                     }
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        continue; // No data to read, loop again
+                    else {
+                        log::trace!("Received message_type {}", message.header.message_type);
                     }
-                    Err(e) => {
-                        return Err(RadarError::Io(e));
-                    }
+                } else {
+                    log::error!("Failed to receive message");
+                    return Err(RadarError::Io(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "Failed to receive message",
+                    )));
                 }
             }
         }

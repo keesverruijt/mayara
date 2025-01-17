@@ -1381,6 +1381,7 @@ dependencies = [
  "directories",
  "enum-primitive-derive",
  "env_logger",
+ "futures",
  "futures-util",
  "headers",
  "hyper",
@@ -1388,8 +1389,6 @@ dependencies = [
  "log",
  "mdns-sd",
  "miette",
- "netlink-packet-core",
- "netlink-packet-route 0.21.0",
  "netlink-sys",
  "network-interface",
  "nix 0.29.0",
@@ -1529,21 +1528,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "74c171cd77b4ee8c7708da746ce392440cb7bcf618d122ec9ecc607b12938bf4"
 dependencies = [
  "anyhow",
- "byteorder",
- "libc",
- "log",
- "netlink-packet-core",
- "netlink-packet-utils",
-]
-
-[[package]]
-name = "netlink-packet-route"
-version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "483325d4bfef65699214858f097d504eb812c38ce7077d165f301ec406c3066e"
-dependencies = [
- "anyhow",
- "bitflags 2.8.0",
  "byteorder",
  "libc",
  "log",
@@ -2080,7 +2064,7 @@ dependencies = [
  "futures",
  "log",
  "netlink-packet-core",
- "netlink-packet-route 0.19.0",
+ "netlink-packet-route",
  "netlink-packet-utils",
  "netlink-proto",
  "netlink-sys",
