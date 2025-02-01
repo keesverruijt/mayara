@@ -268,16 +268,14 @@ pub fn match_ipv4(addr: &Ipv4Addr, bcast: &Ipv4Addr, netmask: &Ipv4Addr) -> bool
     r == b
 }
 
-#[cfg(target_os = "windows")]
-pub async fn wait_for_ip_addr_change() -> io::Result<()> {
-    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-}
-
 #[cfg(target_os = "macos")]
 pub(crate) use crate::network::macos::wait_for_ip_addr_change;
 
 #[cfg(target_os = "linux")]
 pub(crate) use crate::network::linux::wait_for_ip_addr_change;
+
+#[cfg(target_os = "windows")]
+pub(crate) use crate::network::windows::wait_for_ip_addr_change;
 
 #[cfg(target_os = "macos")]
 pub fn is_wireless_interface(interface_name: &str) -> bool {
@@ -330,5 +328,53 @@ pub fn is_wireless_interface(interface_name: &str) -> bool {
 
 #[cfg(target_os = "windows")]
 pub fn is_wireless_interface(_interface_name: &str) -> bool {
+    use std::ptr::null_mut;
+    use windows::Win32::NetworkManagement::IpHelper::IP_ADAPTER_ADDRESSES_LH;
+    use windows::Win32::NetworkManagement::IpHelper::{
+        GetAdaptersAddresses, GAA_FLAG_INCLUDE_ALL_INTERFACES,
+    };
+    use windows::Win32::NetworkManagement::Wifi::{
+        WlanCloseHandle, WlanEnumInterfaces, WlanFreeMemory, WlanOpenHandle,
+        WLAN_INTERFACE_INFO_LIST,
+    };
+    use windows::Win32::System::Diagnostics::Debug::ERROR_BUFFER_OVERFLOW;
+
+    unsafe {
+        // Open WLAN handle
+        let mut client_handle = null_mut();
+        let mut negotiated_version = 0;
+        let wlan_result =
+            WlanOpenHandle(2, null_mut(), &mut negotiated_version, &mut client_handle);
+
+        if wlan_result != 0 {
+            panic!("WlanOpenHandle failed with error: {}", wlan_result);
+        }
+
+        let mut interface_list: *mut WLAN_INTERFACE_INFO_LIST = null_mut();
+        let wlan_enum_result = WlanEnumInterfaces(client_handle, null_mut(), &mut interface_list);
+
+        if wlan_enum_result != 0 {
+            WlanCloseHandle(client_handle, null_mut());
+            panic!("WlanEnumInterfaces failed with error: {}", wlan_enum_result);
+        }
+
+        let interfaces = &*interface_list;
+
+        // Check each WLAN interface
+        for i in 0..interfaces.dwNumberOfItems {
+            let wlan_interface = &interfaces.InterfaceInfo[i as usize];
+            let wlan_interface_name =
+                String::from_utf16_lossy(&wlan_interface.strInterfaceDescription);
+            if wlan_interface_name.trim() == interface_name.trim() {
+                WlanFreeMemory(interface_list as _);
+                WlanCloseHandle(client_handle, null_mut());
+                return true;
+            }
+        }
+
+        WlanFreeMemory(interface_list as _);
+        WlanCloseHandle(client_handle, null_mut());
+    }
+
     false
 }
