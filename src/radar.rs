@@ -49,6 +49,8 @@ pub enum RadarError {
     NoSuchRadar(String),
     #[error("Cannot parse JSON '{0}'")]
     ParseJson(String),
+    #[error("OS error {0}")]
+    OSError(String),
 }
 
 // Tell axum how to convert `AppError` into a response.

@@ -13,11 +13,12 @@ use trail::TrailBuffer;
 
 use crate::locator::LocatorId;
 use crate::navico::NAVICO_SPOKE_LEN;
+use crate::network::create_udp_multicast_listen;
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::*;
 use crate::settings::ControlType;
-use crate::util::{create_udp_multicast_listen, PrintableSpoke};
+use crate::util::PrintableSpoke;
 
 use super::{
     DataUpdate, NAVICO_SPOKES, NAVICO_SPOKES_RAW, RADAR_LINE_DATA_LENGTH, SPOKES_PER_FRAME,

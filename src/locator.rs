@@ -23,7 +23,7 @@ use tokio::time::sleep;
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::radar::{RadarError, SharedRadars};
-use crate::{furuno, navico, raymarine, util, Cli};
+use crate::{furuno, navico, network, raymarine, Cli};
 
 const LOCATOR_PACKET_BUFFER_LEN: usize = 300; // Long enough for any location packet
 
@@ -197,9 +197,16 @@ impl Locator {
                 Err(RadarError::Shutdown)
             });
             set.spawn(async move {
-                if let Err(e) = util::wait_for_ip_addr_change(child_token).await {
-                    log::error!("Failed to wait for IP change: {e}");
-                    sleep(Duration::from_secs(30)).await;
+                if let Err(e) = network::wait_for_ip_addr_change(child_token).await {
+                    match e {
+                        RadarError::Shutdown => {
+                            return Err(RadarError::Shutdown);
+                        }
+                        _ => {
+                            log::error!("Failed to wait for IP change: {e}");
+                            sleep(Duration::from_secs(30)).await;
+                        }
+                    }
                 }
                 Err(RadarError::Timeout)
             });
@@ -315,7 +322,7 @@ fn create_listen_sockets(
                 let mut active: bool = false;
 
                 if only_interface.is_none() || only_interface.as_ref() == Some(&itf.name) {
-                    if avoid_wifi && util::is_wireless_interface(&itf.name) {
+                    if avoid_wifi && network::is_wireless_interface(&itf.name) {
                         trace!("Ignoring wireless interface '{}'", itf.name);
                         continue;
                     }
@@ -352,7 +359,7 @@ fn create_listen_sockets(
                                         radar_listen_address.address
                                     {
                                         let socket = if !listen_addr.ip().is_multicast()
-                                            && !util::match_ipv4(
+                                            && !network::match_ipv4(
                                                 &nic_ip,
                                                 listen_addr.ip(),
                                                 &nic_netmask,
@@ -366,9 +373,9 @@ fn create_listen_sockets(
                                                 );
                                                 continue;
                                             }
-                                            util::create_udp_listen(&listen_addr, &nic_ip, true)
+                                            network::create_udp_listen(&listen_addr, &nic_ip, true)
                                         } else {
-                                            util::create_udp_listen(&listen_addr, &nic_ip, false)
+                                            network::create_udp_listen(&listen_addr, &nic_ip, false)
                                         };
 
                                         match socket {

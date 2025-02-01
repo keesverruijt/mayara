@@ -12,10 +12,11 @@ use tokio_graceful_shutdown::SubsystemHandle;
 use trail::TrailBuffer;
 
 use crate::locator::{Locator, LocatorId};
+use crate::network::create_udp_multicast_listen;
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::*;
-use crate::util::{create_udp_multicast_listen, PrintableSpoke};
+use crate::util::PrintableSpoke;
 
 use super::{FURUNO_SPOKES, FURUNO_SPOKE_LEN};
 

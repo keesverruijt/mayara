@@ -3,9 +3,9 @@ use std::cmp::{max, min};
 use log::{debug, trace};
 use tokio::net::UdpSocket;
 
+use crate::network::create_multicast_send;
 use crate::radar::{RadarError, RadarInfo, SharedRadars};
 use crate::settings::{ControlType, ControlValue, Controls};
-use crate::util::create_multicast_send;
 
 use super::Model;
 

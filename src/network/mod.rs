@@ -1,3 +1,11 @@
+use socket2::{Domain, Protocol, Type};
+use std::net::SocketAddrV4;
+use std::{
+    io,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+};
+use tokio::net::UdpSocket;
+
 #[cfg(target_os = "linux")]
 pub(crate) mod linux;
 #[cfg(target_os = "macos")]
@@ -5,3 +13,174 @@ pub(crate) mod macos;
 
 #[cfg(target_os = "windows")]
 pub(crate) mod windows;
+
+// this will be common for all our sockets
+pub fn new_socket() -> io::Result<socket2::Socket> {
+    let socket = socket2::Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+
+    // we're going to use read timeouts so that we don't hang waiting for packets
+    socket.set_nonblocking(true)?;
+    socket.set_reuse_address(true)?;
+
+    Ok(socket)
+}
+
+/// On Windows, unlike all Unix variants, it is improper to bind to the multicast address
+///
+/// see https://msdn.microsoft.com/en-us/library/windows/desktop/ms737550(v=vs.85).aspx
+#[cfg(windows)]
+fn bind_to_multicast(
+    socket: &socket2::Socket,
+    addr: &SocketAddrV4,
+    nic_addr: &Ipv4Addr,
+) -> io::Result<()> {
+    socket.join_multicast_v4(addr.ip(), nic_addr)?;
+
+    let socketaddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), addr.port());
+    socket.bind(&socket2::SockAddr::from(socketaddr))?;
+    log::trace!("Binding multicast socket to {}", socketaddr);
+
+    Ok(())
+}
+
+/// On unixes we bind to the multicast address, which causes multicast packets to be filtered
+#[cfg(unix)]
+fn bind_to_multicast(
+    socket: &socket2::Socket,
+    addr: &SocketAddrV4,
+    nic_addr: &Ipv4Addr,
+) -> io::Result<()> {
+    // Linux is special, if we don't disable IP_MULTICAST_ALL the kernel forgets on
+    // which device the multicast packet arrived and sends it to all sockets.
+    #[cfg(target_os = "linux")]
+    {
+        use std::{io, mem, os::unix::io::AsRawFd};
+
+        unsafe {
+            let optval: libc::c_int = 0;
+            let ret = libc::setsockopt(
+                socket.as_raw_fd(),
+                libc::SOL_IP,
+                libc::IP_MULTICAST_ALL,
+                &optval as *const _ as *const libc::c_void,
+                mem::size_of_val(&optval) as libc::socklen_t,
+            );
+            if ret != 0 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+    }
+
+    socket.join_multicast_v4(addr.ip(), nic_addr)?;
+
+    let socketaddr = SocketAddr::new(IpAddr::V4(*addr.ip()), addr.port());
+    socket.bind(&socket2::SockAddr::from(socketaddr))?;
+    log::trace!(
+        "Binding multicast socket to {} nic {}",
+        socketaddr,
+        nic_addr
+    );
+
+    Ok(())
+}
+
+/// On Windows, unlike all Unix variants, it is improper to bind to the multicast address
+///
+/// see https://msdn.microsoft.com/en-us/library/windows/desktop/ms737550(v=vs.85).aspx
+#[cfg(windows)]
+fn bind_to_broadcast(
+    socket: &socket2::Socket,
+    addr: &SocketAddrV4,
+    nic_addr: &Ipv4Addr,
+) -> io::Result<()> {
+    let _ = socket.set_broadcast(true);
+    let _ = addr; // Not used on Windows
+
+    let socketaddr = SocketAddr::new(IpAddr::V4(*nic_addr), addr.port());
+
+    socket.bind(&socket2::SockAddr::from(socketaddr))?;
+    log::trace!("Binding broadcast socket to {}", socketaddr);
+    Ok(())
+}
+
+/// On unixes we bind to the multicast address, which causes multicast packets to be filtered
+#[cfg(unix)]
+fn bind_to_broadcast(
+    socket: &socket2::Socket,
+    addr: &SocketAddrV4,
+    nic_addr: &Ipv4Addr,
+) -> io::Result<()> {
+    let _ = socket.set_broadcast(true);
+    let _ = nic_addr; // Not used on Linux
+
+    socket.bind(&socket2::SockAddr::from(*addr))?;
+    log::trace!("Binding broadcast socket to {}", *addr);
+    Ok(())
+}
+
+pub fn create_udp_multicast_listen(
+    addr: &SocketAddrV4,
+    nic_addr: &Ipv4Addr,
+) -> io::Result<UdpSocket> {
+    let socket: socket2::Socket = new_socket()?;
+
+    bind_to_multicast(&socket, addr, nic_addr)?;
+
+    let socket = UdpSocket::from_std(socket.into())?;
+    Ok(socket)
+}
+
+pub fn create_udp_listen(
+    addr: &SocketAddrV4,
+    nic_addr: &Ipv4Addr,
+    no_broadcast: bool,
+) -> io::Result<UdpSocket> {
+    let socket: socket2::Socket = new_socket()?;
+
+    if addr.ip().is_multicast() {
+        bind_to_multicast(&socket, addr, nic_addr)?;
+    } else if !no_broadcast {
+        bind_to_broadcast(&socket, addr, nic_addr)?;
+    } else {
+        let socketaddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), addr.port());
+
+        socket.bind(&socket2::SockAddr::from(socketaddr))?;
+        log::trace!("Binding socket to {}", socketaddr);
+    }
+
+    let socket = UdpSocket::from_std(socket.into())?;
+    Ok(socket)
+}
+
+pub fn create_multicast_send(addr: &SocketAddrV4, nic_addr: &Ipv4Addr) -> io::Result<UdpSocket> {
+    let socket: socket2::Socket = new_socket()?;
+
+    let socketaddr = SocketAddr::new(IpAddr::V4(*addr.ip()), addr.port());
+    let socketaddr_nic = SocketAddr::new(IpAddr::V4(*nic_addr), addr.port());
+    socket.bind(&socket2::SockAddr::from(socketaddr_nic))?;
+    socket.connect(&socket2::SockAddr::from(socketaddr))?;
+
+    let socket = UdpSocket::from_std(socket.into())?;
+    Ok(socket)
+}
+
+pub fn match_ipv4(addr: &Ipv4Addr, bcast: &Ipv4Addr, netmask: &Ipv4Addr) -> bool {
+    let r = addr & netmask;
+    let b = bcast & netmask;
+    r == b
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) use macos::is_wireless_interface;
+#[cfg(target_os = "macos")]
+pub(crate) use macos::wait_for_ip_addr_change;
+
+#[cfg(target_os = "linux")]
+pub(crate) use linux::is_wireless_interface;
+#[cfg(target_os = "linux")]
+pub(crate) use linux::wait_for_ip_addr_change;
+
+#[cfg(target_os = "windows")]
+pub(crate) use windows::is_wireless_interface;
+#[cfg(target_os = "windows")]
+pub(crate) use windows::wait_for_ip_addr_change;
