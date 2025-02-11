@@ -41,6 +41,8 @@ pub enum RadarError {
     Timeout,
     #[error("Shutdown")]
     Shutdown,
+    #[error("{0}")]
+    ControlError(#[from] ControlError),
     #[error("Cannot set value for control '{0}'")]
     CannotSetControlType(ControlType),
     #[error("Missing value for control '{0}'")]
@@ -161,6 +163,47 @@ impl RangeDetection {
         }
     }
 }
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) struct GeoPosition {
+    lat: f64,
+    lon: f64,
+}
+
+impl GeoPosition {
+    pub(crate) fn new(lat: f64, lon: f64) -> Self {
+        GeoPosition { lat, lon }
+    }
+
+    pub(crate) fn lat(&self) -> f64 {
+        self.lat
+    }
+
+    pub(crate) fn lon(&self) -> f64 {
+        self.lon
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) struct RadarPosition {
+    pub(crate) position: GeoPosition,
+    pub(crate) heading: f64, // This is a true heading from North to the boat heading
+}
+
+impl RadarPosition {
+    pub(crate) fn new(position: GeoPosition, heading: f64) -> Self {
+        RadarPosition { position, heading }
+    }
+
+    pub(crate) fn position(&self) -> GeoPosition {
+        self.position
+    }
+
+    pub(crate) fn heading(&self) -> f64 {
+        self.heading
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct RadarInfo {
     key: String,
@@ -574,6 +617,22 @@ impl RadarInfo {
 
     pub fn model_name(&self) -> Option<String> {
         self.controls.model_name()
+    }
+
+    pub async fn send_error_to_controller(
+        &mut self,
+        reply_tx: &tokio::sync::mpsc::Sender<ControlValue>,
+        cv: &ControlValue,
+        e: RadarError,
+    ) -> Result<(), RadarError> {
+        if let Some(control) = self.controls.get(&cv.id) {
+            self.send_json(reply_tx.clone(), control, Some(e.to_string()))
+                .await?;
+            log::warn!("User tried to set invalid {}: {}", cv.id, e);
+            Ok(())
+        } else {
+            Err(RadarError::CannotSetControlType(cv.id))
+        }
     }
 }
 

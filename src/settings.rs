@@ -1,3 +1,4 @@
+use core::error;
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::FromPrimitive;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -47,19 +48,29 @@ impl Controls {
     pub fn new_base(mut controls: HashMap<ControlType, Control>) -> Self {
         // Add controls that are not radar dependent
 
-        let descriptions = HashMap::from([
-            (0, "Off".to_string()),
-            (1, "15s".to_string()),
-            (2, "30s".to_string()),
-            (3, "1 min".to_string()),
-            (4, "3 min".to_string()),
-            (5, "5 min".to_string()),
-            (6, "10 min".to_string()),
-        ]);
+        controls.insert(
+            ControlType::TargetTrails,
+            Control::new_map(
+                ControlType::TargetTrails,
+                HashMap::from([
+                    (0, "Off".to_string()),
+                    (1, "15s".to_string()),
+                    (2, "30s".to_string()),
+                    (3, "1 min".to_string()),
+                    (4, "3 min".to_string()),
+                    (5, "5 min".to_string()),
+                    (6, "10 min".to_string()),
+                ]),
+            ),
+        );
 
-        let control = Control::new_map(ControlType::TargetTrails, descriptions);
-
-        controls.insert(ControlType::TargetTrails, control);
+        controls.insert(
+            ControlType::TrailsMotion,
+            Control::new_map(
+                ControlType::TrailsMotion,
+                HashMap::from([(0, "Relative".to_string()), (1, "True".to_string())]),
+            ),
+        );
 
         controls.insert(
             ControlType::ClearTrails,
@@ -375,6 +386,8 @@ impl Control {
                     } else {
                         if v % 1852 == 0 {
                             format!("{} nm", v / 1852)
+                        } else if *v >= 1852 && v % 1852 == 1852 / 2 {
+                            format!("{},5 nm", v / 1852)
                         } else {
                             match v {
                                 57 => "1/32 nm",
@@ -387,8 +400,6 @@ impl Control {
                                 1157 => "5/8 nm",
                                 1389 => "3/4 nm",
                                 2315 => "1,25 nm",
-                                2778 => "1,5 nm",
-                                4630 => "2,5 nm",
                                 _ => "",
                             }
                             .to_string()
@@ -652,6 +663,7 @@ pub enum ControlType {
     // Client Only, not here: Position,
     // Client Only, not here: Symbology,
     TargetTrails,
+    TrailsMotion,
     DopplerTrailsOnly,
     ClearTrails,
     // TimedIdle,
@@ -664,7 +676,6 @@ pub enum ControlType {
     LocalInterferenceRejection,
     ScanSpeed,
     SideLobeSuppression,
-    // TrailsMotion,
     // TuneCoarse,
     // TuneFine,
     // ColorGain,
@@ -748,7 +759,7 @@ impl Display for ControlType {
             ControlType::TargetTrails => "Target trails",
             // ControlType::TimedIdle => "Time idle",
             // ControlType::TimedRun => "Timed run",
-            // ControlType::TrailsMotion => "Target trails motion",
+            ControlType::TrailsMotion => "Target trails motion",
             // ControlType::TuneCoarse => "Coarse tune",
             // ControlType::TuneFine => "Fine tune",
             ControlType::UserName => "Custom name",
@@ -770,6 +781,10 @@ pub enum ControlError {
     Invalid(ControlType, String),
     #[error("Control {0} does not support Auto")]
     NoAuto(ControlType),
+    #[error("Control {0} value {1} requires true heading input")]
+    NoHeading(ControlType, i32),
+    #[error("Control {0} value {1} requires a GNSS position")]
+    NoPosition(ControlType, i32),
 }
 
 pub fn deserialize_number_from_string<'de, T, D>(deserializer: D) -> Result<T, D::Error>

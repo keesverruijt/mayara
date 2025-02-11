@@ -129,6 +129,7 @@ class TemporaryMessage {
 
   raise(aMessage) {
     this.element.style.visibility = "visible";
+    this.element.classList.remove("myr_vanish");
     this.element.innerHTML = aMessage;
     this.timeoutId = setTimeout(() => {
       this.cancel();
@@ -139,7 +140,7 @@ class TemporaryMessage {
     if (typeof this.timeoutId === "number") {
       clearTimeout(this.timeoutId);
     }
-    this.element.style.visibility = "hidden";
+    this.element.classList.add("myr_vanish");
   }
 }
 

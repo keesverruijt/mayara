@@ -124,7 +124,6 @@ pub struct NavicoDataReceiver {
     pixel_to_blob: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH],
     replay: bool,
     trails: TrailBuffer,
-    previous_range: u32,
 }
 
 impl NavicoDataReceiver {
@@ -151,7 +150,6 @@ impl NavicoDataReceiver {
             pixel_to_blob,
             replay,
             trails,
-            previous_range: 0,
         }
     }
 
@@ -210,7 +208,8 @@ impl NavicoDataReceiver {
         lookup
     }
 
-    fn handle_data_update(&mut self, r: Option<DataUpdate>) {
+    async fn handle_data_update(&mut self, r: Option<DataUpdate>) -> Result<(), RadarError> {
+        log::info!("Received data update: {:?}", r);
         match r {
             Some(DataUpdate::Doppler(doppler)) => {
                 self.doppler = doppler;
@@ -219,22 +218,38 @@ impl NavicoDataReceiver {
                 self.pixel_to_blob = Self::pixel_to_blob(&legend);
                 self.info.legend = legend;
             }
-            Some(DataUpdate::ControlValue(cv)) => match cv.id {
-                ControlType::ClearTrails => {
-                    self.trails.clear();
-                }
-                ControlType::DopplerTrailsOnly => {
-                    let value = cv.value.parse::<u16>().unwrap_or(0) > 0;
-                    self.trails.set_doppler_trail_only(value);
-                }
-                ControlType::TargetTrails => {
-                    let value = cv.value.parse::<u16>().unwrap_or(0);
-                    self.trails.set_relative_trails_length(value);
-                }
-                _ => {}
-            },
+            Some(DataUpdate::ControlValue(reply_tx, cv)) => {
+                match cv.id {
+                    ControlType::ClearTrails => {
+                        self.trails.clear();
+                    }
+                    ControlType::DopplerTrailsOnly => {
+                        let value = cv.value.parse::<u16>().unwrap_or(0) > 0;
+                        self.trails.set_doppler_trail_only(value);
+                    }
+                    ControlType::TargetTrails => {
+                        let value = cv.value.parse::<u16>().unwrap_or(0);
+                        self.trails.set_relative_trails_length(value);
+                    }
+                    ControlType::TrailsMotion => {
+                        let value = cv.value.parse::<u16>().map(|x| x > 0).ok();
+                        if let Err(e) = self.trails.set_trails_mode(value) {
+                            return self
+                                .info
+                                .send_error_to_controller(
+                                    &reply_tx,
+                                    &cv,
+                                    RadarError::ControlError(e),
+                                )
+                                .await;
+                        }
+                    }
+                    _ => {}
+                };
+            }
             None => {}
         }
+        Ok(())
     }
 
     async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
@@ -246,7 +261,7 @@ impl NavicoDataReceiver {
                     return Err(RadarError::Shutdown);
                 },
                 r = self.rx.recv() => {
-                  self.handle_data_update(r);
+                  self.handle_data_update(r).await?;
                 },
                 r = self.sock.as_ref().unwrap().recv_buf_from(&mut buf)  => {
                     match r {
@@ -485,14 +500,6 @@ impl NavicoDataReceiver {
             generic_spoke.len()
         );
 
-        if range != self.previous_range && range != 0 {
-            if self.previous_range != 0 {
-                let zoom_factor = self.previous_range as f64 / range as f64;
-                self.trails.zoom_relative_trails(zoom_factor);
-            }
-            self.previous_range = range;
-        }
-
         // For now, don't send heading in replay mode, signalk-radar-client doesn't
         // handle it well yet.
         let heading = if self.replay {
@@ -508,7 +515,7 @@ impl NavicoDataReceiver {
         };
 
         self.trails
-            .update_relative_trails(angle, &mut generic_spoke);
+            .update_trails(range, heading.map(|x| x as u16), angle, &mut generic_spoke);
 
         let mut message: RadarMessage = RadarMessage::new();
         message.radar = self.info.id as u32;
@@ -516,6 +523,7 @@ impl NavicoDataReceiver {
         spoke.range = range;
         spoke.angle = angle as u32;
         spoke.bearing = heading;
+
         (spoke.lat, spoke.lon) = crate::signalk::get_position_i64();
         spoke.time = SystemTime::now()
             .duration_since(UNIX_EPOCH)

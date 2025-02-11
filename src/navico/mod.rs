@@ -39,10 +39,11 @@ const NAVICO_BEACON_ADDRESS: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(236, 6, 7, 5)), 6878);
 
 // Messages sent to Data receiver
+#[derive(Debug)]
 pub enum DataUpdate {
     Doppler(DopplerMode),
     Legend(Legend),
-    ControlValue(ControlValue),
+    ControlValue(mpsc::Sender<ControlValue>, ControlValue),
 }
 
 #[derive(Deserialize, Debug, Copy, Clone)]

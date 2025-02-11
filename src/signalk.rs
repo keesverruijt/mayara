@@ -15,7 +15,10 @@ use tokio::io::{AsyncBufReadExt, BufWriter};
 use tokio::{io::AsyncWriteExt, net::TcpStream};
 use tokio_graceful_shutdown::SubsystemHandle;
 
-use crate::{radar::RadarError, Cli};
+use crate::{
+    radar::{GeoPosition, RadarError, RadarPosition},
+    Cli,
+};
 
 /// The hostname of the devices we are searching for.
 /// Every Chromecast will respond to the service name in this example.
@@ -37,6 +40,15 @@ pub(crate) fn get_heading_true() -> Option<f64> {
     return None;
 }
 
+pub(crate) fn get_radar_position() -> Option<GeoPosition> {
+    if POSITION_VALID.load(Ordering::Acquire) {
+        let lat = POSITION_LAT.load(Ordering::Acquire);
+        let lon = POSITION_LON.load(Ordering::Acquire);
+        return Some(GeoPosition::new(lat, lon));
+    }
+    return None;
+}
+
 pub(crate) fn get_position_i64() -> (Option<i64>, Option<i64>) {
     if POSITION_VALID.load(Ordering::Acquire) {
         let lat = POSITION_LAT.load(Ordering::Acquire);
@@ -47,6 +59,7 @@ pub(crate) fn get_position_i64() -> (Option<i64>, Option<i64>) {
     }
     return (None, None);
 }
+
 pub(crate) struct NavigationData {
     args: Cli,
 }

@@ -404,8 +404,11 @@ impl NavicoReportReceiver {
                     }
                     ControlType::TargetTrails
                     | ControlType::ClearTrails
-                    | ControlType::DopplerTrailsOnly => {
-                        self.pass_to_data_receiver(cv).await?;
+                    | ControlType::DopplerTrailsOnly
+                    | ControlType::TrailsMotion => {
+                        if let Err(e) = self.pass_to_data_receiver(reply_tx, cv).await {
+                            return self.info.send_error_to_controller(reply_tx, cv, e).await;
+                        }
                         return Ok(());
                     }
                     _ => {} // rest is numeric
@@ -416,14 +419,7 @@ impl NavicoReportReceiver {
                     .set_control(cv, &self.info.controls)
                     .await
                 {
-                    // Find our current control value for this ControlType
-                    if let Some(control) = self.info.controls.get(&cv.id) {
-                        self.info
-                            .send_json(reply_tx.clone(), control, Some(e.to_string()))
-                            .await?;
-                    } else {
-                        log::error!("Cannot send control error back: {e}");
-                    }
+                    return self.info.send_error_to_controller(reply_tx, cv, e).await;
                 } else {
                     self.info.set_refresh(&cv.id);
                 }
@@ -437,17 +433,21 @@ impl NavicoReportReceiver {
         Ok(())
     }
 
-    async fn pass_to_data_receiver(&mut self, cv: &ControlValue) -> Result<(), RadarError> {
+    async fn pass_to_data_receiver(
+        &mut self,
+        reply_tx: &Sender<ControlValue>,
+        cv: &ControlValue,
+    ) -> Result<(), RadarError> {
         let value = cv.value.parse::<f32>().unwrap_or(0.);
-        if self.info.set(&cv.id, value, cv.auto).is_err() {
+        if let Err(e) = self.info.set(&cv.id, value, cv.auto) {
             log::warn!("Cannot set {} to {}", cv.id, value);
+            return Err(RadarError::ControlError(e));
         }
 
         self.data_tx
-            .send(DataUpdate::ControlValue(cv.clone()))
+            .send(DataUpdate::ControlValue(reply_tx.clone(), cv.clone()))
             .await
-            .map_err(|_| RadarError::CannotSetControlType(cv.id))?;
-        Ok(())
+            .map_err(|_| RadarError::CannotSetControlType(cv.id))
     }
 
     async fn send_report_requests(&mut self) -> Result<(), RadarError> {

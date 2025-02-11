@@ -1,34 +1,81 @@
-use super::{Legend, SpokeBearing, BLOB_HISTORY_COLORS};
+use cartesian::PolarToCartesianLookup;
+use ndarray::{s, Array2};
 
-const MARGIN: usize = 100;
+mod cartesian;
+use crate::radar::trail::cartesian::PointInt;
+use crate::radar::{GeoPosition, Legend, SpokeBearing, BLOB_HISTORY_COLORS};
+use crate::settings::{ControlError, ControlType};
+
+const MARGIN_I16: i16 = 100;
+const MARGIN_USIZE: usize = MARGIN_I16 as usize;
+
+struct GeoPositionPixels {
+    lat: i16,
+    lon: i16,
+}
 
 pub struct TrailBuffer {
     legend: Legend,
     spokes: usize,
     max_spoke_len: usize,
-    trail_size: usize,
-    true_trails: Vec<u8>,
-    relative_trails: Vec<u16>,
+    trail_size: i16,
+    motion_true: Option<bool>,
+    position: GeoPosition,
+    position_difference: GeoPosition, // Fraction of a pixel expressed in lat/lon for True Motion Target Trails
+    position_offset: GeoPositionPixels, // Offset of the trails image in pixels
+    cartesian_lookup: PolarToCartesianLookup,
+    true_trails: Box<Array2<u8>>,
+    true_trails_offset: PointInt,
+    relative_trails: Box<Vec<u16>>,
     trail_length_ms: u32,
     rotation_speed_ms: u32,
     minimal_legend_value: u8,
+    previous_range: u32,
+    pixels_per_meter: f64,
+    have_heading: bool,
 }
 
 impl TrailBuffer {
     pub fn new(legend: Legend, spokes: usize, max_spoke_len: usize) -> Self {
         let minimal_legend_value = legend.strong_return;
-        let trail_size = max_spoke_len * 2 + MARGIN * 2;
+        let trail_size: i16 = (max_spoke_len as i16 * 2 + MARGIN_I16 * 2) as i16;
+        let cartesian_lookup = PolarToCartesianLookup::new(spokes, max_spoke_len);
         TrailBuffer {
             legend,
             spokes,
             max_spoke_len,
             trail_size,
-            true_trails: vec![0; trail_size * trail_size],
-            relative_trails: vec![0; spokes * max_spoke_len],
+            motion_true: None,
+            position: GeoPosition::new(0., 0.),
+            position_difference: GeoPosition { lat: 0., lon: 0. },
+            position_offset: GeoPositionPixels { lat: 0, lon: 0 },
+            cartesian_lookup,
+            true_trails: Box::new(Array2::<u8>::zeros((
+                trail_size as usize,
+                trail_size as usize,
+            ))),
+            true_trails_offset: PointInt { x: 0, y: 0 },
+            relative_trails: Box::new(vec![0; spokes * max_spoke_len]),
             trail_length_ms: 0,
             rotation_speed_ms: 0,
             minimal_legend_value,
+            previous_range: 0,
+            pixels_per_meter: 0.0,
+            have_heading: false,
         }
+    }
+
+    pub fn set_trails_mode(&mut self, value: Option<bool>) -> Result<(), ControlError> {
+        if value == Some(true) {
+            if !self.have_heading {
+                return Err(ControlError::NoHeading(ControlType::TrailsMotion, 1));
+            }
+            if crate::signalk::get_radar_position().is_none() {
+                return Err(ControlError::NoPosition(ControlType::TrailsMotion, 1));
+            }
+        }
+        self.motion_true = value;
+        Ok(())
     }
 
     pub fn set_relative_trails_length(&mut self, control_value: u16) {
@@ -48,6 +95,341 @@ impl TrailBuffer {
         self.rotation_speed_ms = ms;
     }
 
+    pub fn update_trails(
+        &mut self,
+        range: u32,
+        heading: Option<SpokeBearing>,
+        bearing: SpokeBearing,
+        data: &mut Vec<u8>,
+    ) {
+        if range != self.previous_range && range != 0 {
+            if self.previous_range != 0 {
+                let zoom_factor = self.previous_range as f64 / range as f64;
+                self.zoom_relative_trails(zoom_factor);
+            }
+            self.previous_range = range;
+        }
+
+        if let Some(heading) = heading {
+            self.have_heading = true;
+            self.update_true_trails(range, heading, data);
+        } else {
+            self.have_heading = false;
+        }
+
+        self.update_relative_trails(bearing, data);
+    }
+
+    fn update_true_trails(&mut self, range: u32, bearing: SpokeBearing, data: &mut Vec<u8>) {
+        if self.trail_length_ms == 0 || self.rotation_speed_ms == 0 {
+            return;
+        }
+
+        self.update_trail_position(range, data.len());
+
+        let max_trail_value = (self.trail_length_ms / self.rotation_speed_ms) as u8;
+
+        let mut radius = 0;
+
+        while radius < data.len() - 1 {
+            //  len - 1 : no trails on range circle
+            let mut point = self
+                .cartesian_lookup
+                .get_point_int(bearing as usize, radius)
+                .clone();
+
+            point.x += self.trail_size / 2 + self.true_trails_offset.x;
+            point.y += self.trail_size / 2 + self.true_trails_offset.y;
+
+            if point.x >= 0
+                && point.x < self.trail_size
+                && point.y >= 0
+                && point.y < self.trail_size
+            {
+                let trail = &mut self.true_trails[[point.x as usize, point.y as usize]];
+                // when ship moves north, offset.lat > 0. Add to move trails image in opposite direction
+                // when ship moves east, offset.lon > 0. Add to move trails image in opposite direction
+                if data[radius] >= self.minimal_legend_value
+                    && data[radius] < self.legend.history_start
+                {
+                    *trail = 1;
+                } else if *trail > 0 {
+                    *trail = trail.wrapping_add(1); // Yes, we want overflow here after 65535 rotations
+                }
+
+                let trail = *trail as u8;
+                if self.motion_true.unwrap_or(false)
+                    && data[radius] == 0
+                    && trail > 0
+                    && trail < max_trail_value
+                {
+                    let mut index: u8 = (trail * BLOB_HISTORY_COLORS / max_trail_value) as u8;
+                    if index >= BLOB_HISTORY_COLORS {
+                        index = BLOB_HISTORY_COLORS;
+                    }
+                    if index < 1 {
+                        index = 1;
+                    }
+
+                    data[radius] = self.legend.history_start + index - 1;
+                }
+                radius += 1;
+            }
+        }
+    }
+
+    fn update_trail_position(&mut self, range: u32, data_length: usize) {
+        // When position changes the trail image is not moved, only the pointer to the center
+        // of the image (offset) is changed.
+        // So we move the image around within the m_trails.true_trails buffer (by moving the pointer).
+        // But when there is no room anymore (margin used) the whole trails image is shifted
+        // and the offset is reset
+        if self.position_offset.lon >= MARGIN_I16
+            || self.position_offset.lon <= -MARGIN_I16
+            || self.position_offset.lat >= MARGIN_I16
+            || self.position_offset.lat <= -MARGIN_I16
+        {
+            log::debug!(
+                "offset lat {} / lon {} larger than {}",
+                self.position_offset.lat,
+                self.position_offset.lon,
+                MARGIN_I16
+            );
+            self.clear();
+            return;
+        }
+
+        let pixels_per_meter: f64 = data_length as f64 / range as f64;
+
+        if self.pixels_per_meter != pixels_per_meter {
+            log::debug!(
+                " %s detected spoke range change from {} to {} pixels/m, {} meters",
+                self.pixels_per_meter,
+                pixels_per_meter,
+                range
+            );
+            self.pixels_per_meter = pixels_per_meter;
+        }
+
+        // zooming of trails required? First check conditions
+        if self.pixels_per_meter == 0. || pixels_per_meter == 0. {
+            self.clear();
+            if pixels_per_meter == 0. {
+                return;
+            }
+            self.pixels_per_meter = pixels_per_meter;
+        } else if self.pixels_per_meter != pixels_per_meter && self.pixels_per_meter != 0. {
+            // zoom trails
+            let zoom_factor = pixels_per_meter / self.pixels_per_meter;
+
+            if zoom_factor < 0.25 || zoom_factor > 4.00 {
+                self.clear();
+                return;
+            }
+            self.pixels_per_meter = pixels_per_meter;
+            // center the image before zooming
+            // otherwise the offset might get too large
+            self.shift_image_lat_to_center();
+            self.shift_image_lon_to_center();
+            self.zoom_true_trails(zoom_factor);
+        }
+
+        if let Some(position) = crate::signalk::get_radar_position() {
+            // Did the ship move? No, return.
+            if self.position == position {
+                return;
+            }
+            // Check the movement of the ship
+            let dif_lat = position.lat - self.position.lat; // going north is positive
+            let dif_lon = position.lon - self.position.lon; // moving east is positive
+
+            self.position = position;
+            // get (floating point) shift of the ship in radar pixels
+            let fshift_lat = dif_lat * 60. * 1852. * pixels_per_meter;
+            let mut fshift_lon = dif_lon * 60. * 1852. * pixels_per_meter;
+            fshift_lon *= position.lat.to_radians().cos(); // at higher latitudes a degree of longitude is fewer meters
+                                                           // Get the integer pixel shift, first add previous rounding error
+            let shift = GeoPositionPixels {
+                lat: (fshift_lat + self.position_difference.lat) as i16,
+                lon: (fshift_lon + self.position_difference.lon) as i16,
+            };
+
+            // save the rounding fraction and apply it next time
+            self.position_difference.lat =
+                fshift_lat + self.position_difference.lat - shift.lat as f64;
+            self.position_difference.lon =
+                fshift_lon + self.position_difference.lon - shift.lon as f64;
+
+            if shift.lat >= MARGIN_I16
+                || shift.lat <= -MARGIN_I16
+                || shift.lon >= MARGIN_I16
+                || shift.lon <= -MARGIN_I16
+            {
+                // huge shift, reset trails
+
+                log::debug!(
+                    "Large movement trails reset, lat {} / {}",
+                    shift.lat,
+                    shift.lon
+                );
+                self.clear();
+                return;
+            }
+
+            // offset lon too large: shift image
+            if (self.position_offset.lon + shift.lon).abs() >= MARGIN_I16 {
+                self.shift_image_lon_to_center();
+            }
+
+            // offset lat too large: shift image in lat direction
+            if (self.position_offset.lat + shift.lat).abs() >= MARGIN_I16 {
+                self.shift_image_lat_to_center();
+            }
+            // apply the shifts to the offset
+            self.position_offset.lat += shift.lat;
+            self.position_offset.lon += shift.lon;
+        }
+    }
+
+    // shifts the true trails image in lat direction to center
+    fn shift_image_lat_to_center(&mut self) {
+        if self.position_offset.lat >= MARGIN_I16 || self.position_offset.lat <= -MARGIN_I16 {
+            // abs not ok
+            log::debug!("offset lat too large {}", self.position_offset.lat);
+            self.clear();
+            return;
+        }
+
+        let n = self.position_offset.lat;
+
+        let (to_start, to_end, from_start, from_end, zero_start, zero_end) = if n > 0 {
+            let n = n as usize;
+            (
+                0 as usize,
+                self.true_trails.nrows() - n,
+                n,
+                self.true_trails.nrows(),
+                self.true_trails.nrows() - n,
+                n,
+            )
+        } else {
+            let n = -n as usize;
+            (
+                n,
+                self.true_trails.nrows(),
+                0 as usize,
+                self.true_trails.nrows() - n,
+                0,
+                n,
+            )
+        };
+
+        let from_slice = self
+            .true_trails
+            .slice(s![from_start..from_end, ..])
+            .to_owned();
+        let mut to_slice = self.true_trails.slice_mut(s![to_start..to_end, ..]);
+        to_slice.assign(&from_slice);
+
+        // Fill the remaining rows with zeros using slices
+        let mut zero_slice = self.true_trails.slice_mut(s![zero_start..zero_end, ..]);
+        zero_slice.fill(0);
+        self.position_offset.lat = 0;
+    }
+
+    // shifts the true trails image in lon direction to center
+    fn shift_image_lon_to_center(&mut self) {
+        if self.position_offset.lon >= MARGIN_I16 || self.position_offset.lon <= -MARGIN_I16 {
+            // abs no good
+            log::debug!("offset lon too large {}", self.position_offset.lon);
+            self.clear();
+            return;
+        }
+
+        let n = self.position_offset.lon;
+
+        let (to_start, to_end, from_start, from_end, zero_start, zero_end) = if n > 0 {
+            let n = n as usize;
+            (
+                0 as usize,
+                self.true_trails.ncols() - n,
+                n,
+                self.true_trails.ncols(),
+                self.true_trails.ncols() - n,
+                n,
+            )
+        } else {
+            let n = -n as usize;
+            (
+                n,
+                self.true_trails.ncols(),
+                0 as usize,
+                self.true_trails.ncols() - n,
+                0,
+                n,
+            )
+        };
+
+        let from_slice = self
+            .true_trails
+            .slice(s![.., from_start..from_end])
+            .to_owned();
+        let mut to_slice = self.true_trails.slice_mut(s![.., to_start..to_end]);
+        to_slice.assign(&from_slice);
+
+        // Fill the remaining rows with zeros using slices
+        let mut zero_slice = self.true_trails.slice_mut(s![.., zero_start..zero_end]);
+        zero_slice.fill(0);
+        self.position_offset.lon = 0;
+    }
+
+    // Zooms the trailbuffer (containing image of true trails) in and out
+    // This version assumes m_offset.lon and m_offset.lat to be zero (earlier versions did zoom offset as well)
+    // zoom_factor > 1 -> zoom in, enlarge image
+    fn zoom_true_trails(&mut self, zoom_factor: f64) {
+        let trail_size = self.trail_size as usize;
+        let mut new_trails = Box::new(Array2::<u8>::zeros((trail_size, trail_size)));
+
+        // zoom true trails
+        for i in MARGIN_USIZE..trail_size - MARGIN_USIZE {
+            let index_i = ((i - trail_size / 2) as f64 * zoom_factor) as i16 + self.trail_size / 2;
+            if index_i >= self.trail_size - 1 {
+                // allow adding an additional pixel later
+                break;
+            }
+            if index_i < 0 {
+                continue;
+            }
+            for j in MARGIN_USIZE..trail_size - MARGIN_USIZE {
+                let index_j: i16 =
+                    ((j - trail_size / 2) as f64 * zoom_factor) as i16 + self.trail_size / 2;
+                if index_j >= self.trail_size - 1 {
+                    break;
+                }
+                if index_j < 0 {
+                    continue;
+                }
+                let pixel = self.true_trails[[i, j]];
+                if pixel != 0 {
+                    let index_i = index_i as usize;
+                    let index_j = index_j as usize;
+                    // many to one mapping, prevent overwriting trails with 0
+                    new_trails[[index_i, index_j]] = pixel;
+                    if zoom_factor > 1.2 {
+                        // add an extra pixel in the y direction
+                        new_trails[[index_i, index_j + 1]] = pixel;
+                        if zoom_factor > 1.6 {
+                            // also add pixels in the x direction
+                            new_trails[[index_i + 1, index_j]] = pixel;
+                            new_trails[[index_i + 1, index_j + 1]] = pixel;
+                        }
+                    }
+                }
+            }
+        }
+        self.true_trails = new_trails;
+    }
+
     pub fn update_relative_trails(&mut self, angle: SpokeBearing, data: &mut Vec<u8>) {
         if self.trail_length_ms == 0 || self.rotation_speed_ms == 0 {
             return;
@@ -63,8 +445,6 @@ impl TrailBuffer {
             log::debug!("Spoke before trails: {:?}", data);
         }
 
-        let update_relative_motion = true; // motion == TARGET_MOTION_RELATIVE;
-
         while radius < data.len() {
             if data[radius] >= self.minimal_legend_value && data[radius] < self.legend.history_start
             {
@@ -73,7 +453,7 @@ impl TrailBuffer {
                 trail[radius] = trail[radius].wrapping_add(1); // Yes, we want overflow here after 65535 rotations
             }
 
-            if update_relative_motion
+            if self.motion_true.unwrap_or(true) == false
                 && data[radius] == 0
                 && trail[radius] > 0
                 && trail[radius] < max_trail_value
@@ -102,7 +482,7 @@ impl TrailBuffer {
     }
 
     // zoom_factor > 1 -> zoom in, enlarge image
-    pub fn zoom_relative_trails(&mut self, zoom_factor: f64) {
+    fn zoom_relative_trails(&mut self, zoom_factor: f64) {
         let mut new_trail = vec![0; self.max_spoke_len];
         let mut index_prev = 0;
         for spoke in 0..self.spokes {
@@ -131,8 +511,8 @@ impl TrailBuffer {
     }
 
     pub fn clear(&mut self) {
-        self.true_trails = vec![0; self.trail_size * self.trail_size];
-        self.relative_trails = vec![0; self.spokes * self.max_spoke_len];
+        self.true_trails.fill(0);
+        self.relative_trails.fill(0);
     }
 
     pub fn set_doppler_trail_only(&mut self, v: bool) {

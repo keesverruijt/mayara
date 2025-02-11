@@ -23,6 +23,14 @@ div.myr_error {
   border-width: 0px;
   background-color: firebrick;
   color: wheat;
+  transition-property: opacity, display;
+  transition-duration: 0.5s;
+  transition-behavior: allow-discrete;
+}
+
+div.myr_error.myr_vanish {
+  display: none;
+  opacity: 0;
 }
 
 div.myr_control {
