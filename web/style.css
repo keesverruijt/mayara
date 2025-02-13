@@ -19,8 +19,6 @@ div.myr_controller {
 }
 
 div.myr_error {
-  display: block;
-  border-width: 0px;
   background-color: firebrick;
   color: wheat;
   transition-property: opacity, display;
@@ -40,6 +38,10 @@ div.myr_control {
   margin: 2px;
   border-radius: 1px;
   border-color: white;
+}
+
+div.myr_readonly {
+  color:  rgb(152, 217, 204);
 }
 
 div.myr_description {

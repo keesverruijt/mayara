@@ -27,8 +27,9 @@ function registerControlCallback(callback) {
 
 const ReadOnlyValue = (id, name) =>
   div(
-    { class: "myr_control" },
-    div(name),
+    { class: "myr_control myr_readonly" },
+    div({ class: "myr_description" }),
+    label({ for: prefix + id }, name),
     div({ class: "myr_numeric", id: prefix + id })
   );
 
@@ -322,13 +323,10 @@ function buildControls() {
   c = get_element_by_server_id("controls");
   c.innerHTML = "";
   for (const [k, v] of Object.entries(myr_controls)) {
-    if (v.name == "Range") {
-      van.add(
-        c,
-        SelectValue(999, "Range units", [0, 1], { 0: "Metric", 1: "Nautic" })
-      );
-    }
     if (v["isReadOnly"]) {
+      if (k == 0) {
+        van.add(c, div({ class: "myr_control myr_error" }, "REPLAY MODE"));
+      }
       van.add(c, ReadOnlyValue(k, v.name));
     } else if (v["dataType"] == "button") {
       van.add(c, ButtonValue(k, v.name));
@@ -336,6 +334,12 @@ function buildControls() {
       van.add(c, StringValue(k, v.name));
       van.add(get_element_by_server_id(k).parentNode, SetButton());
     } else if ("validValues" in v) {
+      if (v.name == "Range") {
+        van.add(
+          c,
+          SelectValue(999, "Range units", [0, 1], { 0: "Metric", 1: "Nautic" })
+        );
+      }
       van.add(c, SelectValue(k, v.name, v["validValues"], v["descriptions"]));
     } else if ("maxValue" in v && v.maxValue <= 100) {
       van.add(
