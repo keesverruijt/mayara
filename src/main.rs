@@ -6,7 +6,8 @@ use locator::Locator;
 use log::{info, warn};
 use miette::Result;
 use radar::SharedRadars;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
+use tokio::sync::mpsc;
 use tokio_graceful_shutdown::{SubsystemBuilder, Toplevel};
 use web::Web;
 
@@ -46,6 +47,10 @@ pub struct Cli {
     /// Limit radar location to a single brand
     #[arg(short, long)]
     brand: Option<String>,
+
+    /// Limit Signal K location to a single interface
+    #[arg(short, long)]
+    signalk_interface: Option<String>,
 
     /// Write RadarMessage data to stdout
     #[arg(long, default_value_t = false)]
@@ -96,16 +101,24 @@ async fn main() -> Result<()> {
         warn!("Output mode activated; 'protobuf' formatted RadarMessage sent to stdout");
     }
 
-    let signal_k = signalk::NavigationData::new(args.clone());
-    let radars = SharedRadars::new(args.clone());
-    let radars_clone1 = radars.clone();
-
-    let locator = Locator::new(radars);
-    let web = Web::new(args.port, radars_clone1);
-
     Toplevel::new(|s| async move {
-        s.start(SubsystemBuilder::new("SignalK", |a| signal_k.run(a)));
-        s.start(SubsystemBuilder::new("Locator", |a| locator.run(a)));
+        let signal_k_args = args.clone();
+        let signal_k = signalk::NavigationData::new(signal_k_args);
+
+        let radars = SharedRadars::new(args.clone());
+        let radars_clone1 = radars.clone();
+
+        let locator = Locator::new(radars);
+        let web = Web::new(args.port, radars_clone1);
+
+        let (tx_ip_change, rx_ip_change) = mpsc::channel(1);
+
+        s.start(SubsystemBuilder::new("SignalK", |a| async move {
+            signal_k.run(a, rx_ip_change).await
+        }));
+        s.start(SubsystemBuilder::new("Locator", |a| {
+            locator.run(a, tx_ip_change)
+        }));
         s.start(SubsystemBuilder::new("Webserver", |a| web.run(a)));
     })
     .catch_signals()

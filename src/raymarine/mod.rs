@@ -163,7 +163,7 @@ fn process_beacon_report(
                 radar_data.into(),
                 radar_report.into(),
                 radar_send.into(),
-                settings::new(),
+                settings::new(radars.cli_args().replay),
             );
 
             let radar_info = location_info.clone();

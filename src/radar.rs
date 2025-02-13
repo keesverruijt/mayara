@@ -53,6 +53,8 @@ pub enum RadarError {
     ParseJson(String),
     #[error("OS error {0}")]
     OSError(String),
+    #[error("IP address changed")]
+    IPAddressChanged,
 }
 
 // Tell axum how to convert `AppError` into a response.

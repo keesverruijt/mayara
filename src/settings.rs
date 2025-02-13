@@ -1,4 +1,3 @@
-use core::error;
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::FromPrimitive;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -26,6 +25,8 @@ use thiserror::Error;
 pub struct Controls {
     #[serde(flatten)]
     controls: HashMap<ControlType, Control>,
+    #[serde(skip)]
+    replay: bool,
 }
 
 impl Controls {
@@ -42,12 +43,24 @@ impl Controls {
     }
 
     pub fn insert(&mut self, control_type: ControlType, value: Control) {
-        self.controls.insert(control_type, value);
+        let v = Control {
+            item: ControlDefinition {
+                is_read_only: self.replay,
+                ..value.item
+            },
+            ..value
+        };
+
+        self.controls.insert(control_type, v);
     }
 
-    pub fn new_base(mut controls: HashMap<ControlType, Control>) -> Self {
+    pub fn new_base(mut controls: HashMap<ControlType, Control>, replay: bool) -> Self {
+        if replay {
+            controls.iter_mut().for_each(|(_k, v)| {
+                v.item.is_read_only = true;
+            });
+        }
         // Add controls that are not radar dependent
-
         controls.insert(
             ControlType::TargetTrails,
             Control::new_map(
@@ -77,7 +90,7 @@ impl Controls {
             Control::new_button(ControlType::ClearTrails),
         );
 
-        Controls { controls }
+        Controls { controls, replay }
     }
 
     pub fn set_user_name(&mut self, name: String) {

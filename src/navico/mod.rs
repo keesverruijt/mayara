@@ -328,7 +328,7 @@ fn process_beacon_report(
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
-                        settings::new(None),
+                        settings::new(None, radars.cli_args().replay),
                     );
                     found(location_info, radars, subsys);
 
@@ -348,7 +348,7 @@ fn process_beacon_report(
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
-                        settings::new(None),
+                        settings::new(None, radars.cli_args().replay),
                     );
                     found(location_info, radars, subsys);
                 }
@@ -382,7 +382,7 @@ fn process_beacon_report(
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
-                        settings::new(None),
+                        settings::new(None, radars.cli_args().replay),
                     );
                     found(location_info, radars, subsys);
                 }
@@ -416,7 +416,7 @@ fn process_beacon_report(
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
-                        settings::new(Some(BR24_MODEL_NAME)),
+                        settings::new(Some(BR24_MODEL_NAME), radars.cli_args().replay),
                     );
                     found(location_info, radars, subsys);
                 }

@@ -10,13 +10,13 @@ use std::{
     pin::Pin,
     sync::atomic::{AtomicBool, Ordering},
 };
-use tokio::io::BufReader;
 use tokio::io::{AsyncBufReadExt, BufWriter};
 use tokio::{io::AsyncWriteExt, net::TcpStream};
+use tokio::{io::BufReader, sync::mpsc::Receiver};
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::{
-    radar::{GeoPosition, RadarError, RadarPosition},
+    radar::{GeoPosition, RadarError},
     Cli,
 };
 
@@ -69,34 +69,81 @@ impl NavigationData {
         NavigationData { args }
     }
 
-    pub(crate) async fn run(self, subsys: SubsystemHandle) -> Result<(), Error> {
-        let mdns = ServiceDaemon::new().expect("Failed to create daemon");
-
-        if self.args.interface.is_some() {
-            let _ = mdns.disable_interface(IfKind::All);
-            let _ = mdns.enable_interface(IfKind::Name(
-                self.args.interface.as_ref().unwrap().to_string(),
-            ));
+    pub(crate) async fn run(
+        &self,
+        subsys: SubsystemHandle,
+        rx_ip_change: Receiver<()>,
+    ) -> Result<(), Error> {
+        log::debug!("SignalK run_loop (re)start");
+        let mut rx_ip_change = rx_ip_change;
+        loop {
+            match self.find_service(&subsys, &mut rx_ip_change).await {
+                Ok(stream) => {
+                    log::info!(
+                        "Listening to Signal K data from {}",
+                        stream.peer_addr().unwrap()
+                    );
+                    match self.receive_loop(stream, &subsys).await {
+                        Err(RadarError::Shutdown) => {
+                            log::debug!("Signal K receive_loop shutdown");
+                            return Ok(());
+                        }
+                        e => {
+                            log::debug!("Signal K receive_loop restart on result {:?}", e);
+                        }
+                    }
+                }
+                Err(e) => match e {
+                    RadarError::Shutdown => {
+                        log::debug!("Signal K run_loop shutdown");
+                        return Ok(());
+                    }
+                    e => {
+                        log::debug!("Signal K find_service restart on result {:?}", e);
+                    }
+                },
+            }
         }
+    }
 
+    async fn find_service(
+        &self,
+        subsys: &SubsystemHandle,
+        rx_ip_change: &mut Receiver<()>,
+    ) -> Result<TcpStream, RadarError> {
         let mut known_addresses: HashSet<SocketAddr> = HashSet::new();
 
-        let tcp_locator = mdns.browse(TCP_SERVICE_NAME)?;
-        // let ws_receiver = mdns.browse(WS_SERVICE_NAME)?;
+        let mdns = ServiceDaemon::new().expect("Failed to create daemon");
 
+        if self.args.signalk_interface.is_some() {
+            let _ = mdns.disable_interface(IfKind::All);
+            let _ = mdns.enable_interface(IfKind::Name(
+                self.args.signalk_interface.as_ref().unwrap().to_string(),
+            ));
+        }
+        let tcp_locator = mdns
+            .browse(TCP_SERVICE_NAME)
+            .expect("Failed to browse for Signal K service");
+
+        log::debug!("SignalK find_service (re)start");
+
+        let r: Result<TcpStream, RadarError>;
         loop {
             let s = &subsys;
-            POSITION_VALID.store(false, Ordering::Release);
-            HEADING_TRUE_VALID.store(false, Ordering::Release);
-
             tokio::select! { biased;
                 _ = s.on_shutdown_requested() => {
+                    r = Err(RadarError::Shutdown);
+                    break;
+                },
+                _ = rx_ip_change.recv() => {
+                    log::debug!("rx_ip_change");
+                    r = Err(RadarError::IPAddressChanged);
                     break;
                 },
                 event = tcp_locator.recv_async() => {
                     match event {
                         Ok(ServiceEvent::ServiceResolved(info)) => {
-                            log::debug!("Resolved a new service: {}", info.get_fullname());
+                            log::debug!("Resolved a new SignalK service: {}", info.get_fullname());
                             let addr = info.get_addresses();
                             let port = info.get_port();
 
@@ -104,7 +151,7 @@ impl NavigationData {
                                 known_addresses.insert(SocketAddr::new(*a, port));
                             }
                         },
-                        _other_event => {
+                        _ => {
                             continue;
                         }
                     }
@@ -119,22 +166,21 @@ impl NavigationData {
                         "Listening to Signal K data from {}",
                         stream.peer_addr().unwrap()
                     );
-                    if self.receive_loop(stream, &subsys).await.is_ok() {
-                        log::info!("SK receive_loop break");
-                        break;
-                    }
+
+                    r = Ok(stream);
+                    break;
                 }
                 Err(_e) => {} // Just loop
             }
         }
-        log::info!("SK run_loop end");
 
-        if let Ok(r) = mdns.shutdown() {
-            if let Ok(r) = r.recv() {
-                log::debug!("mdns_shutdown: {:?}", r);
+        log::debug!("Signal K find_service end with {:?}", r);
+        if let Ok(r3) = mdns.shutdown() {
+            if let Ok(r3) = r3.recv() {
+                log::debug!("mdns_shutdown: {:?}", r3);
             }
         }
-        return Ok(());
+        return r;
     }
 
     // Loop until we get an error, then just return the error
@@ -151,7 +197,7 @@ impl NavigationData {
         loop {
             tokio::select! { biased;
                 _ = subsys.on_shutdown_requested() => {
-                    log::info!("SK receive_loop done");
+                    log::debug!("SK receive_loop shutdown");
                     return Ok(());
                 },
                 r = lines.next_line() => {

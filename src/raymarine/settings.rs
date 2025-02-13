@@ -5,7 +5,7 @@ use crate::{
     settings::{Control, ControlType, Controls, HAS_AUTO_NOT_ADJUSTABLE},
 };
 
-pub fn new() -> Controls {
+pub fn new(replay: bool) -> Controls {
     let mut controls = HashMap::new();
 
     controls.insert(
@@ -71,7 +71,7 @@ pub fn new() -> Controls {
         .wire_scale_factor(255., false),
     );
 
-    Controls::new_base(controls)
+    Controls::new_base(controls, replay)
 }
 
 pub fn update_when_model_known(controls: &mut Controls, radar_info: &RadarInfo) {

@@ -17,9 +17,7 @@ use log::{debug, error, info, trace, warn};
 use miette::Result;
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use serde::Serialize;
-use tokio::net::UdpSocket;
-use tokio::task::JoinSet;
-use tokio::time::sleep;
+use tokio::{net::UdpSocket, sync::mpsc::Sender, task::JoinSet, time::sleep};
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::radar::{RadarError, SharedRadars};
@@ -128,7 +126,11 @@ impl Locator {
         Locator { radars }
     }
 
-    pub async fn run(self, subsys: SubsystemHandle) -> Result<(), RadarError> {
+    pub async fn run(
+        self,
+        subsys: SubsystemHandle,
+        tx_ip_change: Sender<()>,
+    ) -> Result<(), RadarError> {
         let radars = &self.radars;
         let mut listen_addresses: Vec<RadarListenAddress> = Vec::new();
 
@@ -196,6 +198,7 @@ impl Locator {
                 cancellation_token.cancelled().await;
                 Err(RadarError::Shutdown)
             });
+            let tx_ip_change = tx_ip_change.clone();
             set.spawn(async move {
                 if let Err(e) = network::wait_for_ip_addr_change(child_token).await {
                     match e {
@@ -208,6 +211,8 @@ impl Locator {
                         }
                     }
                 }
+                let _ = tx_ip_change.send(()).await;
+
                 Err(RadarError::Timeout)
             });
 
