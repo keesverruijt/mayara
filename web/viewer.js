@@ -21,6 +21,27 @@ var renderer;
 var rangeDescriptions;
 var noTransmitAngles;
 
+// Fill rangeDescriptions so that if we do replay of the demo, we show NM instead of m.
+rangeDescriptions = {
+  231: "1/8 nm",
+  463: "1/4 nm",
+  926: "1/2 nm",
+  1389: "3/4 nm",
+  1852: "1 nm",
+  3704: "2 nm",
+  5556: "3 nm",
+  7408: "4 nm",
+  9260: "5 nm",
+  11112: "6 nm",
+  14816: "8 nm",
+  18520: "10 nm",
+  22224: "12 nm",
+  27780: "15 nm",
+  29632: "16 nm",
+  37040: "20 nm",
+  44448: "24 nm",
+};
+
 const RANGE_SCALE = 0.9; // Factor by which we fill the (w,h) canvas with the outer radar range ring
 
 registerRadarCallback(radarLoaded);
@@ -137,17 +158,19 @@ function hexToRGBA(hex) {
 }
 
 function controlUpdate(control, controlValue) {
-  if (control.name == "Range" && control.descriptions) {
+  if (control.name == "Range") {
     let range = parseFloat(controlValue.value);
-    rangeDescriptions = control.descriptions;
+    if (controlValue.descriptions) {
+      rangeDescriptions = control.descriptions;
+    }
     renderer.setRange(range);
   }
   if (control.name.startsWith("No Transmit")) {
     let value = parseFloat(controlValue.value);
-    idx = extractNoTxZone(control.name);
-    start_end = extractStartEnd(control.name);
+    let idx = extractNoTxZone(control.name);
+    let start_or_end = extractStartOrEnd(control.name);
     if (controlValue.enabled) {
-      noTransmitAngles[idx][start_end] = value;
+      noTransmitAngles[idx][start_or_end] = value;
     } else {
       noTransmitAngles[idx] = null;
     }
@@ -163,7 +186,7 @@ function extractNoTxZone(name) {
   return 0;
 }
 
-function extractStartEnd(name) {
+function extractStartOrEnd(name) {
   return name.includes("start") ? 0 : 1;
 }
 
@@ -186,7 +209,6 @@ function drawBackground(obj, txt) {
     obj.background_ctx.stroke();
     if (i > 0 && obj.range) {
       let r = Math.trunc((obj.range * i) / 4);
-      console.log("i=" + i + " range=" + obj.range + " r=" + r);
       let text = rangeDescriptions ? rangeDescriptions[r] : undefined;
       if (text === undefined) {
         if (r % 1000 == 0) {
