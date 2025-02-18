@@ -7,7 +7,7 @@ import {
   registerRadarCallback,
   registerControlCallback,
 } from "./control.js";
-import "./protobuf/protobuf.js";
+import "./protobuf/protobuf.min.js";
 
 const prefix = "myr_";
 

@@ -41,7 +41,7 @@ div.myr_control {
 }
 
 div.myr_readonly {
-  color:  rgb(152, 217, 204);
+  color: rgb(124, 124, 237);
 }
 
 div.myr_description {
@@ -79,7 +79,7 @@ input {
 
 input:read-only {
   background-color: #000000;
-  color: rgb(152, 217, 204);
+  color:rgb(124, 124, 237);
 }
 
 /* PPI viewer */

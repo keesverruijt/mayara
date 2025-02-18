@@ -86,7 +86,7 @@ pub fn new(model: Option<&str>, replay: bool) -> Controls {
         &["Off", "Standby", "Transmit", "", "", "SpinningUp"],
     )
     .send_always();
-    control.set_valid_values([1, 2].to_vec());
+    control.set_valid_values([1, 2].to_vec()); // Only allow setting to Standby (index 1) and Transmit (index 2)
 
     controls.insert(ControlType::Status, control);
 
@@ -214,7 +214,7 @@ pub fn update_when_model_known(controls: &mut Controls, model: Model, radar_info
             if model == Model::HALO {
                 &["Normal", "Medium", "Medium Plus", "Fast"]
             } else {
-                &["Normal", "Fast"]
+                &["Normal", "Medium", "Medium-High"]
             },
         ),
     );
@@ -264,6 +264,10 @@ pub fn update_when_model_known(controls: &mut Controls, model: Model, radar_info
             ControlType::DopplerTrailsOnly,
             Control::new_list(ControlType::DopplerTrailsOnly, &["Off", "On"]),
         );
+        controls
+            .get_mut(&ControlType::DopplerTrailsOnly)
+            .unwrap()
+            .set_read_only(false);
     }
 
     controls.insert(

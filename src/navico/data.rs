@@ -232,8 +232,12 @@ impl NavicoDataReceiver {
                         self.trails.set_relative_trails_length(value);
                     }
                     ControlType::TrailsMotion => {
-                        let value = cv.value.parse::<u16>().map(|x| x > 0).ok();
-                        if let Err(e) = self.trails.set_trails_mode(value) {
+                        let true_motion = match cv.value.as_str() {
+                            "0" => false,
+                            "1" => true,
+                            _ => return Err(RadarError::CannotSetControlType(cv.id)),
+                        };
+                        if let Err(e) = self.trails.set_trails_mode(true_motion) {
                             return self
                                 .info
                                 .send_error_to_controller(
@@ -244,10 +248,12 @@ impl NavicoDataReceiver {
                                 .await;
                         }
                     }
-                    _ => {}
+                    _ => return Err(RadarError::CannotSetControlType(cv.id)),
                 };
             }
-            None => {}
+            None => {
+                return Err(RadarError::Shutdown);
+            }
         }
         Ok(())
     }
@@ -299,6 +305,8 @@ impl NavicoDataReceiver {
     }
 
     fn process_frame(&mut self, data: &mut Vec<u8>) {
+        let mut prev_angle = 0;
+
         if data.len() < FRAME_HEADER_LENGTH + RADAR_LINE_LENGTH {
             warn!(
                 "UDP data frame with even less than one spoke, len {} dropped",
@@ -337,13 +345,15 @@ impl NavicoDataReceiver {
                 message
                     .spokes
                     .push(self.process_spoke(range, angle, heading, spoke_slice));
-                if angle < 2 {
+                if angle < prev_angle {
                     mark_full_rotation = true;
                 }
+                prev_angle = angle;
             } else {
                 warn!("Invalid spoke: header {:02X?}", &header_slice);
                 self.statistics.broken_packets += 1;
             }
+
             offset += RADAR_LINE_LENGTH;
         }
 
@@ -500,11 +510,7 @@ impl NavicoDataReceiver {
             generic_spoke.len()
         );
 
-        // For now, don't send heading in replay mode, signalk-radar-client doesn't
-        // handle it well yet.
-        let heading = if self.replay {
-            None
-        } else if heading.is_some() {
+        let heading = if heading.is_some() {
             heading.map(|h| (((h / 2) + angle) % (NAVICO_SPOKES as u16)) as u32)
         } else {
             let heading = crate::signalk::get_heading_true();

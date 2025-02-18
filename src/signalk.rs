@@ -25,7 +25,7 @@ use crate::{
 const TCP_SERVICE_NAME: &'static str = "_signalk-tcp._tcp.local.";
 
 const SUBSCRIBE: &'static str =
-    "{\"context\": \"vessels.self\",\"subscribe\": [{\"path\": \"navigation.headingTrue\"},{\"path\": \"navigation.position\"}]}\r\n";
+       "{\"context\": \"vessels.self\",\"subscribe\": [{\"path\": \"navigation.headingTrue\"},{\"path\": \"navigation.position\"}]}\r\n";
 
 static HEADING_TRUE_VALID: AtomicBool = AtomicBool::new(false);
 static POSITION_VALID: AtomicBool = AtomicBool::new(false);
@@ -190,8 +190,7 @@ impl NavigationData {
         mut stream: TcpStream,
         subsys: &SubsystemHandle,
     ) -> Result<(), RadarError> {
-        let (read_half, write_half) = stream.split();
-        let mut writer = BufWriter::new(write_half);
+        let (read_half, mut write_half) = stream.split();
         let mut lines = BufReader::new(read_half).lines();
 
         loop {
@@ -205,7 +204,7 @@ impl NavigationData {
                         Ok(Some(line)) => {
                             log::trace!("SK <- {}", line);
                             if line.starts_with("{\"name\":") {
-                                self.send_subscription(&mut writer).await?;
+                                self.send_subscription(&mut write_half).await?;
                                 log::trace!("SK -> {}", SUBSCRIBE);
                             }
                             else {
@@ -232,7 +231,7 @@ impl NavigationData {
 
     async fn send_subscription(
         &self,
-        stream: &mut BufWriter<tokio::net::tcp::WriteHalf<'_>>,
+        stream: &mut tokio::net::tcp::WriteHalf<'_>,
     ) -> Result<(), RadarError> {
         let bytes: &[u8] = SUBSCRIBE.as_bytes();
 

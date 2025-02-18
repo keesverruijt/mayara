@@ -313,9 +313,14 @@ impl RadarInfo {
 
         self.rotation_timestamp = now;
 
-        log::debug!("{}: rotation speed {} dRPM", self.key, rpm);
+        log::debug!(
+            "{}: rotation speed elapsed {} = {} dRPM",
+            self.key,
+            diff,
+            rpm
+        );
 
-        if diff < 3000. && diff > 600. {
+        if diff < 10000. && diff > 300. {
             let _ = self
                 .command_tx
                 .send(ControlMessage::SetValue(ControlValue::new(

@@ -72,7 +72,7 @@ impl Web {
             self.port,
         ))
         .await
-        .unwrap();
+        .map_err(|e| WebError::Io(e))?;
 
         let serve_assets = ServeEmbed::<Assets>::new();
         let proto_assets = ServeEmbed::<ProtoAssets>::new();
@@ -306,7 +306,7 @@ async fn control_stream(
                 match r {
                     Some(message) => {
                         let message = serde_json::to_string(&message).unwrap();
-                        trace!("Sending {:?}", message);
+                        log::trace!("Sending {:?}", message);
                         let ws_message = Message::Text(message.into());
 
                         if let Err(e) = socket.send(ws_message).await {
@@ -326,7 +326,7 @@ async fn control_stream(
                 match r {
                     Ok(message) => {
                         let message: String = serde_json::to_string(&message).unwrap();
-                        trace!("Sending {:?}", message);
+                        log::debug!("Sending {:?}", message);
                         let ws_message = Message::Text(message.into());
 
                         if let Err(e) = socket.send(ws_message).await {
@@ -349,7 +349,7 @@ async fn control_stream(
                         match message {
                             Message::Text(message) => {
                                 if let Ok(control_value) = serde_json::from_str(&message) {
-                                    log::info!("Received ControlValue {:?}", control_value);
+                                    log::debug!("Received ControlValue {:?}", control_value);
 
                                     let control_message = ControlMessage::Value(reply_tx.clone(), control_value);
 

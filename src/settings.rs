@@ -192,9 +192,12 @@ impl Control {
     // }
 
     pub fn read_only(mut self, is_read_only: bool) -> Self {
-        self.item.is_read_only = is_read_only;
-
+        self.set_read_only(is_read_only);
         self
+    }
+
+    pub fn set_read_only(&mut self, is_read_only: bool) {
+        self.item.is_read_only = is_read_only;
     }
 
     pub fn wire_scale_factor(mut self, wire_scale_factor: f32, with_step: bool) -> Self {
@@ -794,10 +797,10 @@ pub enum ControlError {
     Invalid(ControlType, String),
     #[error("Control {0} does not support Auto")]
     NoAuto(ControlType),
-    #[error("Control {0} value {1} requires true heading input")]
-    NoHeading(ControlType, i32),
-    #[error("Control {0} value {1} requires a GNSS position")]
-    NoPosition(ControlType, i32),
+    #[error("Control {0} value '{1}' requires true heading input")]
+    NoHeading(ControlType, &'static str),
+    #[error("Control {0} value '{1}' requires a GNSS position")]
+    NoPosition(ControlType, &'static str),
 }
 
 pub fn deserialize_number_from_string<'de, T, D>(deserializer: D) -> Result<T, D::Error>

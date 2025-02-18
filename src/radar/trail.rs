@@ -19,7 +19,7 @@ pub struct TrailBuffer {
     spokes: usize,
     max_spoke_len: usize,
     trail_size: i16,
-    motion_true: Option<bool>,
+    motion_true: bool,
     position: GeoPosition,
     position_difference: GeoPosition, // Fraction of a pixel expressed in lat/lon for True Motion Target Trails
     position_offset: GeoPositionPixels, // Offset of the trails image in pixels
@@ -45,7 +45,7 @@ impl TrailBuffer {
             spokes,
             max_spoke_len,
             trail_size,
-            motion_true: None,
+            motion_true: false,
             position: GeoPosition::new(0., 0.),
             position_difference: GeoPosition { lat: 0., lon: 0. },
             position_offset: GeoPositionPixels { lat: 0, lon: 0 },
@@ -65,16 +65,17 @@ impl TrailBuffer {
         }
     }
 
-    pub fn set_trails_mode(&mut self, value: Option<bool>) -> Result<(), ControlError> {
-        if value == Some(true) {
+    pub fn set_trails_mode(&mut self, value: bool) -> Result<(), ControlError> {
+        if value {
             if !self.have_heading {
-                return Err(ControlError::NoHeading(ControlType::TrailsMotion, 1));
+                return Err(ControlError::NoHeading(ControlType::TrailsMotion, "True"));
             }
             if crate::signalk::get_radar_position().is_none() {
-                return Err(ControlError::NoPosition(ControlType::TrailsMotion, 1));
+                return Err(ControlError::NoPosition(ControlType::TrailsMotion, "True"));
             }
         }
         self.motion_true = value;
+        log::info!("Trails motion set to {:?}", value);
         Ok(())
     }
 
@@ -89,6 +90,7 @@ impl TrailBuffer {
             _ => 0,
         };
         self.trail_length_ms = seconds * 1000;
+        log::info!("Trails length set to {} seconds", seconds);
     }
 
     pub fn set_rotation_speed(&mut self, ms: u32) {
@@ -158,11 +160,7 @@ impl TrailBuffer {
                 }
 
                 let trail = *trail as u8;
-                if self.motion_true.unwrap_or(false)
-                    && data[radius] == 0
-                    && trail > 0
-                    && trail < max_trail_value
-                {
+                if self.motion_true && data[radius] == 0 && trail > 0 && trail < max_trail_value {
                     let mut index: u8 = (trail * BLOB_HISTORY_COLORS / max_trail_value) as u8;
                     if index >= BLOB_HISTORY_COLORS {
                         index = BLOB_HISTORY_COLORS;
@@ -431,6 +429,14 @@ impl TrailBuffer {
     }
 
     pub fn update_relative_trails(&mut self, angle: SpokeBearing, data: &mut Vec<u8>) {
+        if angle == 0 {
+            log::debug!(
+                "angle = {}, trails_length_ms = {}, rotation_speed_ms = {}",
+                angle,
+                self.trail_length_ms,
+                self.rotation_speed_ms
+            );
+        }
         if self.trail_length_ms == 0 || self.rotation_speed_ms == 0 {
             return;
         }
@@ -453,7 +459,7 @@ impl TrailBuffer {
                 trail[radius] = trail[radius].wrapping_add(1); // Yes, we want overflow here after 65535 rotations
             }
 
-            if self.motion_true.unwrap_or(true) == false
+            if !self.motion_true
                 && data[radius] == 0
                 && trail[radius] > 0
                 && trail[radius] < max_trail_value

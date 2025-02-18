@@ -322,6 +322,10 @@ impl NavicoReportReceiver {
         }
     }
 
+    //
+    // Process reports coming in from the radar on self.sock and commands from the
+    // controller (= user) on self.info.command_tx.
+    //
     async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
         debug!("{}: listening for reports", self.key);
         let mut command_rx = self.info.command_tx.subscribe();
@@ -411,7 +415,7 @@ impl NavicoReportReceiver {
                         }
                         return Ok(());
                     }
-                    _ => {} // rest is numeric
+                    _ => {} // rest is for the radar to handle
                 }
 
                 if let Err(e) = self
@@ -787,7 +791,7 @@ impl NavicoReportReceiver {
     async fn process_report_01(&mut self) -> Result<(), Error> {
         let report = RadarReport1_18::transmute(&self.buf)?;
 
-        trace!("{}: report {:?}", self.key, report);
+        info!("{}: report {:?}", self.key, report);
 
         let status: Result<Status, _> = report.status.try_into();
         if status.is_err() {
