@@ -12,7 +12,6 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
 
-use async_trait::async_trait;
 use log::{debug, error, info, trace, warn};
 use miette::Result;
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
@@ -128,8 +127,6 @@ impl Locator {
         tx_ip_change: Sender<()>,
     ) -> Result<(), RadarError> {
         let radars = &self.radars;
-        let mut listen_addresses: Vec<LocatorAddress> = Vec::new();
-        let mut locators: Vec<Box<dyn RadarLocator>> = Vec::new();
 
         debug!("Entering loop, listening for radars");
         let mut interface_state = InterfaceState {
@@ -140,41 +137,7 @@ impl Locator {
             first_loop: true,
         };
 
-        #[cfg(feature = "navico")]
-        if interface_state
-            .args
-            .brand
-            .as_ref()
-            .unwrap_or(&"navico".to_owned())
-            .eq_ignore_ascii_case("navico")
-        {
-            locators.push(navico::create_locator());
-            locators.push(navico::create_br24_locator());
-        }
-        #[cfg(feature = "furuno")]
-        if interface_state
-            .args
-            .brand
-            .as_ref()
-            .unwrap_or(&"furuno".to_owned())
-            .eq_ignore_ascii_case("furuno")
-        {
-            locators.push(furuno::create_locator());
-        }
-        #[cfg(feature = "raymarine")]
-        if interface_state
-            .args
-            .brand
-            .as_ref()
-            .unwrap_or(&"raymarine".to_owned())
-            .eq_ignore_ascii_case("raymarine")
-        {
-            locators.push(raymarine::create_locator());
-        }
-
-        locators
-            .iter()
-            .for_each(|x| x.update_listen_addresses(&mut listen_addresses));
+        let listen_addresses = Self::compute_listen_addresses(&interface_state);
 
         loop {
             let cancellation_token = subsys.create_cancellation_token();
@@ -270,6 +233,48 @@ impl Locator {
                 };
             }
         }
+    }
+
+    fn compute_listen_addresses(interface_state: &InterfaceState) -> Vec<LocatorAddress> {
+        let mut listen_addresses: Vec<LocatorAddress> = Vec::new();
+        let mut locators: Vec<Box<dyn RadarLocator>> = Vec::new();
+        #[cfg(feature = "navico")]
+        if interface_state
+            .args
+            .brand
+            .as_ref()
+            .unwrap_or(&"navico".to_owned())
+            .eq_ignore_ascii_case("navico")
+        {
+            locators.push(navico::create_locator());
+            locators.push(navico::create_br24_locator());
+        }
+        #[cfg(feature = "furuno")]
+        if interface_state
+            .args
+            .brand
+            .as_ref()
+            .unwrap_or(&"furuno".to_owned())
+            .eq_ignore_ascii_case("furuno")
+        {
+            locators.push(furuno::create_locator());
+        }
+        #[cfg(feature = "raymarine")]
+        if interface_state
+            .args
+            .brand
+            .as_ref()
+            .unwrap_or(&"raymarine".to_owned())
+            .eq_ignore_ascii_case("raymarine")
+        {
+            locators.push(raymarine::create_locator());
+        }
+
+        locators
+            .iter()
+            .for_each(|x| x.update_listen_addresses(&mut listen_addresses));
+
+        listen_addresses
     }
 }
 

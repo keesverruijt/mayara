@@ -19,13 +19,32 @@ pub(crate) mod windows;
 #[derive(Deserialize, Debug, Copy, Clone)]
 #[repr(C)]
 pub struct NetworkSocketAddrV4 {
-    addr: Ipv4Addr,
+    addr: [u8; 4],
     port: [u8; 2],
 }
 
 impl From<NetworkSocketAddrV4> for SocketAddrV4 {
     fn from(item: NetworkSocketAddrV4) -> Self {
-        SocketAddrV4::new(item.addr, u16::from_be_bytes(item.port))
+        SocketAddrV4::new(
+            u32::from_be_bytes(item.addr).into(),
+            u16::from_be_bytes(item.port),
+        )
+    }
+}
+
+#[derive(Deserialize, Debug, Copy, Clone)]
+#[repr(C)]
+pub struct LittleEndianSocketAddrV4 {
+    addr: [u8; 4],
+    port: [u8; 2],
+}
+
+impl From<LittleEndianSocketAddrV4> for SocketAddrV4 {
+    fn from(item: LittleEndianSocketAddrV4) -> Self {
+        SocketAddrV4::new(
+            u32::from_le_bytes(item.addr).into(),
+            u16::from_le_bytes(item.port),
+        )
     }
 }
 

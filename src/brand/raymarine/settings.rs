@@ -103,7 +103,7 @@ pub fn update_when_model_known(controls: &mut Controls, model: Model, radar_info
     }
 
     match model {
-        Model::Quantum | Model::Quantum1 => {
+        Model::Quantum => {
             controls.insert(
                 ControlType::Mode,
                 Control::new_list(
