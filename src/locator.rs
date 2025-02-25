@@ -20,8 +20,15 @@ use serde::Serialize;
 use tokio::{net::UdpSocket, sync::mpsc::Sender, task::JoinSet, time::sleep};
 use tokio_graceful_shutdown::SubsystemHandle;
 
+#[cfg(feature = "furuno")]
+use crate::brand::furuno;
+#[cfg(feature = "navico")]
+use crate::brand::navico;
+#[cfg(feature = "raymarine")]
+use crate::brand::raymarine;
+
 use crate::radar::{RadarError, SharedRadars};
-use crate::{furuno, navico, network, raymarine, Cli};
+use crate::{network, Cli};
 
 const LOCATOR_PACKET_BUFFER_LEN: usize = 300; // Long enough for any location packet
 
@@ -45,68 +52,57 @@ impl LocatorId {
     }
 }
 
-#[derive(Clone)]
-pub struct RadarListenAddress {
+pub struct LocatorAddress {
     pub id: LocatorId,
     pub address: SocketAddr,
     pub brand: String,
     pub adress_request_packet: Option<&'static [u8]>, // Optional message to send to ask radar for address
-    pub process: &'static dyn Fn(
-        &[u8],         // message
-        &SocketAddrV4, // from
-        &Ipv4Addr,     // nic_addr
-        &SharedRadars,
-        &SubsystemHandle,
-    ) -> Result<(), io::Error>,
+    pub locator: Box<dyn RadarLocatorState>,
 }
 
 // The only part of RadioListenAddress that isn't Send is process, but since this is static it really
 // is safe to send.
-unsafe impl Send for RadarListenAddress {}
+unsafe impl Send for LocatorAddress {}
 
-impl RadarListenAddress {
+impl LocatorAddress {
     pub fn new(
         id: LocatorId,
         address: &SocketAddr,
         brand: &str,
         ping: Option<&'static [u8]>,
-        process: &'static dyn Fn(
-            &[u8],
-            &SocketAddrV4,
-            &Ipv4Addr,
-            &SharedRadars,
-            &SubsystemHandle,
-        ) -> Result<(), io::Error>,
-    ) -> RadarListenAddress {
-        RadarListenAddress {
+        locator: Box<dyn RadarLocatorState>,
+    ) -> LocatorAddress {
+        LocatorAddress {
             id,
             address: address.clone(),
             brand: brand.into(),
             adress_request_packet: ping,
-            process,
+            locator,
         }
     }
 }
 
-struct LocatorInfo {
+struct LocatorSocket {
     sock: UdpSocket,
     nic_addr: Ipv4Addr,
-    process: &'static dyn Fn(
-        &[u8],         // message
-        &SocketAddrV4, // from
-        &Ipv4Addr,     // nic_addr
-        &SharedRadars,
-        &SubsystemHandle,
-    ) -> Result<(), io::Error>,
+    state: Box<dyn RadarLocatorState>,
 }
 
-// The only part of LocatorInfo that isn't Send is process, but since this is static it really
-// is safe to send.
-unsafe impl Send for LocatorInfo {}
+pub trait RadarLocatorState: Send {
+    fn process(
+        &mut self,
+        message: &[u8],
+        from: &SocketAddrV4,
+        nic_addr: &Ipv4Addr,
+        radars: &SharedRadars,
+        subsys: &SubsystemHandle,
+    ) -> Result<(), io::Error>;
 
-#[async_trait]
+    fn clone(&self) -> Box<dyn RadarLocatorState>;
+}
+
 pub trait RadarLocator {
-    fn update_listen_addresses(&self, addresses: &mut Vec<RadarListenAddress>);
+    fn update_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>);
 }
 
 struct InterfaceState {
@@ -132,7 +128,8 @@ impl Locator {
         tx_ip_change: Sender<()>,
     ) -> Result<(), RadarError> {
         let radars = &self.radars;
-        let mut listen_addresses: Vec<RadarListenAddress> = Vec::new();
+        let mut listen_addresses: Vec<LocatorAddress> = Vec::new();
+        let mut locators: Vec<Box<dyn RadarLocator>> = Vec::new();
 
         debug!("Entering loop, listening for radars");
         let mut interface_state = InterfaceState {
@@ -151,8 +148,8 @@ impl Locator {
             .unwrap_or(&"navico".to_owned())
             .eq_ignore_ascii_case("navico")
         {
-            navico::create_locator().update_listen_addresses(&mut listen_addresses);
-            navico::create_br24_locator().update_listen_addresses(&mut listen_addresses);
+            locators.push(navico::create_locator());
+            locators.push(navico::create_br24_locator());
         }
         #[cfg(feature = "furuno")]
         if interface_state
@@ -162,7 +159,7 @@ impl Locator {
             .unwrap_or(&"furuno".to_owned())
             .eq_ignore_ascii_case("furuno")
         {
-            furuno::create_locator().update_listen_addresses(&mut listen_addresses);
+            locators.push(furuno::create_locator());
         }
         #[cfg(feature = "raymarine")]
         if interface_state
@@ -172,8 +169,12 @@ impl Locator {
             .unwrap_or(&"raymarine".to_owned())
             .eq_ignore_ascii_case("raymarine")
         {
-            raymarine::create_locator().update_listen_addresses(&mut listen_addresses);
+            locators.push(raymarine::create_locator());
         }
+
+        locators
+            .iter()
+            .for_each(|x| x.update_listen_addresses(&mut listen_addresses));
 
         loop {
             let cancellation_token = subsys.create_cancellation_token();
@@ -229,18 +230,23 @@ impl Locator {
                 match join_result {
                     Ok(join_result) => {
                         match join_result {
-                            Ok((socket, addr, buf)) => {
-                                trace!("{} via {} -> {:02X?}", &addr, &socket.nic_addr, &buf);
+                            Ok((mut locator_socket, addr, buf)) => {
+                                trace!(
+                                    "{} via {} -> {:02X?}",
+                                    &addr,
+                                    &locator_socket.nic_addr,
+                                    &buf
+                                );
 
-                                let _ = (socket.process)(
+                                let _ = locator_socket.state.process(
                                     &buf,
                                     &addr,
-                                    &socket.nic_addr,
+                                    &locator_socket.nic_addr,
                                     &radars,
                                     &subsys,
                                 );
                                 // Respawn this task
-                                spawn_receive(&mut set, socket);
+                                spawn_receive(&mut set, locator_socket);
                             }
                             Err(e) => {
                                 match e {
@@ -268,8 +274,8 @@ impl Locator {
 }
 
 fn spawn_receive(
-    set: &mut JoinSet<Result<(LocatorInfo, SocketAddrV4, Vec<u8>), RadarError>>,
-    socket: LocatorInfo,
+    set: &mut JoinSet<Result<(LocatorSocket, SocketAddrV4, Vec<u8>), RadarError>>,
+    socket: LocatorSocket,
 ) {
     set.spawn(async move {
         let mut buf: Vec<u8> = Vec::with_capacity(LOCATOR_PACKET_BUFFER_LEN);
@@ -313,9 +319,9 @@ fn send_multicast_packet(addr: &SocketAddr, msg: &[u8]) {
 }
 
 fn create_listen_sockets(
-    listen_addresses: &Vec<RadarListenAddress>,
+    listen_addresses: &Vec<LocatorAddress>,
     interface_state: &mut InterfaceState,
-) -> Result<Vec<LocatorInfo>, RadarError> {
+) -> Result<Vec<LocatorSocket>, RadarError> {
     let only_interface = &interface_state.args.interface;
     let avoid_wifi = !interface_state.args.allow_wifi;
 
@@ -385,10 +391,10 @@ fn create_listen_sockets(
 
                                         match socket {
                                             Ok(socket) => {
-                                                sockets.push(LocatorInfo {
+                                                sockets.push(LocatorSocket {
                                                     sock: socket,
                                                     nic_addr: nic_ip.clone(),
-                                                    process: radar_listen_address.process,
+                                                    state: radar_listen_address.locator.clone(),
                                                 });
                                                 debug!(
                                                     "Listening on '{}' address {} for address {}",

@@ -7,7 +7,7 @@ use std::{fmt, io};
 use tokio::sync::mpsc;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
-use crate::locator::{LocatorId, RadarListenAddress, RadarLocator};
+use crate::locator::{LocatorId, LocatorAddress, RadarLocator};
 use crate::radar::{DopplerMode, Legend, RadarInfo, SharedRadars};
 use crate::util::{c_string, PrintableSlice};
 
@@ -162,12 +162,12 @@ struct FurunoLocator {}
 
 #[async_trait]
 impl RadarLocator for FurunoLocator {
-    fn update_listen_addresses(&self, addresses: &mut Vec<RadarListenAddress>) {
+    fn update_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
         if !addresses
             .iter()
             .any(|i| i.id == LocatorId::Furuno && i.brand == "Furuno Beacon")
         {
-            addresses.push(RadarListenAddress::new(
+            addresses.push(LocatorAddress::new(
                 LocatorId::Furuno,
                 &FURUNO_BEACON_ADDRESS,
                 "Furuno Beacon",

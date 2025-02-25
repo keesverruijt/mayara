@@ -8,7 +8,8 @@ use std::{fmt, io};
 use tokio::sync::mpsc;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
-use crate::locator::{LocatorId, RadarListenAddress, RadarLocator};
+use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState};
+use crate::network::NetworkSocketAddrV4;
 use crate::radar::{DopplerMode, Legend, RadarInfo, SharedRadars};
 use crate::settings::{ControlType, ControlValue};
 use crate::util::c_string;
@@ -44,18 +45,6 @@ pub enum DataUpdate {
     Doppler(DopplerMode),
     Legend(Legend),
     ControlValue(mpsc::Sender<ControlValue>, ControlValue),
-}
-
-#[derive(Deserialize, Debug, Copy, Clone)]
-struct NetworkSocketAddrV4 {
-    addr: Ipv4Addr,
-    port: [u8; 2],
-}
-
-impl From<NetworkSocketAddrV4> for SocketAddrV4 {
-    fn from(item: NetworkSocketAddrV4) -> Self {
-        SocketAddrV4::new(item.addr, u16::from_be_bytes(item.port))
-    }
 }
 
 /* NAVICO API SPOKES */
@@ -429,21 +418,41 @@ fn process_beacon_report(
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+struct NavicoLocatorState {}
+
+impl RadarLocatorState for NavicoLocatorState {
+    fn process(
+        &mut self,
+        message: &[u8],
+        from: &SocketAddrV4,
+        nic_addr: &Ipv4Addr,
+        radars: &SharedRadars,
+        subsys: &SubsystemHandle,
+    ) -> Result<(), io::Error> {
+        process_locator_report(message, from, nic_addr, radars, subsys)
+    }
+
+    fn clone(&self) -> Box<dyn RadarLocatorState> {
+        Box::new(NavicoLocatorState {}) // Navico is stateless
+    }
+}
+
+#[derive(Clone, Copy)]
 struct NavicoLocator {}
 
-#[async_trait]
 impl RadarLocator for NavicoLocator {
-    fn update_listen_addresses(&self, addresses: &mut Vec<RadarListenAddress>) {
+    fn update_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
         if !addresses
             .iter()
             .any(|i| i.id == LocatorId::Gen3Plus && i.brand == "Navico Beacon")
         {
-            addresses.push(RadarListenAddress::new(
+            addresses.push(LocatorAddress::new(
                 LocatorId::Gen3Plus,
                 &NAVICO_BEACON_ADDRESS,
                 "Navico Beacon",
                 Some(&NAVICO_ADDRESS_REQUEST_PACKET),
-                &process_locator_report,
+                Box::new(NavicoLocatorState {}),
             ));
         }
     }
@@ -457,17 +466,17 @@ pub fn create_locator() -> Box<dyn RadarLocator + Send> {
 struct NavicoBR24Locator {}
 
 impl RadarLocator for NavicoBR24Locator {
-    fn update_listen_addresses(&self, addresses: &mut Vec<RadarListenAddress>) {
+    fn update_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
         if !addresses
             .iter()
             .any(|i| i.id == LocatorId::GenBR24 && i.brand == "Navico BR24 Beacon")
         {
-            addresses.push(RadarListenAddress::new(
+            addresses.push(LocatorAddress::new(
                 LocatorId::GenBR24,
                 &NAVICO_BR24_BEACON_ADDRESS,
                 "Navico BR24 Beacon",
                 Some(&NAVICO_ADDRESS_REQUEST_PACKET),
-                &process_locator_report,
+                Box::new(NavicoLocatorState {}),
             ));
         }
     }

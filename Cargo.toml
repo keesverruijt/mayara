@@ -7,8 +7,10 @@ rust-version = "1.80.1"
 [features]
 navico = []
 furuno = []
+garmin = []
 raymarine = []
-default = ["navico", "furuno", "raymarine"]
+# default = ["navico", "furuno", "raymarine"]
+default = ["navico"]
 
 [dependencies]
 anyhow = "1.0.86"

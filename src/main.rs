@@ -6,22 +6,16 @@ use locator::Locator;
 use log::{info, warn};
 use miette::Result;
 use radar::SharedRadars;
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_graceful_shutdown::{SubsystemBuilder, Toplevel};
 use web::Web;
 
+mod brand;
 mod config;
-// mod garmin;
-#[cfg(feature = "furuno")]
-mod furuno;
 mod locator;
-#[cfg(feature = "navico")]
-mod navico;
 mod protos;
 mod radar;
-#[cfg(feature = "raymarine")]
-mod raymarine;
 mod settings;
 mod signalk;
 mod util;

@@ -1,3 +1,4 @@
+use serde::Deserialize;
 use socket2::{Domain, Protocol, Type};
 use std::net::SocketAddrV4;
 use std::{
@@ -13,6 +14,20 @@ pub(crate) mod macos;
 
 #[cfg(target_os = "windows")]
 pub(crate) mod windows;
+
+// This is like a SocketAddrV4 but with known layout
+#[derive(Deserialize, Debug, Copy, Clone)]
+#[repr(C)]
+pub struct NetworkSocketAddrV4 {
+    addr: Ipv4Addr,
+    port: [u8; 2],
+}
+
+impl From<NetworkSocketAddrV4> for SocketAddrV4 {
+    fn from(item: NetworkSocketAddrV4) -> Self {
+        SocketAddrV4::new(item.addr, u16::from_be_bytes(item.port))
+    }
+}
 
 // this will be common for all our sockets
 pub fn new_socket() -> io::Result<socket2::Socket> {

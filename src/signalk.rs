@@ -10,7 +10,7 @@ use std::{
     pin::Pin,
     sync::atomic::{AtomicBool, Ordering},
 };
-use tokio::io::{AsyncBufReadExt, BufWriter};
+use tokio::io::AsyncBufReadExt;
 use tokio::{io::AsyncWriteExt, net::TcpStream};
 use tokio::{io::BufReader, sync::mpsc::Receiver};
 use tokio_graceful_shutdown::SubsystemHandle;

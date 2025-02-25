@@ -11,8 +11,8 @@ use tokio::time::sleep;
 use tokio_graceful_shutdown::SubsystemHandle;
 use trail::TrailBuffer;
 
+use crate::brand::raymarine::RAYMARINE_SPOKE_LEN;
 use crate::locator::LocatorId;
-use crate::navico::NAVICO_SPOKE_LEN;
 use crate::network::create_udp_multicast_listen;
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
@@ -21,7 +21,7 @@ use crate::settings::ControlType;
 use crate::util::PrintableSpoke;
 
 use super::{
-    DataUpdate, NAVICO_SPOKES, NAVICO_SPOKES_RAW, RADAR_LINE_DATA_LENGTH, SPOKES_PER_FRAME,
+    DataUpdate, RADAR_LINE_DATA_LENGTH, RAYMARINE_SPOKES, RAYMARINE_SPOKES_RAW, SPOKES_PER_FRAME,
 };
 
 const BYTE_LOOKUP_LENGTH: usize = (u8::MAX as usize) + 1;
@@ -36,7 +36,7 @@ const BYTE_LOOKUP_LENGTH: usize = (u8::MAX as usize) + 1;
  Known values for heading value:
 */
 const HEADING_TRUE_FLAG: u16 = 0x4000;
-const HEADING_MASK: u16 = NAVICO_SPOKES_RAW - 1;
+const HEADING_MASK: u16 = RAYMARINE_SPOKES_RAW - 1;
 fn is_heading_true(x: u16) -> bool {
     (x & HEADING_TRUE_FLAG) != 0
 }
@@ -114,7 +114,7 @@ enum LookupSpokeEnum {
 }
 const LOOKUP_SPOKE_LENGTH: usize = (LookupSpokeEnum::HighApproaching as usize) + 1;
 
-pub struct NavicoDataReceiver {
+pub struct RaymarineDataReceiver {
     key: String,
     statistics: Statistics,
     info: RadarInfo,
@@ -126,12 +126,13 @@ pub struct NavicoDataReceiver {
     trails: TrailBuffer,
 }
 
-impl NavicoDataReceiver {
-    pub fn new(info: RadarInfo, rx: Receiver<DataUpdate>, replay: bool) -> NavicoDataReceiver {
+impl RaymarineDataReceiver {
+    pub fn new(info: RadarInfo, rx: Receiver<DataUpdate>, replay: bool) -> RaymarineDataReceiver {
         let key = info.key();
 
         let pixel_to_blob = Self::pixel_to_blob(&info.legend);
-        let mut trails = TrailBuffer::new(info.legend.clone(), NAVICO_SPOKES, NAVICO_SPOKE_LEN);
+        let mut trails =
+            TrailBuffer::new(info.legend.clone(), RAYMARINE_SPOKES, RAYMARINE_SPOKE_LEN);
 
         if let Some(control) = info.controls.get(&ControlType::DopplerTrailsOnly) {
             if let Some(value) = control.value {
@@ -140,7 +141,7 @@ impl NavicoDataReceiver {
             }
         }
 
-        NavicoDataReceiver {
+        RaymarineDataReceiver {
             key,
             statistics: Statistics { broken_packets: 0 },
             info: info,
@@ -387,7 +388,7 @@ impl NavicoDataReceiver {
                 Ok(header) => {
                     trace!("Received {:04} header {:?}", scanline, header);
 
-                    NavicoDataReceiver::validate_4g_header(&header)
+                    RaymarineDataReceiver::validate_4g_header(&header)
                 }
                 Err(e) => {
                     warn!("Illegible spoke: {} header {:02X?}", e, &header_slice);
@@ -398,7 +399,7 @@ impl NavicoDataReceiver {
                 Ok(header) => {
                     trace!("Received {:04} header {:?}", scanline, header);
 
-                    NavicoDataReceiver::validate_br24_header(&header)
+                    RaymarineDataReceiver::validate_br24_header(&header)
                 }
                 Err(e) => {
                     warn!("Illegible spoke: {} header {:02X?}", e, &header_slice);
@@ -406,7 +407,7 @@ impl NavicoDataReceiver {
                 }
             },
             _ => {
-                panic!("Incorrect Navico type");
+                panic!("Incorrect Raymarine type");
             }
         }
     }
@@ -475,7 +476,7 @@ impl NavicoDataReceiver {
         let pixel_to_blob = &self.pixel_to_blob;
 
         // Convert the spoke data to bytes
-        let mut generic_spoke: Vec<u8> = Vec::with_capacity(NAVICO_SPOKE_LEN);
+        let mut generic_spoke: Vec<u8> = Vec::with_capacity(RAYMARINE_SPOKE_LEN);
         let low_nibble_index = (match self.doppler {
             DopplerMode::None => LookupSpokeEnum::LowNormal,
             DopplerMode::Both => LookupSpokeEnum::LowBoth,
@@ -511,12 +512,12 @@ impl NavicoDataReceiver {
         );
 
         let heading = if heading.is_some() {
-            heading.map(|h| (((h / 2) + angle) % (NAVICO_SPOKES as u16)) as u32)
+            heading.map(|h| (((h / 2) + angle) % (RAYMARINE_SPOKES as u16)) as u32)
         } else {
             let heading = crate::signalk::get_heading_true();
             heading.map(|h| {
-                (((h * NAVICO_SPOKES as f64 / (2. * PI)) as u16 + angle) % (NAVICO_SPOKES as u16))
-                    as u32
+                (((h * RAYMARINE_SPOKES as f64 / (2. * PI)) as u16 + angle)
+                    % (RAYMARINE_SPOKES as u16)) as u32
             })
         };
 
