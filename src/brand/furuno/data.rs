@@ -3,6 +3,7 @@ use log::{debug, trace, warn};
 use protobuf::Message;
 use serde::Deserialize;
 use std::f64::consts::PI;
+use std::net::Ipv4Addr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{io, time::Duration};
 use tokio::net::UdpSocket;
@@ -80,8 +81,9 @@ impl FurunoDataReceiver {
     async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
         let mut buf = Vec::with_capacity(1500);
 
+        log::info!("Starting Furuno socket loop");
         loop {
-            tokio::select! { biased;
+            tokio::select! {
                 _ = subsys.on_shutdown_requested() => {
                     return Err(RadarError::Shutdown);
                 },

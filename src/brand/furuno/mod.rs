@@ -75,14 +75,14 @@ fn process_locator_report(
         return Ok(());
     }
 
-    if log_enabled!(log::Level::Info) {
-        log::info!(
+    if log_enabled!(log::Level::Debug) {
+        log::debug!(
             "{}: Furuno report: {:02X?} len {}",
             from,
             report,
             report.len()
         );
-        log::info!("{}: printable:     {}", from, PrintableSlice::new(report));
+        log::debug!("{}: printable:     {}", from, PrintableSlice::new(report));
     }
 
     if report.len() == 32 && report[16] == b'R' && report[17] == b'D' {

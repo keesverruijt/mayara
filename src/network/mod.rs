@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use socket2::{Domain, Protocol, Type};
 use std::net::SocketAddrV4;
+use std::sync::atomic::AtomicBool;
 use std::{
     io,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -15,6 +16,11 @@ pub(crate) mod macos;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows;
 
+static G_REPLAY: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn set_replay(replay: bool) {
+    G_REPLAY.store(replay, std::sync::atomic::Ordering::Relaxed);
+}
 // This is like a SocketAddrV4 but with known layout
 #[derive(Deserialize, Debug, Copy, Clone)]
 #[repr(C)]
@@ -68,9 +74,15 @@ fn bind_to_multicast(
     addr: &SocketAddrV4,
     nic_addr: &Ipv4Addr,
 ) -> io::Result<()> {
+    let nic_addr = if G_REPLAY.load(std::sync::atomic::Ordering::Relaxed) {
+        &Ipv4Addr::UNSPECIFIED
+    } else {
+        nic_addr
+    };
+
     socket.join_multicast_v4(addr.ip(), nic_addr)?;
 
-    let socketaddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), addr.port());
+    let socketaddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), addr.port());
     socket.bind(&socket2::SockAddr::from(socketaddr))?;
     log::trace!("Binding multicast socket to {}", socketaddr);
 
@@ -84,6 +96,12 @@ fn bind_to_multicast(
     addr: &SocketAddrV4,
     nic_addr: &Ipv4Addr,
 ) -> io::Result<()> {
+    let nic_addr = if G_REPLAY.load(std::sync::atomic::Ordering::Relaxed) {
+        &Ipv4Addr::UNSPECIFIED
+    } else {
+        nic_addr
+    };
+
     // Linux is special, if we don't disable IP_MULTICAST_ALL the kernel forgets on
     // which device the multicast packet arrived and sends it to all sockets.
     #[cfg(target_os = "linux")]

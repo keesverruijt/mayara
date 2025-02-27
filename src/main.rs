@@ -75,6 +75,8 @@ async fn main() -> Result<()> {
         .filter_module("polling", log::LevelFilter::Info)
         .init();
 
+    network::set_replay(args.replay);
+
     info!("Mayara {} loglevel {}", VERSION, log_level);
     if args.replay {
         warn!("Replay mode activated, this does the following:");
