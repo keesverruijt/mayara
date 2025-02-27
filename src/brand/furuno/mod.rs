@@ -7,7 +7,7 @@ use std::{fmt, io};
 use tokio::sync::mpsc;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
-use crate::locator::{LocatorId, LocatorAddress, RadarLocator};
+use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState};
 use crate::radar::{DopplerMode, Legend, RadarInfo, SharedRadars};
 use crate::util::{c_string, PrintableSlice};
 
@@ -108,7 +108,7 @@ struct FurunoRadarReport {
 fn process_beacon_report(
     report: &[u8],
     from: &SocketAddrV4,
-    via: &Ipv4Addr,
+    nic_addr: &Ipv4Addr,
     radars: &SharedRadars,
     subsys: &SubsystemHandle,
 ) -> Result<(), io::Error> {
@@ -123,10 +123,11 @@ fn process_beacon_report(
                 }
                 let radar_addr: SocketAddrV4 = from.clone();
 
-                let radar_data: SocketAddrV4 =
+                // DRS: spoke data all on a well-known address
+                let spoke_data_addr: SocketAddrV4 =
                     SocketAddrV4::new(Ipv4Addr::new(239, 255, 0, 2), 10024);
-                let radar_report: SocketAddrV4 = radar_addr.into();
-                let radar_send: SocketAddrV4 = radar_addr.into();
+                let report_addr: SocketAddrV4 = radar_addr.clone();
+                let send_command_addr: SocketAddrV4 = radar_addr.clone();
                 let location_info: RadarInfo = RadarInfo::new(
                     LocatorId::Furuno,
                     "Furuno",
@@ -135,11 +136,11 @@ fn process_beacon_report(
                     16,
                     FURUNO_SPOKES,
                     FURUNO_SPOKE_LEN,
-                    radar_addr.into(),
-                    via.clone(),
-                    radar_data.into(),
-                    radar_report.into(),
-                    radar_send.into(),
+                    radar_addr,
+                    nic_addr.clone(),
+                    spoke_data_addr,
+                    report_addr,
+                    send_command_addr,
                     settings::new(radars.cli_args().replay),
                 );
                 found(location_info, radars, subsys);
@@ -149,13 +150,33 @@ fn process_beacon_report(
             log::error!(
                 "{} via {}: Failed to decode Furuno radar report: {}",
                 from,
-                via,
+                nic_addr,
                 e
             );
         }
     }
 
     Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct FurunoLocatorState {}
+
+impl RadarLocatorState for FurunoLocatorState {
+    fn process(
+        &mut self,
+        message: &[u8],
+        from: &SocketAddrV4,
+        nic_addr: &Ipv4Addr,
+        radars: &SharedRadars,
+        subsys: &SubsystemHandle,
+    ) -> Result<(), io::Error> {
+        process_locator_report(message, from, nic_addr, radars, subsys)
+    }
+
+    fn clone(&self) -> Box<dyn RadarLocatorState> {
+        Box::new(FurunoLocatorState {}) // Navico is stateless
+    }
 }
 
 struct FurunoLocator {}
@@ -172,7 +193,7 @@ impl RadarLocator for FurunoLocator {
                 &FURUNO_BEACON_ADDRESS,
                 "Furuno Beacon",
                 None,
-                &process_locator_report,
+                Box::new(FurunoLocatorState {}),
             ));
         }
     }

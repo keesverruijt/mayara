@@ -10,7 +10,7 @@ furuno = []
 garmin = []
 raymarine = []
 # default = ["navico", "furuno", "raymarine"]
-default = ["navico", "raymarine"]
+default = ["navico", "furuno", "raymarine"]
 
 [dependencies]
 anyhow = "1.0.86"

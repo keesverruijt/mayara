@@ -90,8 +90,8 @@ impl FurunoDataReceiver {
                 },
                 r = self.sock.as_ref().unwrap().recv_buf_from(&mut buf)  => {
                     match r {
-                        Ok(_) => {
-                            self.process_frame(&mut buf);
+                        Ok((len, _)) => {
+                            self.process_frame(&buf, len);
                         },
                         Err(e) => {
                             return Err(RadarError::Io(e));
@@ -123,7 +123,7 @@ impl FurunoDataReceiver {
         }
     }
 
-    fn process_frame(&mut self, data: &mut Vec<u8>) {
-        log::info!("Received spoke {:?}", data);
+    fn process_frame(&mut self, data: &Vec<u8>, len: usize) {
+        log::info!("Received spoke {:?}", data[0..len].to_vec());
     }
 }
