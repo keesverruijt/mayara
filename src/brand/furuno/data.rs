@@ -144,7 +144,6 @@ impl FurunoDataReceiver {
         let sweep_len = metadata.sweep_len as usize;
         trace!("Received UDP frame with {} spokes", &sweep_count);
 
-        let mut mark_full_rotation = false;
         let mut message = RadarMessage::new();
         message.radar = self.info.id as u32;
 
@@ -173,12 +172,12 @@ impl FurunoDataReceiver {
                     panic!("Impossible encoding value")
                 }
             };
-
             sweep = &sweep[used..];
-            self.prev_spoke = generic_spoke.clone();
+
             message
                 .spokes
-                .push(self.create_spoke(&metadata, angle, heading, generic_spoke));
+                .push(self.create_spoke(&metadata, angle, heading, &generic_spoke));
+
             self.sweep_count += 1;
             if angle < self.prev_angle {
                 let ms = self.info.full_rotation();
@@ -187,6 +186,7 @@ impl FurunoDataReceiver {
                 self.sweep_count = 0;
             }
             self.prev_angle = angle;
+            self.prev_spoke = generic_spoke;
         }
 
         let mut bytes = Vec::new();
@@ -257,11 +257,13 @@ impl FurunoDataReceiver {
                 }
 
                 for _ in 0..repeat {
-                    spoke.push(if prev_spoke.len() > used {
-                        prev_spoke[used]
+                    let i = spoke.len();
+                    strength = if prev_spoke.len() > i {
+                        prev_spoke[i]
                     } else {
                         0
-                    });
+                    };
+                    spoke.push(strength);
                 }
             }
             used += 1;
@@ -292,11 +294,13 @@ impl FurunoDataReceiver {
 
                 if sweep[used] & 0x01 == 0 {
                     for _ in 0..repeat {
-                        spoke.push(if prev_spoke.len() > used {
-                            prev_spoke[used]
+                        let i = spoke.len();
+                        strength = if prev_spoke.len() > i {
+                            prev_spoke[i]
                         } else {
                             0
-                        });
+                        };
+                        spoke.push(strength);
                     }
                 } else {
                     for _ in 0..repeat {
@@ -316,7 +320,7 @@ impl FurunoDataReceiver {
         metadata: &FurunoSpokeMetadata,
         angle: SpokeBearing,
         heading: SpokeBearing,
-        generic_spoke: Vec<u8>,
+        sweep: &[u8],
     ) -> Spoke {
         // Convert the spoke data to bytes
 
@@ -337,7 +341,9 @@ impl FurunoDataReceiver {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .ok();
-        spoke.data = generic_spoke;
+
+        spoke.data = vec![0; FURUNO_SPOKE_LEN];
+        spoke.data[0..sweep.len()].copy_from_slice(sweep);
 
         spoke
     }

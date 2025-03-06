@@ -141,7 +141,7 @@ fn process_beacon_report(
                     "Furuno",
                     None,
                     Some(name),
-                    16,
+                    64,
                     FURUNO_SPOKES,
                     FURUNO_SPOKE_LEN,
                     radar_addr,

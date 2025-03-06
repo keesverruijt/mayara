@@ -82,7 +82,7 @@ impl FurunoReportReceiver {
         loop {
             self.report_request_timeout += self.report_request_interval;
             let timeout = self.report_request_timeout;
-            self.set_value(&ControlType::Range, 800.);
+            self.set_value(&ControlType::Range, 400.);
             self.set_value_auto(&ControlType::Gain, 50., 1);
 
             tokio::select! {
