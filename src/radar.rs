@@ -2,7 +2,6 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use enum_primitive_derive::Primitive;
 use log::info;
-use protobuf::Message;
 use serde::ser::{SerializeMap, Serializer};
 use serde::Serialize;
 use std::time::{Duration, Instant};
@@ -19,9 +18,9 @@ pub(crate) mod trail;
 
 use crate::config::Persistence;
 use crate::locator::LocatorId;
-use crate::protos::RadarMessage::RadarMessage;
 use crate::settings::{
     Control, ControlDataType, ControlError, ControlMessage, ControlType, ControlValue, Controls,
+    SharedControls,
 };
 use crate::Cli;
 
@@ -225,7 +224,7 @@ pub(crate) struct RadarInfo {
     pub send_command_addr: SocketAddrV4, // Where displays will send commands to the radar
     pub legend: Legend,                  // What pixel values mean
     pub range_detection: Option<RangeDetection>, // if Some, then ranges are flexible, detected and persisted
-    pub controls: Controls, // Which controls there are, not complete in beginning
+    pub controls: SharedControls, // Which controls there are, not complete in beginning
     rotation_timestamp: Instant,
 
     // Channels
@@ -248,7 +247,7 @@ impl RadarInfo {
         spoke_data_addr: SocketAddrV4,
         report_addr: SocketAddrV4,
         send_command_addr: SocketAddrV4,
-        controls: Controls,
+        controls: SharedControls,
     ) -> Self {
         let (message_tx, _message_rx) = tokio::sync::broadcast::channel(32);
         let (broadcast_control_tx, _control_rx) = tokio::sync::broadcast::channel(32);
@@ -394,241 +393,6 @@ impl RadarInfo {
             }
         }
     }
-
-    pub async fn send_all_json(
-        &self,
-        reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
-    ) -> Result<(), RadarError> {
-        for c in self.controls.iter() {
-            self.send_json(reply_tx.clone(), c, None).await?;
-        }
-        Ok(())
-    }
-
-    pub fn set_refresh(&mut self, control_type: &ControlType) {
-        if let Some(control) = self.controls.get_mut(control_type) {
-            control.needs_refresh = true;
-        }
-    }
-
-    pub fn set_value_auto_enabled(
-        &mut self,
-        control_type: &ControlType,
-        value: f32,
-        auto: Option<bool>,
-        enabled: Option<bool>,
-    ) -> Result<Option<()>, ControlError> {
-        let control = {
-            if let Some(control) = self.controls.get_mut(control_type) {
-                Ok(control
-                    .set(value, None, auto, enabled)?
-                    .map(|_| control.clone()))
-            } else {
-                Err(ControlError::NotSupported(*control_type))
-            }
-        }?;
-
-        // If the control changed, control.set returned Some(control)
-        if let Some(control) = control {
-            self.broadcast_json(&control);
-            Ok(Some(()))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn set(
-        &mut self,
-        control_type: &ControlType,
-        value: f32,
-        auto: Option<bool>,
-    ) -> Result<Option<()>, ControlError> {
-        let control = {
-            if let Some(control) = self.controls.get_mut(control_type) {
-                Ok(control
-                    .set(value, None, auto, None)?
-                    .map(|_| control.clone()))
-            } else {
-                Err(ControlError::NotSupported(*control_type))
-            }
-        }?;
-
-        // If the control changed, control.set returned Some(control)
-        if let Some(control) = control {
-            self.broadcast_json(&control);
-            Ok(Some(()))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn set_auto_state(
-        &mut self,
-        control_type: &ControlType,
-        auto: bool,
-    ) -> Result<(), ControlError> {
-        if let Some(control) = self.controls.get_mut(control_type) {
-            control.set_auto(auto);
-        } else {
-            return Err(ControlError::NotSupported(*control_type));
-        };
-        Ok(())
-    }
-
-    pub fn set_value_auto(
-        &mut self,
-        control_type: &ControlType,
-        auto: bool,
-        value: f32,
-    ) -> Result<Option<()>, ControlError> {
-        self.set(control_type, value, Some(auto))
-    }
-
-    pub fn set_value_with_many_auto(
-        &mut self,
-        control_type: &ControlType,
-        value: f32,
-        auto_value: f32,
-    ) -> Result<Option<()>, ControlError> {
-        let control = {
-            if let Some(control) = self.controls.get_mut(control_type) {
-                let auto = control.auto;
-                Ok(control
-                    .set(value, Some(auto_value), auto, None)?
-                    .map(|_| control.clone()))
-            } else {
-                Err(ControlError::NotSupported(*control_type))
-            }
-        }?;
-
-        // If the control changed, control.set returned Some(control)
-        if let Some(control) = control {
-            self.broadcast_json(&control);
-            Ok(Some(()))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn set_string(
-        &mut self,
-        control_type: &ControlType,
-        value: String,
-    ) -> Result<Option<String>, ControlError> {
-        let control = {
-            if let Some(control) = self.controls.get_mut(control_type) {
-                if control.item().data_type == ControlDataType::String {
-                    Ok(control.set_string(value).map(|_| control.clone()))
-                } else {
-                    let i = value
-                        .parse::<i32>()
-                        .map_err(|_| ControlError::Invalid(control_type.clone(), value))?;
-                    control
-                        .set(i as f32, None, None, None)
-                        .map(|_| Some(control.clone()))
-                }
-            } else {
-                Err(ControlError::NotSupported(*control_type))
-            }
-        }?;
-
-        if let Some(control) = control {
-            self.broadcast_json(&control);
-            Ok(control.description.clone())
-        } else {
-            Ok(None)
-        }
-    }
-
-    fn get_description(control: &Control) -> Option<String> {
-        if let (Some(value), Some(descriptions)) = (control.value, &control.item().descriptions) {
-            let value = value as i32;
-            if value >= 0 && value < (descriptions.len() as i32) {
-                return descriptions.get(&value).cloned();
-            }
-        }
-        return None;
-    }
-
-    fn broadcast_json(&self, control: &Control) {
-        let control_value = crate::settings::ControlValue {
-            id: control.item().control_type,
-            value: control.value(),
-            auto: control.auto,
-            enabled: control.enabled,
-            error: None,
-        };
-
-        match self.broadcast_control_tx.send(control_value) {
-            Err(_e) => {}
-            Ok(cnt) => {
-                log::trace!(
-                    "Sent control value {} to {} JSON clients",
-                    control.item().control_type,
-                    cnt
-                );
-            }
-        }
-    }
-
-    pub(super) async fn send_json(
-        &self,
-        reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
-        control: &Control,
-        error: Option<String>,
-    ) -> Result<(), RadarError> {
-        let control_value = crate::settings::ControlValue {
-            id: control.item().control_type,
-            value: control.value(),
-            auto: control.auto,
-            enabled: control.enabled,
-            error,
-        };
-
-        match reply_tx.send(control_value).await {
-            Err(_e) => {}
-            Ok(()) => {
-                log::trace!(
-                    "Sent control value {} to requestng JSON client",
-                    control.item().control_type,
-                );
-            }
-        }
-
-        Ok(())
-    }
-
-    pub fn user_name(&self) -> String {
-        return self.controls.user_name().unwrap_or_else(|| self.key());
-    }
-
-    pub fn set_user_name(&mut self, name: String) {
-        self.controls.set_user_name(name);
-    }
-
-    pub fn set_model_name(&mut self, name: String) {
-        self.controls.set_model_name(name);
-    }
-
-    pub fn model_name(&self) -> Option<String> {
-        self.controls.model_name()
-    }
-
-    pub async fn send_error_to_controller(
-        &mut self,
-        reply_tx: &tokio::sync::mpsc::Sender<ControlValue>,
-        cv: &ControlValue,
-        e: RadarError,
-    ) -> Result<(), RadarError> {
-        if let Some(control) = self.controls.get(&cv.id) {
-            self.send_json(reply_tx.clone(), control, Some(e.to_string()))
-                .await?;
-            log::warn!("User tried to set invalid {}: {}", cv.id, e);
-            Ok(())
-        } else {
-            Err(RadarError::CannotSetControlType(cv.id))
-        }
-    }
 }
 
 impl Display for RadarInfo {
@@ -710,7 +474,7 @@ impl SharedRadars {
                 "Found radar: key '{}' id {} name '{}'",
                 &new_info.key,
                 new_info.id,
-                new_info.user_name()
+                new_info.controls.user_name()
             );
             radars.info.insert(key, new_info.clone());
             Some(new_info)

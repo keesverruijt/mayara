@@ -197,14 +197,15 @@ const NAVICO_BEACON_DUAL_SIZE: usize = size_of::<NavicoBeaconDual>();
 const NAVICO_BEACON_BR24_SIZE: usize = size_of::<BR24Beacon>();
 
 fn found(mut info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
-    info.set_string(&crate::settings::ControlType::UserName, info.key())
+    info.controls
+        .set_string(&crate::settings::ControlType::UserName, info.key())
         .unwrap();
 
     if let Some(mut info) = radars.located(info) {
         // It's new, start the RadarProcessor thread
 
         // Load the model name afresh, it may have been modified from persisted data
-        let model = match info.model_name() {
+        let model = match info.controls.model_name() {
             Some(s) => Model::new(&s),
             None => Model::Unknown,
         };

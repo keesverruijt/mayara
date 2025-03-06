@@ -81,14 +81,15 @@ impl Model {
 }
 
 fn found(mut info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
-    info.set_string(&crate::settings::ControlType::UserName, info.key())
+    info.controls
+        .set_string(&crate::settings::ControlType::UserName, info.key())
         .unwrap();
 
     if let Some(mut info) = radars.located(info) {
         // It's new, start the RadarProcessor thread
 
         // Load the model name afresh, it may have been modified from persisted data
-        let model = match info.model_name() {
+        let model = match info.controls.model_name() {
             Some(s) => Model::new(&s),
             None => Model::Eseries,
         };
@@ -431,7 +432,7 @@ mod tests {
         assert!(r.is_some());
         let r = r.unwrap();
         log::debug!("Radar: {:?}", r);
-        assert_eq!(r.model_name(), Some("QuantumRadar".to_string()));
+        assert_eq!(r.controls.model_name(), Some("QuantumRadar".to_string()));
         assert_eq!(r.serial_no, None);
         assert_eq!(
             r.send_command_addr,
@@ -459,7 +460,7 @@ mod tests {
         assert!(r.is_some());
         let r = r.unwrap();
         log::debug!("Radar: {:?}", r);
-        assert_eq!(r.model_name(), Some("QuantumRadar".to_string()));
+        assert_eq!(r.controls.model_name(), Some("QuantumRadar".to_string()));
         assert_eq!(r.serial_no, None);
         assert_eq!(
             r.send_command_addr,
@@ -487,7 +488,7 @@ mod tests {
         assert!(r.is_some());
         let r = r.unwrap();
         log::debug!("Radar: {:?}", r);
-        assert_eq!(r.model_name(), Some("RD/HD/Eseries".to_string()));
+        assert_eq!(r.controls.model_name(), Some("RD/HD/Eseries".to_string()));
         assert_eq!(r.serial_no, None);
         assert_eq!(
             r.send_command_addr,

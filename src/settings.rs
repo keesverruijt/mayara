@@ -6,8 +6,11 @@ use std::{
     collections::HashMap,
     fmt::{self, Display},
     str::FromStr,
+    sync::{Arc, RwLock},
 };
 use thiserror::Error;
+
+use crate::radar::RadarError;
 
 ///
 /// Radars have settings. There are some common ones that every radar supports:
@@ -34,22 +37,27 @@ pub struct Controls {
     controls: HashMap<ControlType, Control>,
     #[serde(skip)]
     replay: bool,
+
+    #[serde(skip)]
+    broadcast_control_tx: tokio::sync::broadcast::Sender<ControlValue>,
+    #[serde(skip)]
+    command_tx: tokio::sync::broadcast::Sender<ControlMessage>,
 }
 
 impl Controls {
-    pub fn get(&self, control_type: &ControlType) -> Option<&Control> {
+    pub(self) fn get(&self, control_type: &ControlType) -> Option<&Control> {
         self.controls.get(control_type)
     }
 
-    pub fn get_mut(&mut self, control_type: &ControlType) -> Option<&mut Control> {
+    pub(self) fn get_mut(&mut self, control_type: &ControlType) -> Option<&mut Control> {
         self.controls.get_mut(control_type)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &Control> {
+    pub(self) fn iter(&self) -> impl Iterator<Item = &Control> {
         self.controls.iter().map(|(_k, v)| v)
     }
 
-    pub fn insert(&mut self, control_type: ControlType, value: Control) {
+    pub(self) fn insert(&mut self, control_type: ControlType, value: Control) {
         let v = Control {
             item: ControlDefinition {
                 is_read_only: self.replay,
@@ -61,7 +69,7 @@ impl Controls {
         self.controls.insert(control_type, v);
     }
 
-    pub fn new_base(mut controls: HashMap<ControlType, Control>, replay: bool) -> Self {
+    pub(self) fn new_base(mut controls: HashMap<ControlType, Control>, replay: bool) -> Self {
         // Add _mandatory_ controls
         if !controls.contains_key(&ControlType::ModelName) {
             controls.insert(
@@ -105,31 +113,335 @@ impl Controls {
             Control::new_button(ControlType::ClearTrails),
         );
 
-        Controls { controls, replay }
+        let (broadcast_control_tx, _control_rx) = tokio::sync::broadcast::channel(32);
+        let (command_tx, _command_rx) = tokio::sync::broadcast::channel(32);
+
+        Controls {
+            controls,
+            replay,
+            broadcast_control_tx,
+            command_tx,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct SharedControls {
+    #[serde(with = "arc_rwlock_serde")]
+    controls: Arc<RwLock<Controls>>,
+}
+
+mod arc_rwlock_serde {
+    use serde::de::Deserializer;
+    use serde::ser::Serializer;
+    use serde::{Deserialize, Serialize};
+    use std::sync::{Arc, RwLock};
+
+    pub fn serialize<S, T>(val: &Arc<RwLock<T>>, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+        T: Serialize,
+    {
+        T::serialize(&*val.read().unwrap(), s)
     }
 
-    pub fn set_user_name(&mut self, name: String) {
-        let control = self.get_mut(&ControlType::UserName).unwrap();
-        control.set_string(name);
+    pub fn deserialize<'de, D, T>(d: D) -> Result<Arc<RwLock<T>>, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: Deserialize<'de>,
+    {
+        Ok(Arc::new(RwLock::new(T::deserialize(d)?)))
+    }
+}
+
+impl SharedControls {
+    pub fn new(controls: HashMap<ControlType, Control>, replay: bool) -> Self {
+        SharedControls {
+            controls: Arc::new(RwLock::new(Controls::new_base(controls, replay))),
+        }
     }
 
-    pub fn user_name(&self) -> Option<String> {
-        if let Some(control) = self.controls.get(&ControlType::UserName) {
-            return control.description.clone();
+    pub fn insert(&self, control_type: ControlType, value: Control) {
+        let mut locked = self.controls.write().unwrap();
+
+        locked.insert(control_type, value);
+    }
+
+    pub async fn send_all_json(
+        &self,
+        reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
+    ) -> Result<(), RadarError> {
+        let controls: Vec<Control> = {
+            let locked = self.controls.read().unwrap();
+
+            locked.controls.clone().into_values().collect()
+        };
+
+        for c in controls {
+            self.send_json(reply_tx.clone(), &c, None).await?;
+        }
+        Ok(())
+    }
+
+    pub fn set_refresh(&mut self, control_type: &ControlType) {
+        let mut locked = self.controls.write().unwrap();
+        if let Some(control) = locked.controls.get_mut(control_type) {
+            control.needs_refresh = true;
+        }
+    }
+
+    pub fn set_value_auto_enabled(
+        &mut self,
+        control_type: &ControlType,
+        value: f32,
+        auto: Option<bool>,
+        enabled: Option<bool>,
+    ) -> Result<Option<()>, ControlError> {
+        let control = {
+            let mut locked = self.controls.write().unwrap();
+            if let Some(control) = locked.controls.get_mut(control_type) {
+                Ok(control
+                    .set(value, None, auto, enabled)?
+                    .map(|_| control.clone()))
+            } else {
+                Err(ControlError::NotSupported(*control_type))
+            }
+        }?;
+
+        // If the control changed, control.set returned Some(control)
+        if let Some(control) = control {
+            self.broadcast_json(&control);
+            Ok(Some(()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn get(&self, control_type: &ControlType) -> Option<Control> {
+        let locked = self.controls.read().unwrap();
+
+        locked.controls.get(control_type).cloned()
+    }
+
+    pub fn set(
+        &mut self,
+        control_type: &ControlType,
+        value: f32,
+        auto: Option<bool>,
+    ) -> Result<Option<()>, ControlError> {
+        let control = {
+            let mut locked = self.controls.write().unwrap();
+            if let Some(control) = locked.controls.get_mut(control_type) {
+                Ok(control
+                    .set(value, None, auto, None)?
+                    .map(|_| control.clone()))
+            } else {
+                Err(ControlError::NotSupported(*control_type))
+            }
+        }?;
+
+        // If the control changed, control.set returned Some(control)
+        if let Some(control) = control {
+            self.broadcast_json(&control);
+            Ok(Some(()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn set_auto_state(
+        &mut self,
+        control_type: &ControlType,
+        auto: bool,
+    ) -> Result<(), ControlError> {
+        let mut locked = self.controls.write().unwrap();
+        if let Some(control) = locked.controls.get_mut(control_type) {
+            control.set_auto(auto);
+        } else {
+            return Err(ControlError::NotSupported(*control_type));
+        };
+        Ok(())
+    }
+
+    pub fn set_value_auto(
+        &mut self,
+        control_type: &ControlType,
+        auto: bool,
+        value: f32,
+    ) -> Result<Option<()>, ControlError> {
+        self.set(control_type, value, Some(auto))
+    }
+
+    pub fn set_value_with_many_auto(
+        &mut self,
+        control_type: &ControlType,
+        value: f32,
+        auto_value: f32,
+    ) -> Result<Option<()>, ControlError> {
+        let control = {
+            let mut locked = self.controls.write().unwrap();
+            if let Some(control) = locked.controls.get_mut(control_type) {
+                let auto = control.auto;
+                Ok(control
+                    .set(value, Some(auto_value), auto, None)?
+                    .map(|_| control.clone()))
+            } else {
+                Err(ControlError::NotSupported(*control_type))
+            }
+        }?;
+
+        // If the control changed, control.set returned Some(control)
+        if let Some(control) = control {
+            self.broadcast_json(&control);
+            Ok(Some(()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn set_string(
+        &mut self,
+        control_type: &ControlType,
+        value: String,
+    ) -> Result<Option<String>, ControlError> {
+        let control = {
+            let mut locked = self.controls.write().unwrap();
+            if let Some(control) = locked.controls.get_mut(control_type) {
+                if control.item().data_type == ControlDataType::String {
+                    Ok(control.set_string(value).map(|_| control.clone()))
+                } else {
+                    let i = value
+                        .parse::<i32>()
+                        .map_err(|_| ControlError::Invalid(control_type.clone(), value))?;
+                    control
+                        .set(i as f32, None, None, None)
+                        .map(|_| Some(control.clone()))
+                }
+            } else {
+                Err(ControlError::NotSupported(*control_type))
+            }
+        }?;
+
+        if let Some(control) = control {
+            self.broadcast_json(&control);
+            Ok(control.description.clone())
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn get_description(control: &Control) -> Option<String> {
+        if let (Some(value), Some(descriptions)) = (control.value, &control.item().descriptions) {
+            let value = value as i32;
+            if value >= 0 && value < (descriptions.len() as i32) {
+                return descriptions.get(&value).cloned();
+            }
         }
         return None;
     }
 
-    pub fn set_model_name(&mut self, name: String) {
-        let control = self.controls.get_mut(&ControlType::ModelName).unwrap();
+    fn broadcast_json(&self, control: &Control) {
+        let control_value = crate::settings::ControlValue {
+            id: control.item().control_type,
+            value: control.value(),
+            auto: control.auto,
+            enabled: control.enabled,
+            error: None,
+        };
+
+        let locked = self.controls.read().unwrap();
+        match locked.broadcast_control_tx.send(control_value) {
+            Err(_e) => {}
+            Ok(cnt) => {
+                log::trace!(
+                    "Sent control value {} to {} JSON clients",
+                    control.item().control_type,
+                    cnt
+                );
+            }
+        }
+    }
+
+    pub(super) async fn send_json(
+        &self,
+        reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
+        control: &Control,
+        error: Option<String>,
+    ) -> Result<(), RadarError> {
+        let control_value = crate::settings::ControlValue {
+            id: control.item().control_type,
+            value: control.value(),
+            auto: control.auto,
+            enabled: control.enabled,
+            error,
+        };
+
+        match reply_tx.send(control_value).await {
+            Err(_e) => {}
+            Ok(()) => {
+                log::trace!(
+                    "Sent control value {} to requestng JSON client",
+                    control.item().control_type,
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn send_error_to_controller(
+        &mut self,
+        reply_tx: &tokio::sync::mpsc::Sender<ControlValue>,
+        cv: &ControlValue,
+        e: RadarError,
+    ) -> Result<(), RadarError> {
+        if let Some(control) = self.get(&cv.id) {
+            self.send_json(reply_tx.clone(), &control, Some(e.to_string()))
+                .await?;
+            log::warn!("User tried to set invalid {}: {}", cv.id, e);
+            Ok(())
+        } else {
+            Err(RadarError::CannotSetControlType(cv.id))
+        }
+    }
+
+    pub fn set_user_name(&self, name: String) {
+        let mut locked = self.controls.write().unwrap();
+        let control = locked.controls.get_mut(&ControlType::UserName).unwrap();
+        control.set_string(name);
+    }
+
+    pub fn user_name(&self) -> String {
+        self.get(&ControlType::UserName)
+            .and_then(|c| c.description)
+            .unwrap()
+    }
+
+    pub fn set_model_name(&self, name: String) {
+        let mut locked = self.controls.write().unwrap();
+        let control = locked.controls.get_mut(&ControlType::ModelName).unwrap();
         control.set_string(name.clone());
     }
 
     pub fn model_name(&self) -> Option<String> {
-        if let Some(control) = self.controls.get(&ControlType::ModelName) {
-            return control.description.clone();
-        }
-        return None;
+        self.get(&ControlType::ModelName)
+            .and_then(|c| c.description)
+    }
+
+    pub fn set_valid_values(
+        &self,
+        control_type: &ControlType,
+        valid_values: Vec<i32>,
+    ) -> Result<(), ControlError> {
+        let mut locked = self.controls.write().unwrap();
+        locked
+            .controls
+            .get_mut(control_type)
+            .ok_or(ControlError::NotSupported(*control_type))
+            .map(|c| {
+                c.set_valid_values(valid_values);
+                ()
+            })
     }
 }
 
@@ -246,19 +558,20 @@ impl Control {
         }
     }
 
-    // pub fn step(mut self, step: i32) -> Self {
-    //     self.item.step_value = step;
-
-    //     self
-    // }
-
     pub fn read_only(mut self, is_read_only: bool) -> Self {
         self.set_read_only(is_read_only);
+
         self
     }
 
     pub fn set_read_only(&mut self, is_read_only: bool) {
         self.item.is_read_only = is_read_only;
+    }
+
+    pub fn internal(mut self) -> Self {
+        self.item.is_internal = true;
+
+        self
     }
 
     pub fn wire_scale_factor(mut self, wire_scale_factor: f32, with_step: bool) -> Self {
@@ -315,6 +628,7 @@ impl Control {
             is_read_only: false,
             data_type: ControlDataType::Number,
             is_send_always: false,
+            is_internal: false,
         });
         control
     }
@@ -344,6 +658,7 @@ impl Control {
             is_read_only: false,
             data_type: ControlDataType::Number,
             is_send_always: false,
+            is_internal: false,
         })
     }
 
@@ -372,6 +687,7 @@ impl Control {
             is_read_only: false,
             data_type: ControlDataType::Number,
             is_send_always: false,
+            is_internal: false,
         })
     }
 
@@ -393,6 +709,7 @@ impl Control {
             is_read_only: false,
             data_type: ControlDataType::Number,
             is_send_always: false,
+            is_internal: false,
         })
     }
 
@@ -414,6 +731,7 @@ impl Control {
             is_read_only: true,
             data_type: ControlDataType::String,
             is_send_always: false,
+            is_internal: false,
         });
         control
     }
@@ -436,6 +754,7 @@ impl Control {
             is_read_only: false,
             data_type: ControlDataType::Button,
             is_send_always: false,
+            is_internal: false,
         });
         control
     }
@@ -695,6 +1014,8 @@ pub(crate) struct ControlDefinition {
     is_read_only: bool,
     #[serde(skip)]
     is_send_always: bool, // Whether the controlvalue is sent out to client in all state messages
+    #[serde(skip)]
+    is_internal: bool,
 }
 
 fn is_false(v: &bool) -> bool {

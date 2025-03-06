@@ -27,7 +27,7 @@ use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::{
     radar::{Legend, RadarInfo, SharedRadars},
-    settings::{ControlMessage, Controls},
+    settings::{ControlMessage, Controls, SharedControls},
 };
 
 const RADAR_URI: &str = "/v1/api/radars";
@@ -115,7 +115,7 @@ struct RadarApi {
     stream_url: String,
     control_url: String,
     legend: Legend,
-    controls: Controls,
+    controls: SharedControls,
 }
 
 impl RadarApi {
@@ -127,7 +127,7 @@ impl RadarApi {
         stream_url: String,
         control_url: String,
         legend: Legend,
-        controls: Controls,
+        controls: SharedControls,
     ) -> Self {
         RadarApi {
             id: id,
@@ -176,7 +176,7 @@ async fn get_radars(
         let id = format!("radar-{}", info.id);
         let stream_url = format!("ws://{}{}{}", host, SPOKES_URI, id);
         let control_url = format!("ws://{}{}{}", host, CONTROL_URI, id);
-        let name = info.user_name();
+        let name = info.controls.user_name();
         let v = RadarApi::new(
             id.to_owned(),
             name,

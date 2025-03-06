@@ -2,12 +2,12 @@ use std::collections::HashMap;
 
 use crate::{
     radar::RadarInfo,
-    settings::{AutomaticValue, Control, ControlType, Controls, HAS_AUTO_NOT_ADJUSTABLE},
+    settings::{AutomaticValue, Control, ControlType, SharedControls, HAS_AUTO_NOT_ADJUSTABLE},
 };
 
 use super::Model;
 
-pub fn new(model: Option<&str>, replay: bool) -> Controls {
+pub fn new(model: Option<&str>, replay: bool) -> SharedControls {
     let mut controls = HashMap::new();
 
     controls.insert(
@@ -101,10 +101,10 @@ pub fn new(model: Option<&str>, replay: bool) -> Controls {
         .wire_scale_factor(255., false),
     );
 
-    Controls::new_base(controls, replay)
+    SharedControls::new(controls, replay)
 }
 
-pub fn update_when_model_known(controls: &mut Controls, model: Model, radar_info: &RadarInfo) {
+pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_info: &RadarInfo) {
     controls.set_model_name(model.to_string());
 
     let mut control = Control::new_string(ControlType::SerialNumber);
@@ -115,7 +115,7 @@ pub fn update_when_model_known(controls: &mut Controls, model: Model, radar_info
 
     // Update the UserName; it had to be present at start so it could be loaded from
     // config. Override it if it is still the 'Navico ... ' name.
-    if radar_info.user_name() == radar_info.key() {
+    if controls.user_name() == radar_info.key() {
         let mut user_name = model.to_string();
         if radar_info.serial_no.is_some() {
             let mut serial = radar_info.serial_no.clone().unwrap();
@@ -262,12 +262,8 @@ pub fn update_when_model_known(controls: &mut Controls, model: Model, radar_info
         );
         controls.insert(
             ControlType::DopplerTrailsOnly,
-            Control::new_list(ControlType::DopplerTrailsOnly, &["Off", "On"]),
+            Control::new_list(ControlType::DopplerTrailsOnly, &["Off", "On"]).internal(),
         );
-        controls
-            .get_mut(&ControlType::DopplerTrailsOnly)
-            .unwrap()
-            .set_read_only(false);
     }
 
     controls.insert(

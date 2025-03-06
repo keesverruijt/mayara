@@ -240,6 +240,7 @@ impl NavicoDataReceiver {
                         if let Err(e) = self.trails.set_trails_mode(true_motion) {
                             return self
                                 .info
+                                .controls
                                 .send_error_to_controller(
                                     &reply_tx,
                                     &cv,

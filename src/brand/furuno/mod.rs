@@ -24,7 +24,8 @@ const FURUNO_BEACON_ADDRESS: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 31, 255, 255)), 10010);
 
 fn found(mut info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
-    info.set_string(&crate::settings::ControlType::UserName, info.key())
+    info.controls
+        .set_string(&crate::settings::ControlType::UserName, info.key())
         .unwrap();
 
     if let Some(info) = radars.located(info) {

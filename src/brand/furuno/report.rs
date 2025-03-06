@@ -139,7 +139,7 @@ impl FurunoReportReceiver {
         match control_message {
             ControlMessage::NewClient(reply_tx) => {
                 // Send all control values
-                self.info.send_all_json(reply_tx.clone()).await?;
+                self.info.controls.send_all_json(reply_tx.clone()).await?;
             }
             ControlMessage::Value(reply_tx, cv) => {
                 #[cfg(none)]
@@ -176,7 +176,10 @@ impl FurunoReportReceiver {
                 }
             }
             ControlMessage::SetValue(cv) => {
-                self.info.set_string(&cv.id, cv.value.clone()).unwrap();
+                self.info
+                    .controls
+                    .set_string(&cv.id, cv.value.clone())
+                    .unwrap();
                 self.radars.update(&self.info);
                 return Ok(());
             }
@@ -205,7 +208,7 @@ impl FurunoReportReceiver {
     }
 
     fn set(&mut self, control_type: &ControlType, value: f32, auto: Option<bool>) {
-        match self.info.set(control_type, value, auto) {
+        match self.info.controls.set(control_type, value, auto) {
             Err(e) => {
                 error!("{}: {}", self.key, e.to_string());
             }
@@ -230,7 +233,11 @@ impl FurunoReportReceiver {
     }
 
     fn set_value_auto(&mut self, control_type: &ControlType, value: f32, auto: u8) {
-        match self.info.set_value_auto(control_type, auto > 0, value) {
+        match self
+            .info
+            .controls
+            .set_value_auto(control_type, auto > 0, value)
+        {
             Err(e) => {
                 error!("{}: {}", self.key, e.to_string());
             }
@@ -258,6 +265,7 @@ impl FurunoReportReceiver {
     ) {
         match self
             .info
+            .controls
             .set_value_with_many_auto(control_type, value, auto_value)
         {
             Err(e) => {
@@ -281,7 +289,7 @@ impl FurunoReportReceiver {
     }
 
     fn set_string(&mut self, control: &ControlType, value: String) {
-        match self.info.set_string(control, value) {
+        match self.info.controls.set_string(control, value) {
             Err(e) => {
                 error!("{}: {}", self.key, e.to_string());
             }

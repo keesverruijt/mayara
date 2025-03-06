@@ -5,7 +5,7 @@ use tokio::net::UdpSocket;
 
 use crate::network::create_multicast_send;
 use crate::radar::{RadarError, RadarInfo, SharedRadars};
-use crate::settings::{ControlType, ControlValue, Controls};
+use crate::settings::{ControlType, ControlValue, Controls, SharedControls};
 
 use super::Model;
 
@@ -129,7 +129,7 @@ impl Command {
         }
     }
 
-    fn get_angle_value(ct: &ControlType, controls: &Controls) -> i16 {
+    fn get_angle_value(ct: &ControlType, controls: &SharedControls) -> i16 {
         if let Some(control) = controls.get(ct) {
             if let Some(value) = control.value {
                 let value = (value * 10.0) as i32;
@@ -161,7 +161,7 @@ impl Command {
     pub async fn set_control(
         &mut self,
         cv: &ControlValue,
-        controls: &Controls,
+        controls: &SharedControls,
     ) -> Result<(), RadarError> {
         let value = cv
             .value

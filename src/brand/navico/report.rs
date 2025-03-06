@@ -394,13 +394,14 @@ impl NavicoReportReceiver {
         match control_message {
             ControlMessage::NewClient(reply_tx) => {
                 // Send all control values
-                self.info.send_all_json(reply_tx.clone()).await?;
+                self.info.controls.send_all_json(reply_tx.clone()).await?;
             }
             ControlMessage::Value(reply_tx, cv) => {
                 // match strings first
                 match cv.id {
                     ControlType::UserName => {
                         self.info
+                            .controls
                             .set_string(&ControlType::UserName, cv.value.clone())
                             .unwrap();
                         self.radars.update(&self.info);
@@ -411,7 +412,11 @@ impl NavicoReportReceiver {
                     | ControlType::DopplerTrailsOnly
                     | ControlType::TrailsMotion => {
                         if let Err(e) = self.pass_to_data_receiver(reply_tx, cv).await {
-                            return self.info.send_error_to_controller(reply_tx, cv, e).await;
+                            return self
+                                .info
+                                .controls
+                                .send_error_to_controller(reply_tx, cv, e)
+                                .await;
                         }
                         return Ok(());
                     }
@@ -423,13 +428,20 @@ impl NavicoReportReceiver {
                     .set_control(cv, &self.info.controls)
                     .await
                 {
-                    return self.info.send_error_to_controller(reply_tx, cv, e).await;
+                    return self
+                        .info
+                        .controls
+                        .send_error_to_controller(reply_tx, cv, e)
+                        .await;
                 } else {
-                    self.info.set_refresh(&cv.id);
+                    self.info.controls.set_refresh(&cv.id);
                 }
             }
             ControlMessage::SetValue(cv) => {
-                self.info.set_string(&cv.id, cv.value.clone()).unwrap();
+                self.info
+                    .controls
+                    .set_string(&cv.id, cv.value.clone())
+                    .unwrap();
                 self.radars.update(&self.info);
                 return Ok(());
             }
@@ -443,7 +455,7 @@ impl NavicoReportReceiver {
         cv: &ControlValue,
     ) -> Result<(), RadarError> {
         let value = cv.value.parse::<f32>().unwrap_or(0.);
-        if let Err(e) = self.info.set(&cv.id, value, cv.auto) {
+        if let Err(e) = self.info.controls.set(&cv.id, value, cv.auto) {
             log::warn!("Cannot set {} to {}", cv.id, value);
             return Err(RadarError::ControlError(e));
         }
@@ -481,7 +493,7 @@ impl NavicoReportReceiver {
     }
 
     fn set(&mut self, control_type: &ControlType, value: f32, auto: Option<bool>) {
-        match self.info.set(control_type, value, auto) {
+        match self.info.controls.set(control_type, value, auto) {
             Err(e) => {
                 error!("{}: {}", self.key, e.to_string());
             }
@@ -506,7 +518,11 @@ impl NavicoReportReceiver {
     }
 
     fn set_value_auto(&mut self, control_type: &ControlType, value: f32, auto: u8) {
-        match self.info.set_value_auto(control_type, auto > 0, value) {
+        match self
+            .info
+            .controls
+            .set_value_auto(control_type, auto > 0, value)
+        {
             Err(e) => {
                 error!("{}: {}", self.key, e.to_string());
             }
@@ -534,6 +550,7 @@ impl NavicoReportReceiver {
     ) {
         match self
             .info
+            .controls
             .set_value_with_many_auto(control_type, value, auto_value)
         {
             Err(e) => {
@@ -557,7 +574,7 @@ impl NavicoReportReceiver {
     }
 
     fn set_string(&mut self, control: &ControlType, value: String) {
-        match self.info.set_string(control, value) {
+        match self.info.controls.set_string(control, value) {
             Err(e) => {
                 error!("{}: {}", self.key, e.to_string());
             }
@@ -637,11 +654,10 @@ impl NavicoReportReceiver {
             }
 
             if complete {
-                if let Some(control) = self.info.controls.get_mut(&ControlType::Range) {
-                    control.set_valid_values(range_detection.ranges.clone());
-                }
-
-                self.radars.update(&self.info);
+                self.info
+                    .controls
+                    .set_valid_values(&ControlType::Range, range_detection.ranges.clone())
+                    .unwrap();
             }
         }
 
@@ -827,6 +843,7 @@ impl NavicoReportReceiver {
             self.set_value_auto(&ControlType::Sea, sea as f32, sea_auto);
         } else {
             self.info
+                .controls
                 .set_auto_state(&ControlType::Sea, sea_auto > 0)
                 .unwrap(); // Only crashes if control not supported which would be an internal bug
         }
@@ -922,8 +939,10 @@ impl NavicoReportReceiver {
             let end_angle = i16::from_le_bytes(blanking.end_angle);
             let enabled = Some(blanking.enabled > 0);
             self.info
+                .controls
                 .set_value_auto_enabled(&start, start_angle as f32, None, enabled)?;
             self.info
+                .controls
                 .set_value_auto_enabled(&end, end_angle as f32, None, enabled)?;
         }
 
@@ -952,8 +971,10 @@ impl NavicoReportReceiver {
             let end_angle = i16::from_le_bytes(blanking.end_angle);
             let enabled = Some(blanking.enabled > 0);
             self.info
+                .controls
                 .set_value_auto_enabled(&start, start_angle as f32, None, enabled)?;
             self.info
+                .controls
                 .set_value_auto_enabled(&end, end_angle as f32, None, enabled)?;
         }
 

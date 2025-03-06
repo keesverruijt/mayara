@@ -147,7 +147,7 @@ impl Persistence {
             .entry(radar_info.key())
             .or_insert(Radar::default());
 
-        let user_name = radar_info.user_name();
+        let user_name = radar_info.controls.user_name();
         if radar.user_name != user_name {
             radar.user_name = user_name;
             modified = true;
@@ -162,7 +162,7 @@ impl Persistence {
             }
         }
 
-        let model_name = radar_info.model_name();
+        let model_name = radar_info.controls.model_name();
         if radar.model_name != model_name {
             radar.model_name = model_name;
             modified = true;
@@ -180,14 +180,15 @@ impl Persistence {
     pub fn update_info_from_persistence(&self, info: &mut RadarInfo) {
         if let Some(p) = self.config.radars.get(&info.key()) {
             if p.model_name.is_some() {
-                info.set_model_name(p.model_name.as_ref().unwrap().clone());
+                info.controls
+                    .set_model_name(p.model_name.as_ref().unwrap().clone());
             }
             if let Some(ranges) = &p.ranges {
                 if ranges.len() > 0 {
                     info.range_detection = Some(RangeDetection::restore(ranges));
                 }
             }
-            info.set_user_name(p.user_name.clone());
+            info.controls.set_user_name(p.user_name.clone());
             info.id = p.id;
         }
     }
