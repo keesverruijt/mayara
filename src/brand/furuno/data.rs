@@ -85,21 +85,26 @@ impl FurunoDataReceiver {
     async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
         let mut buf = Vec::with_capacity(1500);
 
+        let sock = self.sock.take().unwrap();
+
         log::debug!("Starting Furuno socket loop");
         loop {
-            tokio::select! {
+            log::info!("Furuno data select!");
+            tokio::select! { biased;
                 _ = subsys.on_shutdown_requested() => {
                     return Err(RadarError::Shutdown);
                 },
-                _r = self.rx.recv() => {
+                // _r = self.rx.recv() => {
                   // self.handle_data_update(r);
-                },
-                r = self.sock.as_ref().unwrap().recv_buf_from(&mut buf)  => {
+                // },
+                r = sock.recv_buf_from(&mut buf)  => {
+                    log::info!("Furuno data recv {:?}", r);
                     match r {
                         Ok((len, _)) => {
                             self.process_frame(&buf[..len]);
                         },
                         Err(e) => {
+                            log::error!("Furuno data socket: {}", e);
                             return Err(RadarError::Io(e));
                         }
                     }
@@ -117,11 +122,8 @@ impl FurunoDataReceiver {
                     Err(RadarError::Shutdown) => {
                         return Ok(());
                     }
-                    _ => {
-                        // Ignore, reopen socket
-                    }
+                    _ => {}
                 }
-                self.sock = None;
             } else {
                 sleep(Duration::from_millis(1000)).await;
                 self.start_socket().await.unwrap();

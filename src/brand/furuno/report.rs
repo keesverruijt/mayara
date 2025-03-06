@@ -77,7 +77,9 @@ impl FurunoReportReceiver {
     //
     async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
         debug!("{}: listening for reports", self.key);
-        let mut command_rx = self.info.command_tx.subscribe();
+        let mut command_rx = self.info.control_message_subscribe();
+
+        let report_socket = self.sock.take().unwrap();
 
         loop {
             self.report_request_timeout += self.report_request_interval;
@@ -95,7 +97,7 @@ impl FurunoReportReceiver {
 
                 },
 
-                r = self.sock.as_ref().unwrap().recv_buf_from(&mut self.buf)  => {
+                r = report_socket.recv_buf_from(&mut self.buf)  => {
                     match r {
                         Ok((_len, _addr)) => {
                             if let Err(e) = self.process_report().await {

@@ -285,8 +285,8 @@ impl NavicoReportReceiver {
         let args = radars.cli_args();
 
         NavicoReportReceiver {
-            key: key,
-            info: info,
+            key,
+            info,
             buf: Vec::with_capacity(1000),
             sock: None,
             radars,
@@ -328,7 +328,7 @@ impl NavicoReportReceiver {
     //
     async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
         debug!("{}: listening for reports", self.key);
-        let mut command_rx = self.info.command_tx.subscribe();
+        let mut control_message = self.info.control_message_subscribe();
 
         loop {
             let mut is_range_timeout = false;
@@ -366,7 +366,7 @@ impl NavicoReportReceiver {
                         }
                     }
                 },
-                r = command_rx.recv() => {
+                r = control_message.recv() => {
                     match r {
                         Ok(control_message) => {
                             match self.process_control_message(&control_message).await {

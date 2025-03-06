@@ -231,8 +231,8 @@ pub(crate) struct RadarInfo {
 
     // Channels
     pub message_tx: tokio::sync::broadcast::Sender<Vec<u8>>, // Serialized RadarMessage
-    pub control_tx: tokio::sync::broadcast::Sender<ControlValue>,
-    pub command_tx: tokio::sync::broadcast::Sender<ControlMessage>,
+    broadcast_control_tx: tokio::sync::broadcast::Sender<ControlValue>,
+    command_tx: tokio::sync::broadcast::Sender<ControlMessage>,
     pub protobuf_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
 }
 
@@ -253,7 +253,7 @@ impl RadarInfo {
         controls: Controls,
     ) -> Self {
         let (message_tx, _message_rx) = tokio::sync::broadcast::channel(32);
-        let (control_tx, _control_rx) = tokio::sync::broadcast::channel(32);
+        let (broadcast_control_tx, _control_rx) = tokio::sync::broadcast::channel(32);
         let (command_tx, _command_rx) = tokio::sync::broadcast::channel(32);
         let (protobuf_tx, _protobuf_rx) = tokio::sync::broadcast::channel(32);
 
@@ -289,13 +289,43 @@ impl RadarInfo {
             send_command_addr,
             legend: default_legend(false, pixel_values),
             message_tx,
-            control_tx,
+            broadcast_control_tx,
             command_tx,
             protobuf_tx,
             range_detection: None,
             controls,
             rotation_timestamp: Instant::now() - Duration::from_secs(2),
         }
+    }
+
+    pub fn broadcast_control_rx(&self) -> tokio::sync::broadcast::Receiver<ControlValue> {
+        self.broadcast_control_tx.subscribe()
+    }
+
+    pub fn report_new_client(&self, reply_tx: tokio::sync::mpsc::Sender<ControlValue>) -> bool {
+        let new_client: ControlMessage = ControlMessage::NewClient(reply_tx.clone());
+
+        if let Err(e) = self.command_tx.send(new_client) {
+            log::error!("Unable to send error to control channel: {e}");
+            return false;
+        }
+        return true;
+    }
+
+    pub fn forward_client_request(
+        &self,
+        control_value: ControlValue,
+        reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
+    ) {
+        let control_message = ControlMessage::Value(reply_tx.clone(), control_value);
+
+        if let Err(e) = self.command_tx.send(control_message) {
+            log::error!("send to control channel: {e}");
+        }
+    }
+
+    pub fn control_message_subscribe(&self) -> tokio::sync::broadcast::Receiver<ControlMessage> {
+        self.command_tx.subscribe()
     }
 
     pub fn key(&self) -> String {
@@ -537,7 +567,7 @@ impl RadarInfo {
             error: None,
         };
 
-        match self.control_tx.send(control_value) {
+        match self.broadcast_control_tx.send(control_value) {
             Err(_e) => {}
             Ok(cnt) => {
                 log::trace!(

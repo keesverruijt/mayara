@@ -281,13 +281,10 @@ async fn control_stream(
     radar: RadarInfo,
     mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
 ) {
-    let mut control_rx = radar.control_tx.subscribe();
-    let command_tx = radar.command_tx.clone();
+    let mut broadcast_control_rx = radar.broadcast_control_rx();
     let (reply_tx, mut reply_rx) = tokio::sync::mpsc::channel(60);
 
-    let new_client: ControlMessage = ControlMessage::NewClient(reply_tx.clone());
-    if let Err(e) = command_tx.send(new_client) {
-        log::error!("Unable to send error to control channel: {e}");
+    if !radar.report_new_client(reply_tx.clone()) {
         return;
     }
 
@@ -321,8 +318,7 @@ async fn control_stream(
                     }
                 }
             },
-            // this is where we receive broadcasted control values
-            r = control_rx.recv() => {
+            r = broadcast_control_rx.recv() => {
                 match r {
                     Ok(message) => {
                         let message: String = serde_json::to_string(&message).unwrap();
@@ -350,13 +346,7 @@ async fn control_stream(
                             Message::Text(message) => {
                                 if let Ok(control_value) = serde_json::from_str(&message) {
                                     log::debug!("Received ControlValue {:?}", control_value);
-
-                                    let control_message = ControlMessage::Value(reply_tx.clone(), control_value);
-
-                                    if let Err(e) = command_tx.send(control_message) {
-                                        log::error!("send to control channel: {e}");
-                                        break;
-                                    }
+                                    radar.forward_client_request(control_value, reply_tx.clone());
                                 } else {
                                     log::error!("Unknown JSON string '{}'", message);
                                 }
