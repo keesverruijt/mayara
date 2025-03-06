@@ -20,6 +20,13 @@ use thiserror::Error;
 /// To cater for this, we keep the state of these settings in generalized state
 /// structures in Rust.
 ///
+/// Per radar we keep a single Controls structure in memory that is
+/// accessed from all threads that are working for that radar and any user
+/// clients.
+///
+/// If you've got a reference to the controls object for a radar, you can
+/// subscribe to any changes made to it.
+///
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Controls {

@@ -226,14 +226,12 @@ pub(crate) struct RadarInfo {
     pub legend: Legend,                  // What pixel values mean
     pub range_detection: Option<RangeDetection>, // if Some, then ranges are flexible, detected and persisted
     pub controls: Controls, // Which controls there are, not complete in beginning
-    // pub update: fn(&mut RadarInfo), // When controls or model is updated
     rotation_timestamp: Instant,
 
     // Channels
     pub message_tx: tokio::sync::broadcast::Sender<Vec<u8>>, // Serialized RadarMessage
     broadcast_control_tx: tokio::sync::broadcast::Sender<ControlValue>,
     command_tx: tokio::sync::broadcast::Sender<ControlMessage>,
-    pub protobuf_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
 }
 
 impl RadarInfo {
@@ -255,7 +253,6 @@ impl RadarInfo {
         let (message_tx, _message_rx) = tokio::sync::broadcast::channel(32);
         let (broadcast_control_tx, _control_rx) = tokio::sync::broadcast::channel(32);
         let (command_tx, _command_rx) = tokio::sync::broadcast::channel(32);
-        let (protobuf_tx, _protobuf_rx) = tokio::sync::broadcast::channel(32);
 
         RadarInfo {
             key: {
@@ -291,7 +288,6 @@ impl RadarInfo {
             message_tx,
             broadcast_control_tx,
             command_tx,
-            protobuf_tx,
             range_detection: None,
             controls,
             rotation_timestamp: Instant::now() - Duration::from_secs(2),
@@ -434,7 +430,6 @@ impl RadarInfo {
 
         // If the control changed, control.set returned Some(control)
         if let Some(control) = control {
-            self.broadcast_protobuf(&control);
             self.broadcast_json(&control);
             Ok(Some(()))
         } else {
@@ -460,7 +455,6 @@ impl RadarInfo {
 
         // If the control changed, control.set returned Some(control)
         if let Some(control) = control {
-            self.broadcast_protobuf(&control);
             self.broadcast_json(&control);
             Ok(Some(()))
         } else {
@@ -509,7 +503,6 @@ impl RadarInfo {
 
         // If the control changed, control.set returned Some(control)
         if let Some(control) = control {
-            self.broadcast_protobuf(&control);
             self.broadcast_json(&control);
             Ok(Some(()))
         } else {
@@ -540,7 +533,6 @@ impl RadarInfo {
         }?;
 
         if let Some(control) = control {
-            self.broadcast_protobuf(&control);
             self.broadcast_json(&control);
             Ok(control.description.clone())
         } else {
@@ -604,41 +596,6 @@ impl RadarInfo {
         }
 
         Ok(())
-    }
-
-    fn broadcast_protobuf(&self, control: &Control) {
-        if let Some(value) = control.value {
-            let mut control_value = crate::protos::RadarMessage::radar_message::ControlValue::new();
-            control_value.id = control.item().control_type.to_string();
-            control_value.value = value;
-            control_value.auto = control.auto;
-            control_value.description = Self::get_description(control);
-
-            let mut message = RadarMessage::new();
-            message.controls.push(control_value);
-
-            let mut bytes = Vec::new();
-            message
-                .write_to_vec(&mut bytes)
-                .expect("Cannot write RadarMessage to vec");
-            match self.protobuf_tx.send(bytes) {
-                Err(_e) => {
-                    log::trace!(
-                        "Stored control value {} value {}",
-                        control.item().control_type,
-                        &value
-                    );
-                }
-                Ok(cnt) => {
-                    log::trace!(
-                        "Stored control value {} value {} and sent to {} clients",
-                        control.item().control_type,
-                        &value,
-                        cnt
-                    );
-                }
-            }
-        }
     }
 
     pub fn user_name(&self) -> String {

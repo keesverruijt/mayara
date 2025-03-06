@@ -37,12 +37,6 @@ message RadarMessage {
         optional int64 lon = 7; // [1e-16 degree] Location of radar at time of generation
         bytes data = 5;
     }
-    message ControlValue {
-        string          id          = 1; // See /v1/api/radars content JSON map 'controls'
-        float           value       = 2;
-        optional bool   auto        = 3;
-        optional string description = 4; // Possible English string explaining value
-    }
     repeated Spoke spokes = 2;
     repeated ControlValue controls = 3;
 }
