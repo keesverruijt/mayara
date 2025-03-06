@@ -25,6 +25,7 @@ use crate::settings::{
 };
 use crate::Cli;
 
+// A "native to radar" bearing, usually [0..2048] or [0..4096] or [0..8192]
 pub(crate) type SpokeBearing = u16;
 
 #[derive(Error, Debug)]
@@ -779,7 +780,7 @@ impl SharedRadars {
 }
 
 #[derive(Clone, Debug)]
-pub struct Radars {
+struct Radars {
     pub info: HashMap<String, RadarInfo>,
     pub args: Cli,
     pub persistent_data: Persistence,

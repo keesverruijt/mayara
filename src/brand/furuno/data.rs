@@ -1,9 +1,11 @@
-use bincode::deserialize;
-use log::{debug, trace, warn};
+use crate::network::create_udp_multicast_listen;
+use crate::protos::RadarMessage::radar_message::Spoke;
+use crate::protos::RadarMessage::RadarMessage;
+use crate::radar::*;
+
+use core::panic;
+use log::{debug, trace};
 use protobuf::Message;
-use serde::Deserialize;
-use std::f64::consts::PI;
-use std::net::Ipv4Addr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{io, time::Duration};
 use tokio::net::UdpSocket;
@@ -12,32 +14,34 @@ use tokio::time::sleep;
 use tokio_graceful_shutdown::SubsystemHandle;
 use trail::TrailBuffer;
 
-use crate::locator::{Locator, LocatorId};
-use crate::network::create_udp_multicast_listen;
-use crate::protos::RadarMessage::radar_message::Spoke;
-use crate::protos::RadarMessage::RadarMessage;
-use crate::radar::*;
-use crate::util::PrintableSpoke;
-
 use super::{FURUNO_SPOKES, FURUNO_SPOKE_LEN};
-
-const BYTE_LOOKUP_LENGTH: usize = (u8::MAX as usize) + 1;
 
 pub struct FurunoDataReceiver {
     key: String,
-    statistics: Statistics,
     info: RadarInfo,
     sock: Option<UdpSocket>,
     rx: tokio::sync::mpsc::Receiver<i32>,
-    doppler: DopplerMode,
+
     // pixel_to_blob: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH],
-    replay: bool,
+    prev_spoke: Vec<u8>,
+    prev_angle: u16,
+    sweep_count: u16,
     trails: TrailBuffer,
-    previous_range: u32,
+}
+
+#[derive(Debug)]
+struct FurunoSpokeMetadata {
+    sweep_count: u32,
+    sweep_len: u32,
+    encoding: u8,
+    have_heading: u8,
+    heading: SpokeBearing,
+    range: u32,
+    angle: SpokeBearing,
 }
 
 impl FurunoDataReceiver {
-    pub fn new(info: RadarInfo, rx: Receiver<i32>, replay: bool) -> FurunoDataReceiver {
+    pub fn new(info: RadarInfo, rx: Receiver<i32>, _replay: bool) -> FurunoDataReceiver {
         let key = info.key();
 
         // let pixel_to_blob = Self::pixel_to_blob(&info.legend);
@@ -45,15 +49,15 @@ impl FurunoDataReceiver {
 
         FurunoDataReceiver {
             key,
-            statistics: Statistics { broken_packets: 0 },
+
             info: info,
             sock: None,
             rx,
-            doppler: DopplerMode::None,
             //pixel_to_blob,
-            replay,
             trails,
-            previous_range: 0,
+            prev_spoke: Vec::new(),
+            prev_angle: 0,
+            sweep_count: 0,
         }
     }
 
@@ -81,7 +85,7 @@ impl FurunoDataReceiver {
     async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
         let mut buf = Vec::with_capacity(1500);
 
-        log::info!("Starting Furuno socket loop");
+        log::debug!("Starting Furuno socket loop");
         loop {
             tokio::select! {
                 _ = subsys.on_shutdown_requested() => {
@@ -93,7 +97,7 @@ impl FurunoDataReceiver {
                 r = self.sock.as_ref().unwrap().recv_buf_from(&mut buf)  => {
                     match r {
                         Ok((len, _)) => {
-                            self.process_frame(&buf, len);
+                            self.process_frame(&buf[..len]);
                         },
                         Err(e) => {
                             return Err(RadarError::Io(e));
@@ -125,7 +129,234 @@ impl FurunoDataReceiver {
         }
     }
 
-    fn process_frame(&mut self, data: &Vec<u8>, len: usize) {
-        log::info!("Received spoke {:?}", data[0..len].to_vec());
+    fn process_frame(&mut self, data: &[u8]) {
+        if data.len() < 16 || data[0] != 0x02 {
+            log::debug!("Dropping invalid frame");
+            return;
+        }
+
+        let mut message = RadarMessage::new();
+        message.radar = self.info.id as u32;
+
+        let metadata: FurunoSpokeMetadata = Self::parse_metadata_header(&data);
+
+        let sweep_count = metadata.sweep_count;
+        let sweep_len = metadata.sweep_len as usize;
+        trace!("Received UDP frame with {} spokes", &sweep_count);
+
+        let mut mark_full_rotation = false;
+        let mut message = RadarMessage::new();
+        message.radar = self.info.id as u32;
+
+        let mut sweep: &[u8] = &data[16..];
+        for sweep_idx in 0..sweep_count {
+            if sweep.len() < 5 {
+                log::error!("Unsufficient data for sweep {}", sweep_idx);
+                break;
+            }
+            let angle = ((sweep[1] as u16) << 8) | sweep[0] as u16;
+            let heading = ((sweep[3] as u16) << 8) | sweep[2] as u16;
+            sweep = &sweep[4..];
+
+            let (generic_spoke, used) = match metadata.encoding {
+                0 => Self::decode_sweep_encoding_0(sweep),
+                1 => Self::decode_sweep_encoding_1(sweep, sweep_len),
+                2 => {
+                    if sweep_idx == 0 {
+                        Self::decode_sweep_encoding_1(sweep, sweep_len)
+                    } else {
+                        Self::decode_sweep_encoding_2(sweep, self.prev_spoke.as_slice(), sweep_len)
+                    }
+                }
+                3 => Self::decode_sweep_encoding_3(sweep, self.prev_spoke.as_slice(), sweep_len),
+                _ => {
+                    panic!("Impossible encoding value")
+                }
+            };
+
+            sweep = &sweep[used..];
+            self.prev_spoke = generic_spoke.clone();
+            message
+                .spokes
+                .push(self.create_spoke(&metadata, angle, heading, generic_spoke));
+            self.sweep_count += 1;
+            if angle < self.prev_angle {
+                let ms = self.info.full_rotation();
+                self.trails.set_rotation_speed(ms);
+                log::debug!("sweep_count = {}", self.sweep_count);
+                self.sweep_count = 0;
+            }
+            self.prev_angle = angle;
+        }
+
+        let mut bytes = Vec::new();
+        message
+            .write_to_vec(&mut bytes)
+            .expect("Cannot write RadarMessage to vec");
+
+        match self.info.message_tx.send(bytes) {
+            Err(e) => {
+                trace!("{}: Dropping received spoke: {}", self.key, e);
+            }
+            Ok(count) => {
+                trace!("{}: sent to {} receivers", self.key, count);
+            }
+        }
+    }
+
+    fn decode_sweep_encoding_0(sweep: &[u8]) -> (Vec<u8>, usize) {
+        let spoke = sweep.to_vec();
+
+        let used = sweep.len();
+        (spoke, used)
+    }
+
+    fn decode_sweep_encoding_1(sweep: &[u8], sweep_len: usize) -> (Vec<u8>, usize) {
+        let mut spoke = Vec::with_capacity(FURUNO_SPOKE_LEN);
+        let mut used = 0;
+        let mut strength: u8 = 0;
+
+        while spoke.len() < sweep_len && used < sweep.len() {
+            if sweep[used] & 0x01 == 0 {
+                strength = sweep[used];
+                spoke.push(strength);
+            } else {
+                let mut repeat = sweep[used] >> 1;
+                if repeat == 0 {
+                    repeat = 0x80;
+                }
+
+                for _ in 0..repeat {
+                    spoke.push(strength);
+                }
+            }
+            used += 1;
+        }
+
+        used = (used + 3) & !3; // round up to int32 size
+        (spoke, used)
+    }
+
+    fn decode_sweep_encoding_2(
+        sweep: &[u8],
+        prev_spoke: &[u8],
+        sweep_len: usize,
+    ) -> (Vec<u8>, usize) {
+        let mut spoke = Vec::with_capacity(FURUNO_SPOKE_LEN);
+        let mut used = 0;
+        let mut strength: u8 = 0;
+
+        while spoke.len() < sweep_len && used < sweep.len() {
+            if sweep[used] & 0x01 == 0 {
+                strength = sweep[used];
+                spoke.push(strength);
+            } else {
+                let mut repeat = sweep[used] >> 1;
+                if repeat == 0 {
+                    repeat = 0x80;
+                }
+
+                for _ in 0..repeat {
+                    spoke.push(if prev_spoke.len() > used {
+                        prev_spoke[used]
+                    } else {
+                        0
+                    });
+                }
+            }
+            used += 1;
+        }
+
+        used = (used + 3) & !3; // round up to int32 size
+        (spoke, used)
+    }
+
+    fn decode_sweep_encoding_3(
+        sweep: &[u8],
+        prev_spoke: &[u8],
+        sweep_len: usize,
+    ) -> (Vec<u8>, usize) {
+        let mut spoke = Vec::with_capacity(FURUNO_SPOKE_LEN);
+        let mut used = 0;
+        let mut strength: u8 = 0;
+
+        while spoke.len() < sweep_len && used < sweep.len() {
+            if sweep[used] & 0x03 == 0 {
+                strength = sweep[used];
+                spoke.push(strength);
+            } else {
+                let mut repeat = sweep[used] >> 2;
+                if repeat == 0 {
+                    repeat = 0x40;
+                }
+
+                if sweep[used] & 0x01 == 0 {
+                    for _ in 0..repeat {
+                        spoke.push(if prev_spoke.len() > used {
+                            prev_spoke[used]
+                        } else {
+                            0
+                        });
+                    }
+                } else {
+                    for _ in 0..repeat {
+                        spoke.push(strength);
+                    }
+                }
+            }
+            used += 1;
+        }
+
+        used = (used + 3) & !3; // round up to int32 size
+        (spoke, used)
+    }
+
+    fn create_spoke(
+        &mut self,
+        metadata: &FurunoSpokeMetadata,
+        angle: SpokeBearing,
+        heading: SpokeBearing,
+        generic_spoke: Vec<u8>,
+    ) -> Spoke {
+        // Convert the spoke data to bytes
+
+        let heading: Option<u32> = if metadata.have_heading > 0 {
+            Some(heading as u32)
+        } else {
+            let heading = crate::signalk::get_heading_true();
+            heading.map(|h| h as u32)
+        };
+
+        let mut spoke = Spoke::new();
+        spoke.range = metadata.range;
+        spoke.angle = angle as u32;
+        spoke.bearing = heading;
+
+        (spoke.lat, spoke.lon) = crate::signalk::get_position_i64();
+        spoke.time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .ok();
+        spoke.data = generic_spoke;
+
+        spoke
+    }
+
+    fn parse_metadata_header(data: &[u8]) -> FurunoSpokeMetadata {
+        let sweep_count = (data[9] >> 1) as u32;
+        let sweep_len = ((data[11] & 0x07) as u32) << 8 | data[10] as u32;
+        let encoding = ((data[11] & 0x18) >> 3) as u8;
+        let have_heading = ((data[15] & 0x30) >> 3) as u8;
+        let range = (((data[15] & 0x07) as u32) << 8) + data[14] as u32;
+        let metadata = FurunoSpokeMetadata {
+            sweep_count,
+            sweep_len,
+            encoding,
+            have_heading,
+            heading: 0,
+            range,
+            angle: 0,
+        };
+        metadata
     }
 }

@@ -1,22 +1,23 @@
 use async_trait::async_trait;
 use bincode::deserialize;
-use log::{log_enabled, trace};
+use log::log_enabled;
 use serde::Deserialize;
+use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::{fmt, io};
 use tokio::sync::mpsc;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
 use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState};
-use crate::radar::{DopplerMode, Legend, RadarInfo, SharedRadars};
+use crate::radar::{RadarInfo, SharedRadars};
 use crate::util::{c_string, PrintableSlice};
 
 mod data;
+mod report;
 mod settings;
 
-const FURUNO_SPOKES: usize = 2048;
+const FURUNO_SPOKES: usize = 8192;
 
-// Length of a spoke in pixels. Every pixel is 4 bits (one nibble.)
+// Maximum supported Length of a spoke in pixels.
 const FURUNO_SPOKE_LEN: usize = 1024;
 
 const FURUNO_BEACON_ADDRESS: SocketAddr =
@@ -46,6 +47,7 @@ fn found(mut info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
 
         // Clone everything moved into future twice or more
         let data_name = info.key() + " data";
+        let report_name = info.key() + " reports";
         let args = radars.cli_args();
 
         if args.output {
@@ -56,11 +58,16 @@ fn found(mut info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
             }));
         }
 
-        let data_receiver = data::FurunoDataReceiver::new(info, rx_data, args.replay);
+        let data_receiver = data::FurunoDataReceiver::new(info.clone(), rx_data, args.replay);
         subsys.start(SubsystemBuilder::new(
             data_name,
             move |s: SubsystemHandle| data_receiver.run(s),
         ));
+
+        let report_receiver = report::FurunoReportReceiver::new(info, radars.clone());
+        subsys.start(SubsystemBuilder::new(report_name, |s| {
+            report_receiver.run(s)
+        }));
     }
 }
 
@@ -126,7 +133,8 @@ fn process_beacon_report(
                 // DRS: spoke data all on a well-known address
                 let spoke_data_addr: SocketAddrV4 =
                     SocketAddrV4::new(Ipv4Addr::new(239, 255, 0, 2), 10024);
-                let report_addr: SocketAddrV4 = radar_addr.clone();
+                let report_addr: SocketAddrV4 =
+                    SocketAddrV4::new(Ipv4Addr::new(239, 255, 0, 2), 10094);
                 let send_command_addr: SocketAddrV4 = radar_addr.clone();
                 let location_info: RadarInfo = RadarInfo::new(
                     LocatorId::Furuno,

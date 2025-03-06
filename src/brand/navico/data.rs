@@ -327,7 +327,7 @@ impl NavicoDataReceiver {
 
         let mut mark_full_rotation = false;
         let mut message = RadarMessage::new();
-        message.radar = 1;
+        message.radar = self.info.id as u32;
 
         let mut offset: usize = FRAME_HEADER_LENGTH;
         for scanline in 0..scanlines_in_packet {
@@ -523,8 +523,6 @@ impl NavicoDataReceiver {
         self.trails
             .update_trails(range, heading.map(|x| x as u16), angle, &mut generic_spoke);
 
-        let mut message: RadarMessage = RadarMessage::new();
-        message.radar = self.info.id as u32;
         let mut spoke = Spoke::new();
         spoke.range = range;
         spoke.angle = angle as u32;

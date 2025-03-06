@@ -176,6 +176,8 @@ pub fn create_udp_multicast_listen(
 ) -> io::Result<UdpSocket> {
     let socket: socket2::Socket = new_socket()?;
 
+    socket.set_reuse_address(true)?;
+
     bind_to_multicast(&socket, addr, nic_addr)?;
 
     let socket = UdpSocket::from_std(socket.into())?;

@@ -55,6 +55,14 @@ impl Controls {
     }
 
     pub fn new_base(mut controls: HashMap<ControlType, Control>, replay: bool) -> Self {
+        // Add _mandatory_ controls
+        if !controls.contains_key(&ControlType::ModelName) {
+            controls.insert(
+                ControlType::ModelName,
+                Control::new_string(ControlType::ModelName),
+            );
+        }
+
         if replay {
             controls.iter_mut().for_each(|(_k, v)| {
                 v.item.is_read_only = true;
@@ -123,6 +131,52 @@ pub enum ControlMessage {
     Value(tokio::sync::mpsc::Sender<ControlValue>, ControlValue),
     NewClient(tokio::sync::mpsc::Sender<ControlValue>),
     SetValue(ControlValue),
+}
+
+#[cfg(none)]
+async fn process_control_message(
+    info: &mut RadarInfo,
+    control_message: &ControlMessage,
+) -> Result<(), RadarError> {
+    match control_message {
+        ControlMessage::NewClient(reply_tx) => {
+            // Send all control values
+            info.send_all_json(reply_tx.clone()).await?;
+        }
+        ControlMessage::Value(reply_tx, cv) => {
+            // match strings first
+            match cv.id {
+                ControlType::UserName => {
+                    info.set_string(&ControlType::UserName, cv.value.clone())
+                        .unwrap();
+                    self.radars.update(&self.info);
+                    return Ok(());
+                }
+                ControlType::TargetTrails
+                | ControlType::ClearTrails
+                | ControlType::DopplerTrailsOnly
+                | ControlType::TrailsMotion => {
+                    if let Err(e) = self.pass_to_data_receiver(reply_tx, cv).await {
+                        return info.send_error_to_controller(reply_tx, cv, e).await;
+                    }
+                    return Ok(());
+                }
+                _ => {} // rest is for the radar to handle
+            }
+
+            if let Err(e) = self.command_sender.set_control(cv, &info.controls).await {
+                return info.send_error_to_controller(reply_tx, cv, e).await;
+            } else {
+                info.set_refresh(&cv.id);
+            }
+        }
+        ControlMessage::SetValue(cv) => {
+            info.set_string(&cv.id, cv.value.clone()).unwrap();
+            info.radars_update();
+            return Ok(());
+        }
+    }
+    Ok(())
 }
 
 // This is what we send back and forth to clients

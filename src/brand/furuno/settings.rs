@@ -13,6 +13,10 @@ pub fn new(replay: bool) -> Controls {
         Control::new_string(ControlType::UserName).read_only(false),
     );
 
+    let max_value = 48. * 1852.;
+    let range_control = Control::new_numeric(ControlType::Range, 0., max_value).unit("m");
+    controls.insert(ControlType::Range, range_control);
+
     controls.insert(
         ControlType::AntennaHeight,
         Control::new_numeric(ControlType::AntennaHeight, 0., 9900.).unit("cm"),
@@ -111,17 +115,6 @@ pub fn update_when_model_known(controls: &mut Controls, radar_info: &RadarInfo) 
         }
         controls.set_user_name(user_name);
     }
-
-    let max_value = 48. * 1852.;
-    let mut range_control = Control::new_numeric(ControlType::Range, 0., max_value)
-        .unit("m")
-        .wire_scale_factor(10. * max_value, false); // Radar sends and receives in decimeters
-    if let Some(range_detection) = &radar_info.range_detection {
-        if range_detection.complete {
-            range_control.set_valid_values(range_detection.ranges.clone());
-        }
-    };
-    controls.insert(ControlType::Range, range_control);
 
     controls.insert(
         ControlType::NoTransmitStart1,
