@@ -69,10 +69,10 @@ pub async fn wait_for_ip_addr_change(cancel_token: CancellationToken) -> Result<
 }
 
 pub fn is_wireless_interface(interface_name: &str) -> bool {
-    use libc::{c_int, c_void, ifreq, ioctl, strncpy, AF_INET};
+    use libc::{c_void, ifreq, ioctl, strncpy, Ioctl, AF_INET};
     use std::ffi::CString;
 
-    const SIOCGIWNAME: c_int = 0x8B01; // Wireless Extensions request to get interface name
+    const SIOCGIWNAME: Ioctl = 0x8B01; // Wireless Extensions request to get interface name
 
     // Open a socket for ioctl operations
     let socket_fd = unsafe { libc::socket(AF_INET, libc::SOCK_DGRAM, 0) };
