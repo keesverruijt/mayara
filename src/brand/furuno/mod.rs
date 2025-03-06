@@ -58,7 +58,7 @@ fn found(mut info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
             }));
         }
 
-        let data_receiver = data::FurunoDataReceiver::new(info.clone(), rx_data, args.replay);
+        let data_receiver = data::FurunoDataReceiver::new(info.clone(), rx_data, args);
         subsys.start(SubsystemBuilder::new(
             data_name,
             move |s: SubsystemHandle| data_receiver.run(s),

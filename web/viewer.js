@@ -100,11 +100,15 @@ function restart(id) {
 }
 
 function radarLoaded(r) {
+  let maxSpokeLen = r.maxSpokeLen;
+  let spokes = r.spokes;
+  let prev_angle = -1;
+
   if (r === undefined || r.controls === undefined) {
     return;
   }
   renderer.setLegend(expandLegend(r.legend));
-  renderer.setSpokes(r.spokes, r.maxSpokeLen);
+  renderer.setSpokes(spokes, maxSpokeLen);
 
   webSocket = new WebSocket(r.streamUrl);
   webSocket.binaryType = "arraybuffer";
@@ -123,7 +127,27 @@ function radarLoaded(r) {
       var message = RadarMessage.decode(bytes);
       if (message.spokes) {
         for (let i = 0; i < message.spokes.length; i++) {
-          renderer.drawSpoke(message.spokes[i]);
+          let spoke = message.spokes[i];
+
+          // The number of spokes actually sent is usually lower than the stated angles,
+          // fill out the spokes between prev_angle and spoke.angle by repeating the spoke X times.
+          if (prev_angle > -1) {
+            let new_angle = spoke.angle;
+            if (prev_angle > new_angle) {
+              for (let angle = prev_angle; angle < spokes; angle++) {
+                spoke.angle = angle;
+                renderer.drawSpoke(spoke);
+              }
+              prev_angle = 0;
+            }
+            for (let angle = prev_angle; angle < new_angle; angle++) {
+              spoke.angle = angle;
+              renderer.drawSpoke(spoke);
+            }
+            spoke.angle = new_angle;
+          }
+          renderer.drawSpoke(spoke);
+          prev_angle = spoke.angle + 1;
         }
         renderer.render();
       }

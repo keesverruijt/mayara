@@ -1,7 +1,8 @@
 use crate::network::create_udp_multicast_listen;
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
-use crate::radar::*;
+use crate::util::PrintableSpoke;
+use crate::{radar::*, Cli};
 
 use core::panic;
 use log::{debug, trace};
@@ -19,6 +20,7 @@ use super::{FURUNO_SPOKES, FURUNO_SPOKE_LEN};
 pub struct FurunoDataReceiver {
     key: String,
     info: RadarInfo,
+    args: Cli,
     sock: Option<UdpSocket>,
     rx: tokio::sync::mpsc::Receiver<i32>,
 
@@ -35,13 +37,11 @@ struct FurunoSpokeMetadata {
     sweep_len: u32,
     encoding: u8,
     have_heading: u8,
-    heading: SpokeBearing,
     range: u32,
-    angle: SpokeBearing,
 }
 
 impl FurunoDataReceiver {
-    pub fn new(info: RadarInfo, rx: Receiver<i32>, _replay: bool) -> FurunoDataReceiver {
+    pub fn new(info: RadarInfo, rx: Receiver<i32>, args: Cli) -> FurunoDataReceiver {
         let key = info.key();
 
         // let pixel_to_blob = Self::pixel_to_blob(&info.legend);
@@ -49,8 +49,8 @@ impl FurunoDataReceiver {
 
         FurunoDataReceiver {
             key,
-
-            info: info,
+            info,
+            args,
             sock: None,
             rx,
             //pixel_to_blob,
@@ -244,11 +244,10 @@ impl FurunoDataReceiver {
     ) -> (Vec<u8>, usize) {
         let mut spoke = Vec::with_capacity(FURUNO_SPOKE_LEN);
         let mut used = 0;
-        let mut strength: u8 = 0;
 
         while spoke.len() < sweep_len && used < sweep.len() {
             if sweep[used] & 0x01 == 0 {
-                strength = sweep[used];
+                let strength = sweep[used];
                 spoke.push(strength);
             } else {
                 let mut repeat = sweep[used] >> 1;
@@ -258,7 +257,7 @@ impl FurunoDataReceiver {
 
                 for _ in 0..repeat {
                     let i = spoke.len();
-                    strength = if prev_spoke.len() > i {
+                    let strength = if prev_spoke.len() > i {
                         prev_spoke[i]
                     } else {
                         0
@@ -333,6 +332,7 @@ impl FurunoDataReceiver {
 
         let mut spoke = Spoke::new();
         spoke.range = metadata.range;
+        //        spoke.angle = (angle as usize * FURUNO_SPOKES / 8192) as u32;
         spoke.angle = angle as u32;
         spoke.bearing = heading;
 
@@ -343,8 +343,24 @@ impl FurunoDataReceiver {
             .ok();
 
         spoke.data = vec![0; FURUNO_SPOKE_LEN];
-        spoke.data[0..sweep.len()].copy_from_slice(sweep);
 
+        let mut i = 0;
+        for b in sweep {
+            spoke.data[i] = b >> 2;
+            i += 1;
+        }
+        if self.args.replay {
+            spoke.data[sweep.len() - 1] = 64;
+            spoke.data[sweep.len() - 2] = 64;
+            spoke.data[FURUNO_SPOKE_LEN - 1] = 64;
+            spoke.data[FURUNO_SPOKE_LEN - 2] = 64;
+        }
+
+        trace!(
+            "Received {:04} spoke {}",
+            angle,
+            PrintableSpoke::new(&spoke.data)
+        );
         spoke
     }
 
@@ -359,9 +375,7 @@ impl FurunoDataReceiver {
             sweep_len,
             encoding,
             have_heading,
-            heading: 0,
             range,
-            angle: 0,
         };
         metadata
     }
