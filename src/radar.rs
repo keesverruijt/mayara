@@ -18,10 +18,7 @@ pub(crate) mod trail;
 
 use crate::config::Persistence;
 use crate::locator::LocatorId;
-use crate::settings::{
-    Control, ControlDataType, ControlError, ControlMessage, ControlType, ControlValue, Controls,
-    SharedControls,
-};
+use crate::settings::{ControlError, ControlMessage, ControlType, ControlValue, SharedControls};
 use crate::Cli;
 
 // A "native to radar" bearing, usually [0..2048] or [0..4096] or [0..8192]
@@ -186,26 +183,6 @@ impl GeoPosition {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub(crate) struct RadarPosition {
-    pub(crate) position: GeoPosition,
-    pub(crate) heading: f64, // This is a true heading from North to the boat heading
-}
-
-impl RadarPosition {
-    pub(crate) fn new(position: GeoPosition, heading: f64) -> Self {
-        RadarPosition { position, heading }
-    }
-
-    pub(crate) fn position(&self) -> GeoPosition {
-        self.position
-    }
-
-    pub(crate) fn heading(&self) -> f64 {
-        self.heading
-    }
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct RadarInfo {
     key: String,
@@ -223,14 +200,12 @@ pub(crate) struct RadarInfo {
     pub report_addr: SocketAddrV4,       // Where the radar will send reports
     pub send_command_addr: SocketAddrV4, // Where displays will send commands to the radar
     pub legend: Legend,                  // What pixel values mean
+    pub controls: SharedControls,        // Which controls there are, not complete in beginning
     pub range_detection: Option<RangeDetection>, // if Some, then ranges are flexible, detected and persisted
-    pub controls: SharedControls, // Which controls there are, not complete in beginning
     rotation_timestamp: Instant,
 
     // Channels
     pub message_tx: tokio::sync::broadcast::Sender<Vec<u8>>, // Serialized RadarMessage
-    broadcast_control_tx: tokio::sync::broadcast::Sender<ControlValue>,
-    command_tx: tokio::sync::broadcast::Sender<ControlMessage>,
 }
 
 impl RadarInfo {
@@ -250,8 +225,6 @@ impl RadarInfo {
         controls: SharedControls,
     ) -> Self {
         let (message_tx, _message_rx) = tokio::sync::broadcast::channel(32);
-        let (broadcast_control_tx, _control_rx) = tokio::sync::broadcast::channel(32);
-        let (command_tx, _command_rx) = tokio::sync::broadcast::channel(32);
 
         RadarInfo {
             key: {
@@ -285,8 +258,6 @@ impl RadarInfo {
             send_command_addr,
             legend: default_legend(false, pixel_values),
             message_tx,
-            broadcast_control_tx,
-            command_tx,
             range_detection: None,
             controls,
             rotation_timestamp: Instant::now() - Duration::from_secs(2),
@@ -294,17 +265,11 @@ impl RadarInfo {
     }
 
     pub fn broadcast_control_rx(&self) -> tokio::sync::broadcast::Receiver<ControlValue> {
-        self.broadcast_control_tx.subscribe()
+        self.controls.broadcast_control_rx()
     }
 
     pub fn report_new_client(&self, reply_tx: tokio::sync::mpsc::Sender<ControlValue>) -> bool {
-        let new_client: ControlMessage = ControlMessage::NewClient(reply_tx.clone());
-
-        if let Err(e) = self.command_tx.send(new_client) {
-            log::error!("Unable to send error to control channel: {e}");
-            return false;
-        }
-        return true;
+        self.controls.report_new_client(reply_tx)
     }
 
     pub fn forward_client_request(
@@ -312,15 +277,12 @@ impl RadarInfo {
         control_value: ControlValue,
         reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
     ) {
-        let control_message = ControlMessage::Value(reply_tx.clone(), control_value);
-
-        if let Err(e) = self.command_tx.send(control_message) {
-            log::error!("send to control channel: {e}");
-        }
+        self.controls
+            .forward_client_request(control_value, reply_tx)
     }
 
     pub fn control_message_subscribe(&self) -> tokio::sync::broadcast::Receiver<ControlMessage> {
-        self.command_tx.subscribe()
+        self.controls.control_message_subscribe()
     }
 
     pub fn key(&self) -> String {
@@ -340,19 +302,14 @@ impl RadarInfo {
         self.rotation_timestamp = now;
 
         log::debug!(
-            "{}: rotation speed elapsed {} = {} dRPM",
+            "{}: rotation speed elapsed {} = {} RPM",
             self.key,
             diff,
             rpm
         );
 
         if diff < 10000. && diff > 300. {
-            let _ = self
-                .command_tx
-                .send(ControlMessage::SetValue(ControlValue::new(
-                    ControlType::RotationSpeed,
-                    rpm,
-                )));
+            let _ = self.controls.set_string(&ControlType::RotationSpeed, rpm);
             diff as u32
         } else {
             0

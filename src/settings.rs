@@ -127,7 +127,7 @@ impl Controls {
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct SharedControls {
-    #[serde(with = "arc_rwlock_serde")]
+    #[serde(flatten, with = "arc_rwlock_serde")]
     controls: Arc<RwLock<Controls>>,
 }
 
@@ -145,6 +145,7 @@ mod arc_rwlock_serde {
         T::serialize(&*val.read().unwrap(), s)
     }
 
+    #[allow(dead_code)]
     pub fn deserialize<'de, D, T>(d: D) -> Result<Arc<RwLock<T>>, D::Error>
     where
         D: Deserializer<'de>,
@@ -165,6 +166,42 @@ impl SharedControls {
         let mut locked = self.controls.write().unwrap();
 
         locked.insert(control_type, value);
+    }
+
+    pub fn broadcast_control_rx(&self) -> tokio::sync::broadcast::Receiver<ControlValue> {
+        let locked = self.controls.read().unwrap();
+
+        locked.broadcast_control_tx.subscribe()
+    }
+
+    pub fn report_new_client(&self, reply_tx: tokio::sync::mpsc::Sender<ControlValue>) -> bool {
+        let locked = self.controls.read().unwrap();
+        let new_client: ControlMessage = ControlMessage::NewClient(reply_tx.clone());
+
+        if let Err(e) = locked.command_tx.send(new_client) {
+            log::error!("Unable to send error to control channel: {e}");
+            return false;
+        }
+        return true;
+    }
+
+    pub fn forward_client_request(
+        &self,
+        control_value: ControlValue,
+        reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
+    ) {
+        let locked = self.controls.read().unwrap();
+        let control_message = ControlMessage::Value(reply_tx.clone(), control_value);
+
+        if let Err(e) = locked.command_tx.send(control_message) {
+            log::error!("send to control channel: {e}");
+        }
+    }
+
+    pub fn control_message_subscribe(&self) -> tokio::sync::broadcast::Receiver<ControlMessage> {
+        let locked = self.controls.read().unwrap();
+
+        locked.command_tx.subscribe()
     }
 
     pub async fn send_all_json(

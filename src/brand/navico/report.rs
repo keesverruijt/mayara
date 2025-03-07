@@ -501,10 +501,11 @@ impl NavicoReportReceiver {
                 if log::log_enabled!(log::Level::Debug) {
                     let control = self.info.controls.get(control_type).unwrap();
                     log::trace!(
-                        "{}: Control '{}' new value {} enabled {:?}",
+                        "{}: Control '{}' new value {} auto {:?} enabled {:?}",
                         self.key,
                         control_type,
                         control.value(),
+                        control.auto,
                         control.enabled
                     );
                 }
@@ -518,28 +519,7 @@ impl NavicoReportReceiver {
     }
 
     fn set_value_auto(&mut self, control_type: &ControlType, value: f32, auto: u8) {
-        match self
-            .info
-            .controls
-            .set_value_auto(control_type, auto > 0, value)
-        {
-            Err(e) => {
-                error!("{}: {}", self.key, e.to_string());
-            }
-            Ok(Some(())) => {
-                if log::log_enabled!(log::Level::Debug) {
-                    let control = self.info.controls.get(control_type).unwrap();
-                    debug!(
-                        "{}: Control '{}' new value {} auto {}",
-                        self.key,
-                        control_type,
-                        control.value(),
-                        auto
-                    );
-                }
-            }
-            Ok(None) => {}
-        };
+        self.set(control_type, value, Some(auto > 0))
     }
 
     fn set_value_with_many_auto(
