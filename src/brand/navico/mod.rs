@@ -39,14 +39,6 @@ const RADAR_LINE_DATA_LENGTH: usize = NAVICO_SPOKE_LEN / NAVICO_PIXELS_PER_BYTE;
 const NAVICO_BEACON_ADDRESS: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(236, 6, 7, 5)), 6878);
 
-// Messages sent to Data receiver
-#[derive(Debug)]
-pub enum DataUpdate {
-    Doppler(DopplerMode),
-    Legend(Legend),
-    ControlValue(mpsc::Sender<ControlValue>, ControlValue),
-}
-
 /* NAVICO API SPOKES */
 /*
  * Data coming from radar is always 4 bits, packed two per byte.

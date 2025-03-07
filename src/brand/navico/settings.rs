@@ -2,7 +2,10 @@ use std::collections::HashMap;
 
 use crate::{
     radar::RadarInfo,
-    settings::{AutomaticValue, Control, ControlType, SharedControls, HAS_AUTO_NOT_ADJUSTABLE},
+    settings::{
+        AutomaticValue, Control, ControlDestination, ControlType, SharedControls,
+        HAS_AUTO_NOT_ADJUSTABLE,
+    },
 };
 
 use super::Model;
@@ -262,7 +265,8 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
         );
         controls.insert(
             ControlType::DopplerTrailsOnly,
-            Control::new_list(ControlType::DopplerTrailsOnly, &["Off", "On"]).internal(),
+            Control::new_list(ControlType::DopplerTrailsOnly, &["Off", "On"])
+                .set_destination(ControlDestination::Data),
         );
     }
 

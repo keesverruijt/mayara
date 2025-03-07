@@ -17,12 +17,10 @@ use crate::network::create_udp_multicast_listen;
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::*;
-use crate::settings::ControlType;
+use crate::settings::{ControlType, DataUpdate};
 use crate::util::PrintableSpoke;
 
-use super::{
-    DataUpdate, NAVICO_SPOKES, NAVICO_SPOKES_RAW, RADAR_LINE_DATA_LENGTH, SPOKES_PER_FRAME,
-};
+use super::{NAVICO_SPOKES, NAVICO_SPOKES_RAW, RADAR_LINE_DATA_LENGTH, SPOKES_PER_FRAME};
 
 const BYTE_LOOKUP_LENGTH: usize = (u8::MAX as usize) + 1;
 
@@ -241,11 +239,7 @@ impl NavicoDataReceiver {
                             return self
                                 .info
                                 .controls
-                                .send_error_to_controller(
-                                    &reply_tx,
-                                    &cv,
-                                    RadarError::ControlError(e),
-                                )
+                                .send_error_to_client(reply_tx, &cv, RadarError::ControlError(e))
                                 .await;
                         }
                     }

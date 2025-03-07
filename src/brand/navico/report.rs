@@ -6,18 +6,18 @@ use std::mem::transmute;
 use std::time::Duration;
 use std::{fmt, io};
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc::Sender;
+use tokio::sync::*;
 use tokio::time::{sleep, sleep_until, Instant};
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::network::create_udp_multicast_listen;
 use crate::radar::{DopplerMode, RadarError, RadarInfo, RangeDetection, SharedRadars};
-use crate::settings::{ControlMessage, ControlType, ControlValue};
+use crate::settings::{ControlMessage, ControlType, ControlValue, DataUpdate};
 use crate::util::{c_string, c_wide_string};
 use crate::Cli;
 
 use super::command::Command;
-use super::{DataUpdate, Model};
+use super::Model;
 
 pub struct NavicoReportReceiver {
     info: RadarInfo,
@@ -28,7 +28,8 @@ pub struct NavicoReportReceiver {
     args: Cli,
     model: Model,
     command_sender: Command,
-    data_tx: Sender<DataUpdate>,
+    data_tx: mpsc::Sender<DataUpdate>,
+    message_rx: broadcast::Receiver<ControlMessage>,
     range_timeout: Option<Instant>,
     report_request_timeout: Instant,
     report_request_interval: Duration,
@@ -277,11 +278,12 @@ impl NavicoReportReceiver {
         info: RadarInfo, // Quick access to our own RadarInfo
         radars: SharedRadars,
         model: Model,
-        data_tx: Sender<DataUpdate>,
+        data_tx: mpsc::Sender<DataUpdate>,
     ) -> NavicoReportReceiver {
         let key = info.key();
 
         let command_sender = Command::new(info.clone(), model.clone(), radars.clone());
+        let message_rx = info.controls.control_message_subscribe();
         let args = radars.cli_args();
 
         NavicoReportReceiver {
@@ -297,6 +299,7 @@ impl NavicoReportReceiver {
             report_request_timeout: Instant::now(),
             report_request_interval: Duration::from_millis(5000),
             data_tx,
+            message_rx,
             reported_unknown: [false; 256],
         }
     }
@@ -328,7 +331,7 @@ impl NavicoReportReceiver {
     //
     async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
         debug!("{}: listening for reports", self.key);
-        let mut control_message = self.info.control_message_subscribe();
+        let mut control_message = self.info.controls.control_message_subscribe();
 
         loop {
             let mut is_range_timeout = false;
@@ -368,19 +371,8 @@ impl NavicoReportReceiver {
                 },
                 r = control_message.recv() => {
                     match r {
-                        Ok(control_message) => {
-                            match self.process_control_message(&control_message).await {
-                                Ok(()) => {}
-                                Err(e) => {
-                                    log::error!("Cannot act on control message: {e}");
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            log::error!("Cannot read control message: {e}");
-                            // Send a JSON reply on websocket
-
-                        }
+                        Err(e) => {},
+                        Ok(cv) => {self.process_control_message(cv).await;},
                     }
                 }
             }
@@ -389,81 +381,26 @@ impl NavicoReportReceiver {
 
     async fn process_control_message(
         &mut self,
-        control_message: &ControlMessage,
+        control_message: ControlMessage,
     ) -> Result<(), RadarError> {
-        match control_message {
-            ControlMessage::NewClient(reply_tx) => {
-                // Send all control values
-                self.info.controls.send_all_json(reply_tx.clone()).await?;
-            }
-            ControlMessage::Value(reply_tx, cv) => {
-                // match strings first
-                match cv.id {
-                    ControlType::UserName => {
-                        self.info
-                            .controls
-                            .set_string(&ControlType::UserName, cv.value.clone())
-                            .unwrap();
-                        self.radars.update(&self.info);
-                        return Ok(());
-                    }
-                    ControlType::TargetTrails
-                    | ControlType::ClearTrails
-                    | ControlType::DopplerTrailsOnly
-                    | ControlType::TrailsMotion => {
-                        if let Err(e) = self.pass_to_data_receiver(reply_tx, cv).await {
-                            return self
-                                .info
-                                .controls
-                                .send_error_to_controller(reply_tx, cv, e)
-                                .await;
-                        }
-                        return Ok(());
-                    }
-                    _ => {} // rest is for the radar to handle
-                }
+        let cv = control_message.control_value;
+        let reply_tx = control_message.reply_tx;
 
-                if let Err(e) = self
-                    .command_sender
-                    .set_control(cv, &self.info.controls)
-                    .await
-                {
-                    return self
-                        .info
-                        .controls
-                        .send_error_to_controller(reply_tx, cv, e)
-                        .await;
-                } else {
-                    self.info.controls.set_refresh(&cv.id);
-                }
-            }
-            ControlMessage::SetValue(cv) => {
-                self.info
-                    .controls
-                    .set_string(&cv.id, cv.value.clone())
-                    .unwrap();
-                self.radars.update(&self.info);
-                return Ok(());
-            }
-        }
-        Ok(())
-    }
-
-    async fn pass_to_data_receiver(
-        &mut self,
-        reply_tx: &Sender<ControlValue>,
-        cv: &ControlValue,
-    ) -> Result<(), RadarError> {
-        let value = cv.value.parse::<f32>().unwrap_or(0.);
-        if let Err(e) = self.info.controls.set(&cv.id, value, cv.auto) {
-            log::warn!("Cannot set {} to {}", cv.id, value);
-            return Err(RadarError::ControlError(e));
-        }
-
-        self.data_tx
-            .send(DataUpdate::ControlValue(reply_tx.clone(), cv.clone()))
+        if let Err(e) = self
+            .command_sender
+            .set_control(&cv, &self.info.controls)
             .await
-            .map_err(|_| RadarError::CannotSetControlType(cv.id))
+        {
+            return self
+                .info
+                .controls
+                .send_error_to_client(reply_tx, &cv, e)
+                .await;
+        } else {
+            self.info.controls.set_refresh(&cv.id);
+        }
+
+        Ok(())
     }
 
     async fn send_report_requests(&mut self) -> Result<(), RadarError> {

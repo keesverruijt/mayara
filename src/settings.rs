@@ -10,7 +10,7 @@ use std::{
 };
 use thiserror::Error;
 
-use crate::radar::RadarError;
+use crate::radar::{DopplerMode, Legend, RadarError};
 
 ///
 /// Radars have settings. There are some common ones that every radar supports:
@@ -39,9 +39,11 @@ pub struct Controls {
     replay: bool,
 
     #[serde(skip)]
-    broadcast_control_tx: tokio::sync::broadcast::Sender<ControlValue>,
+    all_clients_tx: tokio::sync::broadcast::Sender<ControlValue>,
     #[serde(skip)]
     command_tx: tokio::sync::broadcast::Sender<ControlMessage>,
+    #[serde(skip)]
+    data_tx: tokio::sync::broadcast::Sender<DataUpdate>,
 }
 
 impl Controls {
@@ -113,14 +115,16 @@ impl Controls {
             Control::new_button(ControlType::ClearTrails),
         );
 
-        let (broadcast_control_tx, _control_rx) = tokio::sync::broadcast::channel(32);
-        let (command_tx, _command_rx) = tokio::sync::broadcast::channel(32);
+        let (all_clients_tx, _) = tokio::sync::broadcast::channel(32);
+        let (command_tx, _) = tokio::sync::broadcast::channel(32);
+        let (data_tx, _) = tokio::sync::broadcast::channel(10);
 
         Controls {
             controls,
             replay,
-            broadcast_control_tx,
+            all_clients_tx,
             command_tx,
+            data_tx,
         }
     }
 }
@@ -162,39 +166,58 @@ impl SharedControls {
         }
     }
 
-    pub fn insert(&self, control_type: ControlType, value: Control) {
-        let mut locked = self.controls.write().unwrap();
-
-        locked.insert(control_type, value);
-    }
-
-    pub fn broadcast_control_rx(&self) -> tokio::sync::broadcast::Receiver<ControlValue> {
+    fn get_data_tx(&self) -> tokio::sync::broadcast::Sender<DataUpdate> {
         let locked = self.controls.read().unwrap();
 
-        locked.broadcast_control_tx.subscribe()
+        locked.data_tx.clone()
     }
 
-    pub fn report_new_client(&self, reply_tx: tokio::sync::mpsc::Sender<ControlValue>) -> bool {
+    fn get_command_tx(&self) -> tokio::sync::broadcast::Sender<ControlMessage> {
         let locked = self.controls.read().unwrap();
-        let new_client: ControlMessage = ControlMessage::NewClient(reply_tx.clone());
 
-        if let Err(e) = locked.command_tx.send(new_client) {
-            log::error!("Unable to send error to control channel: {e}");
-            return false;
-        }
-        return true;
+        locked.command_tx.clone()
     }
 
-    pub fn forward_client_request(
+    pub fn all_clients_rx(&self) -> tokio::sync::broadcast::Receiver<ControlValue> {
+        let locked = self.controls.read().unwrap();
+
+        locked.all_clients_tx.subscribe()
+    }
+
+    // process_client_request()
+    //
+    // In theory this could be from anywhere that somebody holds a SharedControls reference,
+    // but in practice only called from the websocket request handler in web.rs.
+    // The end user has sent a control update and we need to process this.
+    //
+    // Some controls are handled internally, some in the data handler for a radar and the
+    // rest are settings that need to be sent to the radar.
+    //
+    pub async fn process_client_request(
         &self,
         control_value: ControlValue,
         reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
-    ) {
-        let locked = self.controls.read().unwrap();
-        let control_message = ControlMessage::Value(reply_tx.clone(), control_value);
+    ) -> Result<(), RadarError> {
+        let control = self.get(&control_value.id);
 
-        if let Err(e) = locked.command_tx.send(control_message) {
-            log::error!("send to control channel: {e}");
+        if let Err(e) = match control {
+            Some(c) => match c.item().destination {
+                ControlDestination::Internal => self
+                    .set_string(&ControlType::UserName, control_value.value.clone())
+                    .map(|_| ())
+                    .map_err(|e| RadarError::ControlError(e)),
+                ControlDestination::Data => {
+                    self.send_to_data_handler(&reply_tx, control_value.clone())
+                }
+                ControlDestination::Command => {
+                    self.send_to_command_handler(control_value.clone(), reply_tx.clone())
+                }
+            },
+            None => Err(RadarError::CannotSetControlType(control_value.id)),
+        } {
+            self.send_error_to_client(reply_tx, &control_value, e).await
+        } else {
+            Ok(())
         }
     }
 
@@ -204,7 +227,13 @@ impl SharedControls {
         locked.command_tx.subscribe()
     }
 
-    pub async fn send_all_json(
+    pub fn data_update_subscribe(&self) -> tokio::sync::broadcast::Receiver<DataUpdate> {
+        let locked = self.controls.read().unwrap();
+
+        locked.data_tx.subscribe()
+    }
+
+    pub async fn send_all_controls(
         &self,
         reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
     ) -> Result<(), RadarError> {
@@ -215,169 +244,49 @@ impl SharedControls {
         };
 
         for c in controls {
-            self.send_json(reply_tx.clone(), &c, None).await?;
+            self.send_reply_to_client(reply_tx.clone(), &c, None)
+                .await?;
         }
         Ok(())
     }
 
-    pub fn set_refresh(&mut self, control_type: &ControlType) {
-        let mut locked = self.controls.write().unwrap();
-        if let Some(control) = locked.controls.get_mut(control_type) {
-            control.needs_refresh = true;
+    fn send_to_data_handler(
+        &self,
+        reply_tx: &tokio::sync::mpsc::Sender<ControlValue>,
+        cv: ControlValue,
+    ) -> Result<(), RadarError> {
+        let ct = cv.id;
+        let value = cv.value.parse::<f32>().unwrap_or(0.);
+
+        if let Err(e) = self.set(&cv.id, value, cv.auto) {
+            log::warn!("Cannot set {} to {}", cv.id, value);
+            return Err(RadarError::ControlError(e));
         }
+
+        self.get_data_tx()
+            .send(DataUpdate::ControlValue(reply_tx.clone(), cv))
+            .map(|_| ())
+            .map_err(|_| RadarError::CannotSetControlType(ct))
     }
 
-    pub fn set_value_auto_enabled(
-        &mut self,
-        control_type: &ControlType,
-        value: f32,
-        auto: Option<bool>,
-        enabled: Option<bool>,
-    ) -> Result<Option<()>, ControlError> {
-        let control = {
-            let mut locked = self.controls.write().unwrap();
-            if let Some(control) = locked.controls.get_mut(control_type) {
-                Ok(control
-                    .set(value, None, auto, enabled)?
-                    .map(|_| control.clone()))
-            } else {
-                Err(ControlError::NotSupported(*control_type))
-            }
-        }?;
-
-        // If the control changed, control.set returned Some(control)
-        if let Some(control) = control {
-            self.broadcast_json(&control);
-            Ok(Some(()))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn get(&self, control_type: &ControlType) -> Option<Control> {
-        let locked = self.controls.read().unwrap();
-
-        locked.controls.get(control_type).cloned()
-    }
-
-    pub fn set(
-        &mut self,
-        control_type: &ControlType,
-        value: f32,
-        auto: Option<bool>,
-    ) -> Result<Option<()>, ControlError> {
-        let control = {
-            let mut locked = self.controls.write().unwrap();
-            if let Some(control) = locked.controls.get_mut(control_type) {
-                Ok(control
-                    .set(value, None, auto, None)?
-                    .map(|_| control.clone()))
-            } else {
-                Err(ControlError::NotSupported(*control_type))
-            }
-        }?;
-
-        // If the control changed, control.set returned Some(control)
-        if let Some(control) = control {
-            self.broadcast_json(&control);
-            Ok(Some(()))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn set_auto_state(
-        &mut self,
-        control_type: &ControlType,
-        auto: bool,
-    ) -> Result<(), ControlError> {
-        let mut locked = self.controls.write().unwrap();
-        if let Some(control) = locked.controls.get_mut(control_type) {
-            control.set_auto(auto);
-        } else {
-            return Err(ControlError::NotSupported(*control_type));
+    fn send_to_command_handler(
+        &self,
+        control_value: ControlValue,
+        reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
+    ) -> Result<(), RadarError> {
+        let control_message = ControlMessage {
+            control_value,
+            reply_tx,
         };
-        Ok(())
+        let ct = control_message.control_value.id;
+
+        self.get_command_tx()
+            .send(control_message)
+            .map(|_| ())
+            .map_err(|_| RadarError::CannotSetControlType(ct))
     }
 
-    pub fn set_value_auto(
-        &mut self,
-        control_type: &ControlType,
-        auto: bool,
-        value: f32,
-    ) -> Result<Option<()>, ControlError> {
-        self.set(control_type, value, Some(auto))
-    }
-
-    pub fn set_value_with_many_auto(
-        &mut self,
-        control_type: &ControlType,
-        value: f32,
-        auto_value: f32,
-    ) -> Result<Option<()>, ControlError> {
-        let control = {
-            let mut locked = self.controls.write().unwrap();
-            if let Some(control) = locked.controls.get_mut(control_type) {
-                let auto = control.auto;
-                Ok(control
-                    .set(value, Some(auto_value), auto, None)?
-                    .map(|_| control.clone()))
-            } else {
-                Err(ControlError::NotSupported(*control_type))
-            }
-        }?;
-
-        // If the control changed, control.set returned Some(control)
-        if let Some(control) = control {
-            self.broadcast_json(&control);
-            Ok(Some(()))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn set_string(
-        &mut self,
-        control_type: &ControlType,
-        value: String,
-    ) -> Result<Option<String>, ControlError> {
-        let control = {
-            let mut locked = self.controls.write().unwrap();
-            if let Some(control) = locked.controls.get_mut(control_type) {
-                if control.item().data_type == ControlDataType::String {
-                    Ok(control.set_string(value).map(|_| control.clone()))
-                } else {
-                    let i = value
-                        .parse::<i32>()
-                        .map_err(|_| ControlError::Invalid(control_type.clone(), value))?;
-                    control
-                        .set(i as f32, None, None, None)
-                        .map(|_| Some(control.clone()))
-                }
-            } else {
-                Err(ControlError::NotSupported(*control_type))
-            }
-        }?;
-
-        if let Some(control) = control {
-            self.broadcast_json(&control);
-            Ok(control.description.clone())
-        } else {
-            Ok(None)
-        }
-    }
-
-    fn get_description(control: &Control) -> Option<String> {
-        if let (Some(value), Some(descriptions)) = (control.value, &control.item().descriptions) {
-            let value = value as i32;
-            if value >= 0 && value < (descriptions.len() as i32) {
-                return descriptions.get(&value).cloned();
-            }
-        }
-        return None;
-    }
-
-    fn broadcast_json(&self, control: &Control) {
+    fn send_to_all_clients(&self, control: &Control) {
         let control_value = crate::settings::ControlValue {
             id: control.item().control_type,
             value: control.value(),
@@ -387,7 +296,7 @@ impl SharedControls {
         };
 
         let locked = self.controls.read().unwrap();
-        match locked.broadcast_control_tx.send(control_value) {
+        match locked.all_clients_tx.send(control_value) {
             Err(_e) => {}
             Ok(cnt) => {
                 log::trace!(
@@ -399,7 +308,7 @@ impl SharedControls {
         }
     }
 
-    pub(super) async fn send_json(
+    async fn send_reply_to_client(
         &self,
         reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
         control: &Control,
@@ -426,20 +335,185 @@ impl SharedControls {
         Ok(())
     }
 
-    pub async fn send_error_to_controller(
-        &mut self,
-        reply_tx: &tokio::sync::mpsc::Sender<ControlValue>,
+    pub async fn send_error_to_client(
+        &self,
+        reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
         cv: &ControlValue,
         e: RadarError,
     ) -> Result<(), RadarError> {
         if let Some(control) = self.get(&cv.id) {
-            self.send_json(reply_tx.clone(), &control, Some(e.to_string()))
+            self.send_reply_to_client(reply_tx, &control, Some(e.to_string()))
                 .await?;
             log::warn!("User tried to set invalid {}: {}", cv.id, e);
             Ok(())
         } else {
             Err(RadarError::CannotSetControlType(cv.id))
         }
+    }
+
+    // ******* GET & SET METHODS
+
+    pub fn insert(&self, control_type: ControlType, value: Control) {
+        let mut locked = self.controls.write().unwrap();
+
+        locked.insert(control_type, value);
+    }
+
+    pub fn get(&self, control_type: &ControlType) -> Option<Control> {
+        let locked = self.controls.read().unwrap();
+
+        locked.controls.get(control_type).cloned()
+    }
+
+    pub fn set_refresh(&self, control_type: &ControlType) {
+        let mut locked = self.controls.write().unwrap();
+        if let Some(control) = locked.controls.get_mut(control_type) {
+            control.needs_refresh = true;
+        }
+    }
+
+    pub fn set_value_auto_enabled(
+        &self,
+        control_type: &ControlType,
+        value: f32,
+        auto: Option<bool>,
+        enabled: Option<bool>,
+    ) -> Result<Option<()>, ControlError> {
+        let control = {
+            let mut locked = self.controls.write().unwrap();
+            if let Some(control) = locked.controls.get_mut(control_type) {
+                Ok(control
+                    .set(value, None, auto, enabled)?
+                    .map(|_| control.clone()))
+            } else {
+                Err(ControlError::NotSupported(*control_type))
+            }
+        }?;
+
+        // If the control changed, control.set returned Some(control)
+        if let Some(control) = control {
+            self.send_to_all_clients(&control);
+            Ok(Some(()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn set(
+        &self,
+        control_type: &ControlType,
+        value: f32,
+        auto: Option<bool>,
+    ) -> Result<Option<()>, ControlError> {
+        let control = {
+            let mut locked = self.controls.write().unwrap();
+            if let Some(control) = locked.controls.get_mut(control_type) {
+                Ok(control
+                    .set(value, None, auto, None)?
+                    .map(|_| control.clone()))
+            } else {
+                Err(ControlError::NotSupported(*control_type))
+            }
+        }?;
+
+        // If the control changed, control.set returned Some(control)
+        if let Some(control) = control {
+            self.send_to_all_clients(&control);
+            Ok(Some(()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn set_auto_state(
+        &self,
+        control_type: &ControlType,
+        auto: bool,
+    ) -> Result<(), ControlError> {
+        let mut locked = self.controls.write().unwrap();
+        if let Some(control) = locked.controls.get_mut(control_type) {
+            control.set_auto(auto);
+        } else {
+            return Err(ControlError::NotSupported(*control_type));
+        };
+        Ok(())
+    }
+
+    pub fn set_value_auto(
+        &self,
+        control_type: &ControlType,
+        auto: bool,
+        value: f32,
+    ) -> Result<Option<()>, ControlError> {
+        self.set(control_type, value, Some(auto))
+    }
+
+    pub fn set_value_with_many_auto(
+        &self,
+        control_type: &ControlType,
+        value: f32,
+        auto_value: f32,
+    ) -> Result<Option<()>, ControlError> {
+        let control = {
+            let mut locked = self.controls.write().unwrap();
+            if let Some(control) = locked.controls.get_mut(control_type) {
+                let auto = control.auto;
+                Ok(control
+                    .set(value, Some(auto_value), auto, None)?
+                    .map(|_| control.clone()))
+            } else {
+                Err(ControlError::NotSupported(*control_type))
+            }
+        }?;
+
+        // If the control changed, control.set returned Some(control)
+        if let Some(control) = control {
+            self.send_to_all_clients(&control);
+            Ok(Some(()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn set_string(
+        &self,
+        control_type: &ControlType,
+        value: String,
+    ) -> Result<Option<String>, ControlError> {
+        let control = {
+            let mut locked = self.controls.write().unwrap();
+            if let Some(control) = locked.controls.get_mut(control_type) {
+                if control.item().data_type == ControlDataType::String {
+                    Ok(control.set_string(value).map(|_| control.clone()))
+                } else {
+                    let i = value
+                        .parse::<i32>()
+                        .map_err(|_| ControlError::Invalid(control_type.clone(), value))?;
+                    control
+                        .set(i as f32, None, None, None)
+                        .map(|_| Some(control.clone()))
+                }
+            } else {
+                Err(ControlError::NotSupported(*control_type))
+            }
+        }?;
+
+        if let Some(control) = control {
+            self.send_to_all_clients(&control);
+            Ok(control.description.clone())
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn get_description(control: &Control) -> Option<String> {
+        if let (Some(value), Some(descriptions)) = (control.value, &control.item().descriptions) {
+            let value = value as i32;
+            if value >= 0 && value < (descriptions.len() as i32) {
+                return descriptions.get(&value).cloned();
+            }
+        }
+        return None;
     }
 
     pub fn set_user_name(&self, name: String) {
@@ -483,56 +557,17 @@ impl SharedControls {
 }
 
 #[derive(Clone, Debug)]
-pub enum ControlMessage {
-    Value(tokio::sync::mpsc::Sender<ControlValue>, ControlValue),
-    NewClient(tokio::sync::mpsc::Sender<ControlValue>),
-    SetValue(ControlValue),
+pub struct ControlMessage {
+    pub reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
+    pub control_value: ControlValue,
 }
 
-#[cfg(none)]
-async fn process_control_message(
-    info: &mut RadarInfo,
-    control_message: &ControlMessage,
-) -> Result<(), RadarError> {
-    match control_message {
-        ControlMessage::NewClient(reply_tx) => {
-            // Send all control values
-            info.send_all_json(reply_tx.clone()).await?;
-        }
-        ControlMessage::Value(reply_tx, cv) => {
-            // match strings first
-            match cv.id {
-                ControlType::UserName => {
-                    info.set_string(&ControlType::UserName, cv.value.clone())
-                        .unwrap();
-                    self.radars.update(&self.info);
-                    return Ok(());
-                }
-                ControlType::TargetTrails
-                | ControlType::ClearTrails
-                | ControlType::DopplerTrailsOnly
-                | ControlType::TrailsMotion => {
-                    if let Err(e) = self.pass_to_data_receiver(reply_tx, cv).await {
-                        return info.send_error_to_controller(reply_tx, cv, e).await;
-                    }
-                    return Ok(());
-                }
-                _ => {} // rest is for the radar to handle
-            }
-
-            if let Err(e) = self.command_sender.set_control(cv, &info.controls).await {
-                return info.send_error_to_controller(reply_tx, cv, e).await;
-            } else {
-                info.set_refresh(&cv.id);
-            }
-        }
-        ControlMessage::SetValue(cv) => {
-            info.set_string(&cv.id, cv.value.clone()).unwrap();
-            info.radars_update();
-            return Ok(());
-        }
-    }
-    Ok(())
+// Messages sent to Data receiver
+#[derive(Clone, Debug)]
+pub enum DataUpdate {
+    Doppler(DopplerMode),
+    Legend(Legend),
+    ControlValue(tokio::sync::mpsc::Sender<ControlValue>, ControlValue),
 }
 
 // This is what we send back and forth to clients
@@ -605,8 +640,8 @@ impl Control {
         self.item.is_read_only = is_read_only;
     }
 
-    pub fn internal(mut self) -> Self {
-        self.item.is_internal = true;
+    pub fn set_destination(mut self, destination: ControlDestination) -> Self {
+        self.item.destination = destination;
 
         self
     }
@@ -665,7 +700,7 @@ impl Control {
             is_read_only: false,
             data_type: ControlDataType::Number,
             is_send_always: false,
-            is_internal: false,
+            destination: ControlDestination::Command,
         });
         control
     }
@@ -695,7 +730,7 @@ impl Control {
             is_read_only: false,
             data_type: ControlDataType::Number,
             is_send_always: false,
-            is_internal: false,
+            destination: ControlDestination::Command,
         })
     }
 
@@ -724,7 +759,7 @@ impl Control {
             is_read_only: false,
             data_type: ControlDataType::Number,
             is_send_always: false,
-            is_internal: false,
+            destination: ControlDestination::Command,
         })
     }
 
@@ -746,7 +781,7 @@ impl Control {
             is_read_only: false,
             data_type: ControlDataType::Number,
             is_send_always: false,
-            is_internal: false,
+            destination: ControlDestination::Command,
         })
     }
 
@@ -768,7 +803,7 @@ impl Control {
             is_read_only: true,
             data_type: ControlDataType::String,
             is_send_always: false,
-            is_internal: false,
+            destination: ControlDestination::Command,
         });
         control
     }
@@ -791,7 +826,7 @@ impl Control {
             is_read_only: false,
             data_type: ControlDataType::Button,
             is_send_always: false,
-            is_internal: false,
+            destination: ControlDestination::Command,
         });
         control
     }
@@ -1016,6 +1051,12 @@ pub enum ControlDataType {
     Button,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) enum ControlDestination {
+    Internal,
+    Data,
+    Command,
+}
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ControlDefinition {
@@ -1052,7 +1093,7 @@ pub(crate) struct ControlDefinition {
     #[serde(skip)]
     is_send_always: bool, // Whether the controlvalue is sent out to client in all state messages
     #[serde(skip)]
-    is_internal: bool,
+    destination: ControlDestination,
 }
 
 fn is_false(v: &bool) -> bool {

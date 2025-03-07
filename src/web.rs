@@ -281,10 +281,15 @@ async fn control_stream(
     radar: RadarInfo,
     mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
 ) {
-    let mut broadcast_control_rx = radar.broadcast_control_rx();
+    let mut broadcast_control_rx = radar.all_clients_rx();
     let (reply_tx, mut reply_rx) = tokio::sync::mpsc::channel(60);
 
-    if !radar.report_new_client(reply_tx.clone()) {
+    if radar
+        .controls
+        .send_all_controls(reply_tx.clone())
+        .await
+        .is_err()
+    {
         return;
     }
 
@@ -346,7 +351,7 @@ async fn control_stream(
                             Message::Text(message) => {
                                 if let Ok(control_value) = serde_json::from_str(&message) {
                                     log::debug!("Received ControlValue {:?}", control_value);
-                                    radar.forward_client_request(control_value, reply_tx.clone());
+                                    radar.controls.process_client_request(control_value, reply_tx.clone()).await;
                                 } else {
                                     log::error!("Unknown JSON string '{}'", message);
                                 }

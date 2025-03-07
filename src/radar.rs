@@ -264,21 +264,8 @@ impl RadarInfo {
         }
     }
 
-    pub fn broadcast_control_rx(&self) -> tokio::sync::broadcast::Receiver<ControlValue> {
-        self.controls.broadcast_control_rx()
-    }
-
-    pub fn report_new_client(&self, reply_tx: tokio::sync::mpsc::Sender<ControlValue>) -> bool {
-        self.controls.report_new_client(reply_tx)
-    }
-
-    pub fn forward_client_request(
-        &self,
-        control_value: ControlValue,
-        reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
-    ) {
-        self.controls
-            .forward_client_request(control_value, reply_tx)
+    pub fn all_clients_rx(&self) -> tokio::sync::broadcast::Receiver<ControlValue> {
+        self.controls.all_clients_rx()
     }
 
     pub fn control_message_subscribe(&self) -> tokio::sync::broadcast::Receiver<ControlMessage> {

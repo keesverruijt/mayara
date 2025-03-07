@@ -112,21 +112,7 @@ impl FurunoReportReceiver {
                     }
                 },
                 r = command_rx.recv() => {
-                    match r {
-                        Ok(control_message) => {
-                            match self.process_control_message(&control_message).await {
-                                Ok(()) => {}
-                                Err(e) => {
-                                    log::error!("Cannot act on control message: {e}");
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            log::error!("Cannot read control message: {e}");
-                            // Send a JSON reply on websocket
-
-                        }
-                    }
+                    let _ = self.process_control_message(r).await;
                 }
             }
         }
@@ -134,55 +120,31 @@ impl FurunoReportReceiver {
 
     async fn process_control_message(
         &mut self,
-        control_message: &ControlMessage,
+        r: Result<ControlMessage, tokio::sync::broadcast::error::RecvError>,
     ) -> Result<(), RadarError> {
-        match control_message {
-            ControlMessage::NewClient(reply_tx) => {
-                // Send all control values
-                self.info.controls.send_all_json(reply_tx.clone()).await?;
-            }
-            ControlMessage::Value(reply_tx, cv) => {
-                #[cfg(none)]
-                // match strings first
-                match cv.id {
-                    ControlType::UserName => {
-                        self.info
-                            .set_string(&ControlType::UserName, cv.value.clone())
-                            .unwrap();
-                        self.radars.update(&self.info);
-                        return Ok(());
-                    }
-                    ControlType::TargetTrails
-                    | ControlType::ClearTrails
-                    | ControlType::DopplerTrailsOnly
-                    | ControlType::TrailsMotion => {
-                        if let Err(e) = self.pass_to_data_receiver(reply_tx, cv).await {
-                            return self.info.send_error_to_controller(reply_tx, cv, e).await;
-                        }
-                        return Ok(());
-                    }
-                    _ => {} // rest is for the radar to handle
-                }
+        if r.is_err() {
+            return Err(RadarError::Shutdown);
+        };
+        let control_message = r.unwrap();
 
-                #[cfg(none)]
+        #[cfg(todo)]
+        match control_message {
+            ControlMessage::Value(reply_tx, cv) => {
                 if let Err(e) = self
                     .command_sender
-                    .set_control(cv, &self.info.controls)
+                    .set_control(&cv, &self.info.controls)
                     .await
                 {
-                    return self.info.send_error_to_controller(reply_tx, cv, e).await;
+                    return self
+                        .info
+                        .controls
+                        .send_error_to_controller(&reply_tx, &cv, e)
+                        .await;
                 } else {
-                    self.info.set_refresh(&cv.id);
+                    self.info.controls.set_refresh(&cv.id);
                 }
             }
-            ControlMessage::SetValue(cv) => {
-                self.info
-                    .controls
-                    .set_string(&cv.id, cv.value.clone())
-                    .unwrap();
-                self.radars.update(&self.info);
-                return Ok(());
-            }
+            _ => {}
         }
         Ok(())
     }
