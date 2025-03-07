@@ -72,11 +72,19 @@ impl Controls {
     }
 
     pub(self) fn new_base(mut controls: HashMap<ControlType, Control>, replay: bool) -> Self {
+        controls.insert(
+            ControlType::UserName,
+            Control::new_string(ControlType::UserName)
+                .read_only(false)
+                .set_destination(ControlDestination::Internal),
+        );
+
         // Add _mandatory_ controls
         if !controls.contains_key(&ControlType::ModelName) {
             controls.insert(
                 ControlType::ModelName,
-                Control::new_string(ControlType::ModelName),
+                Control::new_string(ControlType::ModelName)
+                    .set_destination(ControlDestination::Internal),
             );
         }
 
@@ -99,7 +107,8 @@ impl Controls {
                     (5, "5 min".to_string()),
                     (6, "10 min".to_string()),
                 ]),
-            ),
+            )
+            .set_destination(ControlDestination::Data),
         );
 
         controls.insert(
@@ -107,12 +116,13 @@ impl Controls {
             Control::new_map(
                 ControlType::TrailsMotion,
                 HashMap::from([(0, "Relative".to_string()), (1, "True".to_string())]),
-            ),
+            )
+            .set_destination(ControlDestination::Data),
         );
 
         controls.insert(
             ControlType::ClearTrails,
-            Control::new_button(ControlType::ClearTrails),
+            Control::new_button(ControlType::ClearTrails).set_destination(ControlDestination::Data),
         );
 
         let (all_clients_tx, _) = tokio::sync::broadcast::channel(32);
@@ -166,7 +176,7 @@ impl SharedControls {
         }
     }
 
-    fn get_data_tx(&self) -> tokio::sync::broadcast::Sender<DataUpdate> {
+    pub(crate) fn get_data_tx(&self) -> tokio::sync::broadcast::Sender<DataUpdate> {
         let locked = self.controls.read().unwrap();
 
         locked.data_tx.clone()
@@ -178,7 +188,7 @@ impl SharedControls {
         locked.command_tx.clone()
     }
 
-    pub fn all_clients_rx(&self) -> tokio::sync::broadcast::Receiver<ControlValue> {
+    pub(crate) fn all_clients_rx(&self) -> tokio::sync::broadcast::Receiver<ControlValue> {
         let locked = self.controls.read().unwrap();
 
         locked.all_clients_tx.subscribe()
@@ -193,7 +203,7 @@ impl SharedControls {
     // Some controls are handled internally, some in the data handler for a radar and the
     // rest are settings that need to be sent to the radar.
     //
-    pub async fn process_client_request(
+    pub(crate) async fn process_client_request(
         &self,
         control_value: ControlValue,
         reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
@@ -203,6 +213,7 @@ impl SharedControls {
         if let Err(e) = match control {
             Some(c) => match c.item().destination {
                 ControlDestination::Internal => self
+                    // set_string will also set numeric values
                     .set_string(&ControlType::UserName, control_value.value.clone())
                     .map(|_| ())
                     .map_err(|e| RadarError::ControlError(e)),

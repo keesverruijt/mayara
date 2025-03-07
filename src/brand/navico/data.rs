@@ -6,7 +6,6 @@ use std::f64::consts::PI;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{io, time::Duration};
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc::Receiver;
 use tokio::time::sleep;
 use tokio_graceful_shutdown::SubsystemHandle;
 use trail::TrailBuffer;
@@ -117,7 +116,7 @@ pub struct NavicoDataReceiver {
     statistics: Statistics,
     info: RadarInfo,
     sock: Option<UdpSocket>,
-    rx: tokio::sync::mpsc::Receiver<DataUpdate>,
+    data_rx: tokio::sync::broadcast::Receiver<DataUpdate>,
     doppler: DopplerMode,
     pixel_to_blob: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH],
     replay: bool,
@@ -125,8 +124,10 @@ pub struct NavicoDataReceiver {
 }
 
 impl NavicoDataReceiver {
-    pub fn new(info: RadarInfo, rx: Receiver<DataUpdate>, replay: bool) -> NavicoDataReceiver {
+    pub fn new(info: RadarInfo, replay: bool) -> NavicoDataReceiver {
         let key = info.key();
+
+        let data_rx = info.controls.data_update_subscribe();
 
         let pixel_to_blob = Self::pixel_to_blob(&info.legend);
         let mut trails = TrailBuffer::new(info.legend.clone(), NAVICO_SPOKES, NAVICO_SPOKE_LEN);
@@ -141,9 +142,9 @@ impl NavicoDataReceiver {
         NavicoDataReceiver {
             key,
             statistics: Statistics { broken_packets: 0 },
-            info: info,
+            info,
             sock: None,
-            rx,
+            data_rx,
             doppler: DopplerMode::None,
             pixel_to_blob,
             replay,
@@ -206,17 +207,17 @@ impl NavicoDataReceiver {
         lookup
     }
 
-    async fn handle_data_update(&mut self, r: Option<DataUpdate>) -> Result<(), RadarError> {
+    async fn handle_data_update(&mut self, r: DataUpdate) -> Result<(), RadarError> {
         log::info!("Received data update: {:?}", r);
         match r {
-            Some(DataUpdate::Doppler(doppler)) => {
+            DataUpdate::Doppler(doppler) => {
                 self.doppler = doppler;
             }
-            Some(DataUpdate::Legend(legend)) => {
+            DataUpdate::Legend(legend) => {
                 self.pixel_to_blob = Self::pixel_to_blob(&legend);
                 self.info.legend = legend;
             }
-            Some(DataUpdate::ControlValue(reply_tx, cv)) => {
+            DataUpdate::ControlValue(reply_tx, cv) => {
                 match cv.id {
                     ControlType::ClearTrails => {
                         self.trails.clear();
@@ -246,9 +247,6 @@ impl NavicoDataReceiver {
                     _ => return Err(RadarError::CannotSetControlType(cv.id)),
                 };
             }
-            None => {
-                return Err(RadarError::Shutdown);
-            }
         }
         Ok(())
     }
@@ -261,8 +259,16 @@ impl NavicoDataReceiver {
                 _ = subsys.on_shutdown_requested() => {
                     return Err(RadarError::Shutdown);
                 },
-                r = self.rx.recv() => {
-                  self.handle_data_update(r).await?;
+                r = self.data_rx.recv() => {
+                    match r {
+                        Ok(data_update) => {
+                  self.handle_data_update(data_update).await?;
+
+                        }
+                        Err(e) => {
+
+                        }
+                    }
                 },
                 r = self.sock.as_ref().unwrap().recv_buf_from(&mut buf)  => {
                     match r {

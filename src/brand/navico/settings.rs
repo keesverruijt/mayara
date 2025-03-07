@@ -13,10 +13,6 @@ use super::Model;
 pub fn new(model: Option<&str>, replay: bool) -> SharedControls {
     let mut controls = HashMap::new();
 
-    controls.insert(
-        ControlType::UserName,
-        Control::new_string(ControlType::UserName).read_only(false),
-    );
     let mut control = Control::new_string(ControlType::ModelName);
     if model.is_some() {
         control.set_string(model.unwrap().to_string());

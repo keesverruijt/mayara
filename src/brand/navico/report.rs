@@ -28,7 +28,7 @@ pub struct NavicoReportReceiver {
     args: Cli,
     model: Model,
     command_sender: Command,
-    data_tx: mpsc::Sender<DataUpdate>,
+    data_tx: broadcast::Sender<DataUpdate>,
     message_rx: broadcast::Receiver<ControlMessage>,
     range_timeout: Option<Instant>,
     report_request_timeout: Instant,
@@ -278,12 +278,12 @@ impl NavicoReportReceiver {
         info: RadarInfo, // Quick access to our own RadarInfo
         radars: SharedRadars,
         model: Model,
-        data_tx: mpsc::Sender<DataUpdate>,
     ) -> NavicoReportReceiver {
         let key = info.key();
 
         let command_sender = Command::new(info.clone(), model.clone(), radars.clone());
         let message_rx = info.controls.control_message_subscribe();
+        let data_tx = info.controls.get_data_tx();
         let args = radars.cli_args();
 
         NavicoReportReceiver {
@@ -331,7 +331,6 @@ impl NavicoReportReceiver {
     //
     async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
         debug!("{}: listening for reports", self.key);
-        let mut control_message = self.info.controls.control_message_subscribe();
 
         loop {
             let mut is_range_timeout = false;
@@ -342,11 +341,12 @@ impl NavicoReportReceiver {
                     is_range_timeout = true;
                 }
             }
-            tokio::select! { biased;
+            tokio::select! {
                 _ = subsys.on_shutdown_requested() => {
                     info!("{}: shutdown", self.key);
                     return Err(RadarError::Shutdown);
                 },
+
                 _ = sleep_until(timeout) => {
                     if is_range_timeout {
                         self.process_range(0).await?;
@@ -369,10 +369,11 @@ impl NavicoReportReceiver {
                         }
                     }
                 },
-                r = control_message.recv() => {
+
+                r = self.message_rx.recv() => {
                     match r {
-                        Err(e) => {},
-                        Ok(cv) => {self.process_control_message(cv).await;},
+                        Err(_) => {},
+                        Ok(cv) => {let _ = self.process_control_message(cv).await;},
                     }
                 }
             }
@@ -806,8 +807,7 @@ impl NavicoReportReceiver {
                     self.radars.update(&self.info);
 
                     self.data_tx
-                        .send(DataUpdate::Legend(self.info.legend.clone()))
-                        .await?;
+                        .send(DataUpdate::Legend(self.info.legend.clone()))?;
                 }
             }
         }
@@ -945,7 +945,7 @@ impl NavicoReportReceiver {
                         "{}: doppler mode={} speed={}",
                         self.key, doppler_mode, doppler_speed
                     );
-                    self.data_tx.send(DataUpdate::Doppler(doppler_mode)).await?;
+                    self.data_tx.send(DataUpdate::Doppler(doppler_mode))?;
                 }
             }
             self.set_value(&ControlType::Doppler, doppler_state as f32);

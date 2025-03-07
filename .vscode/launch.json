@@ -20,7 +20,7 @@
                 }
             },
             "args": [ 
-                    
+                    "--replay", "-v",
                ],
             "cwd": "${workspaceFolder}"
         },

@@ -208,8 +208,6 @@ fn found(mut info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
             radars.update(&info);
         }
 
-        let (tx_data, rx_data) = mpsc::channel(10);
-
         // Clone everything moved into future twice or more
         let data_name = info.key() + " data";
         let report_name = info.key() + " reports";
@@ -224,9 +222,8 @@ fn found(mut info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
             }));
         }
 
-        let data_receiver = data::NavicoDataReceiver::new(info, rx_data, args.replay);
-        let report_receiver =
-            report::NavicoReportReceiver::new(info_clone, radars.clone(), model, tx_data);
+        let data_receiver = data::NavicoDataReceiver::new(info, args.replay);
+        let report_receiver = report::NavicoReportReceiver::new(info_clone, radars.clone(), model);
 
         subsys.start(SubsystemBuilder::new(
             data_name,
