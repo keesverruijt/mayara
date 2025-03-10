@@ -18,7 +18,7 @@ pub(crate) mod trail;
 
 use crate::config::Persistence;
 use crate::locator::LocatorId;
-use crate::settings::{ControlError, ControlMessage, ControlType, ControlValue, SharedControls};
+use crate::settings::{ControlError, ControlType, ControlUpdate, ControlValue, SharedControls};
 use crate::Cli;
 
 // A "native to radar" bearing, usually [0..2048] or [0..4096] or [0..8192]
@@ -48,8 +48,6 @@ pub enum RadarError {
     NoSuchRadar(String),
     #[error("Cannot parse JSON '{0}'")]
     ParseJson(String),
-    #[error("OS error {0}")]
-    OSError(String),
     #[error("IP address changed")]
     IPAddressChanged,
 }
@@ -173,14 +171,6 @@ impl GeoPosition {
     pub(crate) fn new(lat: f64, lon: f64) -> Self {
         GeoPosition { lat, lon }
     }
-
-    pub(crate) fn lat(&self) -> f64 {
-        self.lat
-    }
-
-    pub(crate) fn lon(&self) -> f64 {
-        self.lon
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -268,8 +258,8 @@ impl RadarInfo {
         self.controls.all_clients_rx()
     }
 
-    pub fn control_message_subscribe(&self) -> tokio::sync::broadcast::Receiver<ControlMessage> {
-        self.controls.control_message_subscribe()
+    pub fn control_update_subscribe(&self) -> tokio::sync::broadcast::Receiver<ControlUpdate> {
+        self.controls.control_update_subscribe()
     }
 
     pub fn key(&self) -> String {

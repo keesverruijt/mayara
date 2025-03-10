@@ -6,6 +6,8 @@ use crate::radar::trail::cartesian::PointInt;
 use crate::radar::{GeoPosition, Legend, SpokeBearing, BLOB_HISTORY_COLORS};
 use crate::settings::{ControlError, ControlType};
 
+use super::RadarError;
+
 const MARGIN_I16: i16 = 100;
 const MARGIN_USIZE: usize = MARGIN_I16 as usize;
 
@@ -79,18 +81,26 @@ impl TrailBuffer {
         Ok(())
     }
 
-    pub fn set_relative_trails_length(&mut self, control_value: u16) {
+    pub fn set_relative_trails_length(&mut self, control_value: u16) -> Result<(), RadarError> {
         let seconds: u32 = match control_value {
+            0 => 0,
             1 => 15,
             2 => 30,
             3 => 60,
             4 => 3 * 60,
             5 => 5 * 60,
             6 => 10 * 60,
-            _ => 0,
+            _ => {
+                return Err(RadarError::ControlError(ControlError::TooHigh(
+                    ControlType::TargetTrails,
+                    control_value as f32,
+                    6.,
+                )))
+            }
         };
         self.trail_length_ms = seconds * 1000;
         log::info!("Trails length set to {} seconds", seconds);
+        Ok(())
     }
 
     pub fn set_rotation_speed(&mut self, ms: u32) {

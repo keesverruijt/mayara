@@ -1,52 +1,36 @@
 use anyhow::{bail, Error};
 use log::{debug, error, info, trace};
-use std::cmp::{max, min};
 use std::io;
 use std::time::Duration;
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc::Sender;
 use tokio::time::{sleep, sleep_until, Instant};
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::network::create_udp_multicast_listen;
-use crate::radar::{DopplerMode, RadarError, RadarInfo, RangeDetection, SharedRadars};
-use crate::settings::{ControlMessage, ControlType, ControlValue};
-use crate::util::{c_string, c_wide_string};
-use crate::Cli;
+use crate::radar::{RadarError, RadarInfo};
+use crate::settings::{ControlType, ControlUpdate};
 
 pub struct FurunoReportReceiver {
     info: RadarInfo,
     key: String,
     buf: Vec<u8>,
     sock: Option<UdpSocket>,
-    radars: SharedRadars,
-    args: Cli,
-    range_timeout: Option<Instant>,
     report_request_timeout: Instant,
     report_request_interval: Duration,
-    reported_unknown: [bool; 256],
 }
 
 impl FurunoReportReceiver {
-    pub fn new(
-        info: RadarInfo, // Quick access to our own RadarInfo
-        radars: SharedRadars,
-    ) -> FurunoReportReceiver {
+    pub fn new(info: RadarInfo) -> FurunoReportReceiver {
         let key = info.key();
-
-        let args = radars.cli_args();
 
         FurunoReportReceiver {
             key: key,
             info: info,
             buf: Vec::with_capacity(1000),
             sock: None,
-            radars,
-            args,
-            range_timeout: None,
+
             report_request_timeout: Instant::now(),
             report_request_interval: Duration::from_millis(5000),
-            reported_unknown: [false; 256],
         }
     }
 
@@ -77,7 +61,7 @@ impl FurunoReportReceiver {
     //
     async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
         debug!("{}: listening for reports", self.key);
-        let mut command_rx = self.info.control_message_subscribe();
+        let mut command_rx = self.info.control_update_subscribe();
 
         let report_socket = self.sock.take().unwrap();
 
@@ -92,9 +76,8 @@ impl FurunoReportReceiver {
                     info!("{}: shutdown", self.key);
                     return Err(RadarError::Shutdown);
                 },
+
                 _ = sleep_until(timeout) => {
-
-
                 },
 
                 r = report_socket.recv_buf_from(&mut self.buf)  => {
@@ -111,25 +94,26 @@ impl FurunoReportReceiver {
                         }
                     }
                 },
+
                 r = command_rx.recv() => {
-                    let _ = self.process_control_message(r).await;
+                    let _ = self.process_control_update(r).await;
                 }
             }
         }
     }
 
-    async fn process_control_message(
+    async fn process_control_update(
         &mut self,
-        r: Result<ControlMessage, tokio::sync::broadcast::error::RecvError>,
+        r: Result<ControlUpdate, tokio::sync::broadcast::error::RecvError>,
     ) -> Result<(), RadarError> {
         if r.is_err() {
             return Err(RadarError::Shutdown);
         };
-        let control_message = r.unwrap();
+        let control_update = r.unwrap();
 
         #[cfg(todo)]
         match control_message {
-            ControlMessage::Value(reply_tx, cv) => {
+            ControlUpdate::Value(reply_tx, cv) => {
                 if let Err(e) = self
                     .command_sender
                     .set_control(&cv, &self.info.controls)

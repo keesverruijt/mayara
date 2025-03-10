@@ -1,17 +1,15 @@
-use async_trait::async_trait;
 use bincode::deserialize;
 use enum_primitive_derive::Primitive;
 use log::{debug, error, log_enabled, trace};
 use serde::Deserialize;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::{fmt, io};
-use tokio::sync::mpsc;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
 use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState};
 use crate::network::NetworkSocketAddrV4;
-use crate::radar::{DopplerMode, Legend, RadarInfo, SharedRadars};
-use crate::settings::{ControlType, ControlValue};
+use crate::radar::{RadarInfo, SharedRadars};
+use crate::settings::ControlType;
 use crate::util::c_string;
 use crate::util::PrintableSlice;
 
@@ -188,7 +186,7 @@ const NAVICO_BEACON_SINGLE_SIZE: usize = size_of::<NavicoBeaconSingle>();
 const NAVICO_BEACON_DUAL_SIZE: usize = size_of::<NavicoBeaconDual>();
 const NAVICO_BEACON_BR24_SIZE: usize = size_of::<BR24Beacon>();
 
-fn found(mut info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
+fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
     info.controls
         .set_string(&crate::settings::ControlType::UserName, info.key())
         .unwrap();

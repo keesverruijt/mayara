@@ -27,7 +27,7 @@ use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::{
     radar::{Legend, RadarInfo, SharedRadars},
-    settings::{ControlMessage, Controls, SharedControls},
+    settings::SharedControls,
 };
 
 const RADAR_URI: &str = "/v1/api/radars";
@@ -351,7 +351,7 @@ async fn control_stream(
                             Message::Text(message) => {
                                 if let Ok(control_value) = serde_json::from_str(&message) {
                                     log::debug!("Received ControlValue {:?}", control_value);
-                                    radar.controls.process_client_request(control_value, reply_tx.clone()).await;
+                                    let _ = radar.controls.process_client_request(control_value, reply_tx.clone()).await;
                                 } else {
                                     log::error!("Unknown JSON string '{}'", message);
                                 }

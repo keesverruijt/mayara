@@ -12,7 +12,7 @@ use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::network::create_udp_multicast_listen;
 use crate::radar::{DopplerMode, RadarError, RadarInfo, RangeDetection, SharedRadars};
-use crate::settings::{ControlMessage, ControlType, ControlValue, DataUpdate};
+use crate::settings::{ControlType, ControlUpdate, ControlValue, DataUpdate};
 use crate::util::{c_string, c_wide_string};
 use crate::Cli;
 
@@ -29,7 +29,7 @@ pub struct NavicoReportReceiver {
     model: Model,
     command_sender: Command,
     data_tx: broadcast::Sender<DataUpdate>,
-    message_rx: broadcast::Receiver<ControlMessage>,
+    control_update_rx: broadcast::Receiver<ControlUpdate>,
     range_timeout: Option<Instant>,
     report_request_timeout: Instant,
     report_request_interval: Duration,
@@ -282,8 +282,8 @@ impl NavicoReportReceiver {
         let key = info.key();
 
         let command_sender = Command::new(info.clone(), model.clone(), radars.clone());
-        let message_rx = info.controls.control_message_subscribe();
-        let data_tx = info.controls.get_data_tx();
+        let control_update_rx = info.controls.control_update_subscribe();
+        let data_update_tx = info.controls.get_data_update_tx();
         let args = radars.cli_args();
 
         NavicoReportReceiver {
@@ -298,8 +298,8 @@ impl NavicoReportReceiver {
             range_timeout: None,
             report_request_timeout: Instant::now(),
             report_request_interval: Duration::from_millis(5000),
-            data_tx,
-            message_rx,
+            data_tx: data_update_tx,
+            control_update_rx,
             reported_unknown: [false; 256],
         }
     }
@@ -370,22 +370,22 @@ impl NavicoReportReceiver {
                     }
                 },
 
-                r = self.message_rx.recv() => {
+                r = self.control_update_rx.recv() => {
                     match r {
                         Err(_) => {},
-                        Ok(cv) => {let _ = self.process_control_message(cv).await;},
+                        Ok(cv) => {let _ = self.process_control_update(cv).await;},
                     }
                 }
             }
         }
     }
 
-    async fn process_control_message(
+    async fn process_control_update(
         &mut self,
-        control_message: ControlMessage,
+        control_update: ControlUpdate,
     ) -> Result<(), RadarError> {
-        let cv = control_message.control_value;
-        let reply_tx = control_message.reply_tx;
+        let cv = control_update.control_value;
+        let reply_tx = control_update.reply_tx;
 
         if let Err(e) = self
             .command_sender

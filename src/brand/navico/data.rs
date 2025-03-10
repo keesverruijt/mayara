@@ -116,7 +116,7 @@ pub struct NavicoDataReceiver {
     statistics: Statistics,
     info: RadarInfo,
     sock: Option<UdpSocket>,
-    data_rx: tokio::sync::broadcast::Receiver<DataUpdate>,
+    data_update_rx: tokio::sync::broadcast::Receiver<DataUpdate>,
     doppler: DopplerMode,
     pixel_to_blob: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH],
     replay: bool,
@@ -127,7 +127,7 @@ impl NavicoDataReceiver {
     pub fn new(info: RadarInfo, replay: bool) -> NavicoDataReceiver {
         let key = info.key();
 
-        let data_rx = info.controls.data_update_subscribe();
+        let data_update_rx = info.controls.data_update_subscribe();
 
         let pixel_to_blob = Self::pixel_to_blob(&info.legend);
         let mut trails = TrailBuffer::new(info.legend.clone(), NAVICO_SPOKES, NAVICO_SPOKE_LEN);
@@ -144,7 +144,7 @@ impl NavicoDataReceiver {
             statistics: Statistics { broken_packets: 0 },
             info,
             sock: None,
-            data_rx,
+            data_update_rx,
             doppler: DopplerMode::None,
             pixel_to_blob,
             replay,
@@ -259,14 +259,13 @@ impl NavicoDataReceiver {
                 _ = subsys.on_shutdown_requested() => {
                     return Err(RadarError::Shutdown);
                 },
-                r = self.data_rx.recv() => {
+                r = self.data_update_rx.recv() => {
                     match r {
                         Ok(data_update) => {
-                  self.handle_data_update(data_update).await?;
-
+                            self.handle_data_update(data_update).await?;
                         }
-                        Err(e) => {
-
+                        Err(_) => {
+                            panic!("data_update closed");
                         }
                     }
                 },

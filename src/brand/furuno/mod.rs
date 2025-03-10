@@ -4,7 +4,6 @@ use log::log_enabled;
 use serde::Deserialize;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
-use tokio::sync::mpsc;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
 use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState};
@@ -23,7 +22,7 @@ const FURUNO_SPOKE_LEN: usize = 1024;
 const FURUNO_BEACON_ADDRESS: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 31, 255, 255)), 10010);
 
-fn found(mut info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
+fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
     info.controls
         .set_string(&crate::settings::ControlType::UserName, info.key())
         .unwrap();
@@ -43,9 +42,6 @@ fn found(mut info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
             radars.update(&info);
         } */
 
-        // let (tx_data, rx_data) = mpsc::channel(10);
-        let (_tx_data, rx_data) = mpsc::channel(10);
-
         // Clone everything moved into future twice or more
         let data_name = info.key() + " data";
         let report_name = info.key() + " reports";
@@ -59,13 +55,13 @@ fn found(mut info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
             }));
         }
 
-        let data_receiver = data::FurunoDataReceiver::new(info.clone(), rx_data, args);
+        let data_receiver = data::FurunoDataReceiver::new(info.clone(), args);
         subsys.start(SubsystemBuilder::new(
             data_name,
             move |s: SubsystemHandle| data_receiver.run(s),
         ));
 
-        let report_receiver = report::FurunoReportReceiver::new(info, radars.clone());
+        let report_receiver = report::FurunoReportReceiver::new(info);
         subsys.start(SubsystemBuilder::new(report_name, |s| {
             report_receiver.run(s)
         }));

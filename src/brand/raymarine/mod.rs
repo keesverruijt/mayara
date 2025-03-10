@@ -80,7 +80,7 @@ impl Model {
     }
 }
 
-fn found(mut info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
+fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
     info.controls
         .set_string(&crate::settings::ControlType::UserName, info.key())
         .unwrap();
@@ -145,11 +145,6 @@ impl RaymarineLocatorState {
     fn new() -> Self {
         RaymarineLocatorState {
             ids: HashMap::new(),
-        }
-    }
-    fn clone(&self) -> Self {
-        RaymarineLocatorState {
-            ids: self.ids.clone(),
         }
     }
 

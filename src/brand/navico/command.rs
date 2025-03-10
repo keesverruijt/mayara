@@ -5,7 +5,7 @@ use tokio::net::UdpSocket;
 
 use crate::network::create_multicast_send;
 use crate::radar::{RadarError, RadarInfo, SharedRadars};
-use crate::settings::{ControlType, ControlValue, Controls, SharedControls};
+use crate::settings::{ControlType, ControlValue, SharedControls};
 
 use super::Model;
 

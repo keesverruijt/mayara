@@ -41,24 +41,12 @@ pub struct Controls {
     #[serde(skip)]
     all_clients_tx: tokio::sync::broadcast::Sender<ControlValue>,
     #[serde(skip)]
-    command_tx: tokio::sync::broadcast::Sender<ControlMessage>,
+    control_update_tx: tokio::sync::broadcast::Sender<ControlUpdate>,
     #[serde(skip)]
-    data_tx: tokio::sync::broadcast::Sender<DataUpdate>,
+    data_update_tx: tokio::sync::broadcast::Sender<DataUpdate>,
 }
 
 impl Controls {
-    pub(self) fn get(&self, control_type: &ControlType) -> Option<&Control> {
-        self.controls.get(control_type)
-    }
-
-    pub(self) fn get_mut(&mut self, control_type: &ControlType) -> Option<&mut Control> {
-        self.controls.get_mut(control_type)
-    }
-
-    pub(self) fn iter(&self) -> impl Iterator<Item = &Control> {
-        self.controls.iter().map(|(_k, v)| v)
-    }
-
     pub(self) fn insert(&mut self, control_type: ControlType, value: Control) {
         let v = Control {
             item: ControlDefinition {
@@ -126,15 +114,15 @@ impl Controls {
         );
 
         let (all_clients_tx, _) = tokio::sync::broadcast::channel(32);
-        let (command_tx, _) = tokio::sync::broadcast::channel(32);
-        let (data_tx, _) = tokio::sync::broadcast::channel(10);
+        let (control_update_tx, _) = tokio::sync::broadcast::channel(32);
+        let (data_update_tx, _) = tokio::sync::broadcast::channel(10);
 
         Controls {
             controls,
             replay,
             all_clients_tx,
-            command_tx,
-            data_tx,
+            control_update_tx,
+            data_update_tx,
         }
     }
 }
@@ -170,22 +158,25 @@ mod arc_rwlock_serde {
 }
 
 impl SharedControls {
+    // Create a new set of controls, for a radar.
+    // There is only one set that is shared amongst the various threads and
+    // structs, hence the word Shared.
     pub fn new(controls: HashMap<ControlType, Control>, replay: bool) -> Self {
         SharedControls {
             controls: Arc::new(RwLock::new(Controls::new_base(controls, replay))),
         }
     }
 
-    pub(crate) fn get_data_tx(&self) -> tokio::sync::broadcast::Sender<DataUpdate> {
+    pub(crate) fn get_data_update_tx(&self) -> tokio::sync::broadcast::Sender<DataUpdate> {
         let locked = self.controls.read().unwrap();
 
-        locked.data_tx.clone()
+        locked.data_update_tx.clone()
     }
 
-    fn get_command_tx(&self) -> tokio::sync::broadcast::Sender<ControlMessage> {
+    fn get_command_tx(&self) -> tokio::sync::broadcast::Sender<ControlUpdate> {
         let locked = self.controls.read().unwrap();
 
-        locked.command_tx.clone()
+        locked.control_update_tx.clone()
     }
 
     pub(crate) fn all_clients_rx(&self) -> tokio::sync::broadcast::Receiver<ControlValue> {
@@ -211,19 +202,26 @@ impl SharedControls {
         let control = self.get(&control_value.id);
 
         if let Err(e) = match control {
-            Some(c) => match c.item().destination {
-                ControlDestination::Internal => self
-                    // set_string will also set numeric values
-                    .set_string(&ControlType::UserName, control_value.value.clone())
-                    .map(|_| ())
-                    .map_err(|e| RadarError::ControlError(e)),
-                ControlDestination::Data => {
-                    self.send_to_data_handler(&reply_tx, control_value.clone())
+            Some(c) => {
+                log::debug!(
+                    "Client request to update {:?} to {:?}",
+                    ControlValue::from(&c, None),
+                    control_value
+                );
+                match c.item().destination {
+                    ControlDestination::Internal => self
+                        // set_string will also set numeric values
+                        .set_string(&ControlType::UserName, control_value.value.clone())
+                        .map(|_| ())
+                        .map_err(|e| RadarError::ControlError(e)),
+                    ControlDestination::Data => {
+                        self.send_to_data_handler(&reply_tx, control_value.clone())
+                    }
+                    ControlDestination::Command => {
+                        self.send_to_command_handler(control_value.clone(), reply_tx.clone())
+                    }
                 }
-                ControlDestination::Command => {
-                    self.send_to_command_handler(control_value.clone(), reply_tx.clone())
-                }
-            },
+            }
             None => Err(RadarError::CannotSetControlType(control_value.id)),
         } {
             self.send_error_to_client(reply_tx, &control_value, e).await
@@ -232,16 +230,16 @@ impl SharedControls {
         }
     }
 
-    pub fn control_message_subscribe(&self) -> tokio::sync::broadcast::Receiver<ControlMessage> {
+    pub fn control_update_subscribe(&self) -> tokio::sync::broadcast::Receiver<ControlUpdate> {
         let locked = self.controls.read().unwrap();
 
-        locked.command_tx.subscribe()
+        locked.control_update_tx.subscribe()
     }
 
     pub fn data_update_subscribe(&self) -> tokio::sync::broadcast::Receiver<DataUpdate> {
         let locked = self.controls.read().unwrap();
 
-        locked.data_tx.subscribe()
+        locked.data_update_tx.subscribe()
     }
 
     pub async fn send_all_controls(
@@ -266,18 +264,10 @@ impl SharedControls {
         reply_tx: &tokio::sync::mpsc::Sender<ControlValue>,
         cv: ControlValue,
     ) -> Result<(), RadarError> {
-        let ct = cv.id;
-        let value = cv.value.parse::<f32>().unwrap_or(0.);
-
-        if let Err(e) = self.set(&cv.id, value, cv.auto) {
-            log::warn!("Cannot set {} to {}", cv.id, value);
-            return Err(RadarError::ControlError(e));
-        }
-
-        self.get_data_tx()
+        self.get_data_update_tx()
             .send(DataUpdate::ControlValue(reply_tx.clone(), cv))
             .map(|_| ())
-            .map_err(|_| RadarError::CannotSetControlType(ct))
+            .map_err(|_| RadarError::Shutdown)
     }
 
     fn send_to_command_handler(
@@ -285,16 +275,14 @@ impl SharedControls {
         control_value: ControlValue,
         reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
     ) -> Result<(), RadarError> {
-        let control_message = ControlMessage {
+        let control_update = ControlUpdate {
             control_value,
             reply_tx,
         };
-        let ct = control_message.control_value.id;
-
         self.get_command_tx()
-            .send(control_message)
+            .send(control_update)
             .map(|_| ())
-            .map_err(|_| RadarError::CannotSetControlType(ct))
+            .map_err(|_| RadarError::Shutdown)
     }
 
     fn send_to_all_clients(&self, control: &Control) {
@@ -325,25 +313,17 @@ impl SharedControls {
         control: &Control,
         error: Option<String>,
     ) -> Result<(), RadarError> {
-        let control_value = crate::settings::ControlValue {
-            id: control.item().control_type,
-            value: control.value(),
-            auto: control.auto,
-            enabled: control.enabled,
-            error,
-        };
+        let control_value = ControlValue::from(control, error);
 
-        match reply_tx.send(control_value).await {
-            Err(_e) => {}
-            Ok(()) => {
-                log::trace!(
-                    "Sent control value {} to requestng JSON client",
-                    control.item().control_type,
-                );
-            }
-        }
+        log::debug!(
+            "Sending reply {:?} to requesting JSON client",
+            &control_value,
+        );
 
-        Ok(())
+        reply_tx
+            .send(control_value)
+            .await
+            .map_err(|_| RadarError::Shutdown)
     }
 
     pub async fn send_error_to_client(
@@ -517,6 +497,7 @@ impl SharedControls {
         }
     }
 
+    #[allow(dead_code)]
     fn get_description(control: &Control) -> Option<String> {
         if let (Some(value), Some(descriptions)) = (control.value, &control.item().descriptions) {
             let value = value as i32;
@@ -568,7 +549,7 @@ impl SharedControls {
 }
 
 #[derive(Clone, Debug)]
-pub struct ControlMessage {
+pub struct ControlUpdate {
     pub reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
     pub control_value: ControlValue,
 }
@@ -604,6 +585,16 @@ impl ControlValue {
             auto: None,
             enabled: None,
             error: None,
+        }
+    }
+
+    pub fn from(control: &Control, error: Option<String>) -> Self {
+        ControlValue {
+            id: control.item().control_type,
+            value: control.value(),
+            auto: control.auto,
+            enabled: control.enabled,
+            error,
         }
     }
 }
@@ -1338,5 +1329,16 @@ mod test {
                 panic!("Error {e}");
             }
         }
+    }
+
+    #[test]
+    fn control_range_values() {
+        let controls = SharedControls::new(HashMap::new(), false);
+
+        assert!(controls.set(&ControlType::TargetTrails, 0., None).is_ok());
+        assert!(controls.set(&ControlType::TargetTrails, 6., None).is_ok());
+        assert!(controls.set(&ControlType::TargetTrails, 7., None).is_err());
+        assert!(controls.set(&ControlType::TargetTrails, -1., None).is_err());
+        assert!(controls.set(&ControlType::TargetTrails, 0.3, None).is_ok());
     }
 }

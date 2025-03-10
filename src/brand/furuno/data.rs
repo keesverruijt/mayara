@@ -1,6 +1,7 @@
 use crate::network::create_udp_multicast_listen;
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
+use crate::settings::{ControlType, DataUpdate};
 use crate::util::PrintableSpoke;
 use crate::{radar::*, Cli};
 
@@ -10,7 +11,6 @@ use protobuf::Message;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{io, time::Duration};
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc::Receiver;
 use tokio::time::sleep;
 use tokio_graceful_shutdown::SubsystemHandle;
 use trail::TrailBuffer;
@@ -22,7 +22,7 @@ pub struct FurunoDataReceiver {
     info: RadarInfo,
     args: Cli,
     sock: Option<UdpSocket>,
-    rx: tokio::sync::mpsc::Receiver<i32>,
+    data_update_rx: tokio::sync::broadcast::Receiver<DataUpdate>,
 
     // pixel_to_blob: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH],
     prev_spoke: Vec<u8>,
@@ -41,19 +41,26 @@ struct FurunoSpokeMetadata {
 }
 
 impl FurunoDataReceiver {
-    pub fn new(info: RadarInfo, rx: Receiver<i32>, args: Cli) -> FurunoDataReceiver {
+    pub fn new(info: RadarInfo, args: Cli) -> FurunoDataReceiver {
         let key = info.key();
 
+        let data_update_rx = info.controls.data_update_subscribe();
+
         // let pixel_to_blob = Self::pixel_to_blob(&info.legend);
-        let trails = TrailBuffer::new(info.legend.clone(), FURUNO_SPOKES, FURUNO_SPOKE_LEN);
+        let mut trails = TrailBuffer::new(info.legend.clone(), FURUNO_SPOKES, FURUNO_SPOKE_LEN);
+        if let Some(control) = info.controls.get(&ControlType::DopplerTrailsOnly) {
+            if let Some(value) = control.value {
+                let value = value > 0.;
+                trails.set_doppler_trail_only(value);
+            }
+        }
 
         FurunoDataReceiver {
             key,
             info,
             args,
             sock: None,
-            rx,
-            //pixel_to_blob,
+            data_update_rx,
             trails,
             prev_spoke: Vec::new(),
             prev_angle: 0,
@@ -89,16 +96,22 @@ impl FurunoDataReceiver {
 
         log::debug!("Starting Furuno socket loop");
         loop {
-            log::info!("Furuno data select!");
-            tokio::select! { biased;
+            tokio::select! {
                 _ = subsys.on_shutdown_requested() => {
                     return Err(RadarError::Shutdown);
                 },
-                // _r = self.rx.recv() => {
-                  // self.handle_data_update(r);
-                // },
+                r = self.data_update_rx.recv() => {
+                    match r {
+                        Ok(data_update) => {
+                            self.handle_data_update(data_update).await?;
+                        }
+                        Err(_) => {
+                            panic!("data_update closed");
+                        }
+                    }
+                },
                 r = sock.recv_buf_from(&mut buf)  => {
-                    log::info!("Furuno data recv {:?}", r);
+                    log::trace!("Furuno data recv {:?}", r);
                     match r {
                         Ok((len, _)) => {
                             self.process_frame(&buf[..len]);
@@ -129,6 +142,50 @@ impl FurunoDataReceiver {
                 self.start_socket().await.unwrap();
             }
         }
+    }
+
+    async fn handle_data_update(&mut self, r: DataUpdate) -> Result<(), RadarError> {
+        log::info!("Received data update: {:?}", r);
+        match r {
+            DataUpdate::Doppler(_doppler) => {
+                // self.doppler = doppler;
+            }
+            DataUpdate::Legend(legend) => {
+                // self.pixel_to_blob = Self::pixel_to_blob(&legend);
+                self.info.legend = legend;
+            }
+            DataUpdate::ControlValue(reply_tx, cv) => {
+                match cv.id {
+                    ControlType::ClearTrails => {
+                        self.trails.clear();
+                    }
+                    ControlType::DopplerTrailsOnly => {
+                        let value = cv.value.parse::<u16>().unwrap_or(0) > 0;
+                        self.trails.set_doppler_trail_only(value);
+                    }
+                    ControlType::TargetTrails => {
+                        let value = cv.value.parse::<u16>().unwrap_or(0);
+                        self.trails.set_relative_trails_length(value);
+                    }
+                    ControlType::TrailsMotion => {
+                        let true_motion = match cv.value.as_str() {
+                            "0" => false,
+                            "1" => true,
+                            _ => return Err(RadarError::CannotSetControlType(cv.id)),
+                        };
+                        if let Err(e) = self.trails.set_trails_mode(true_motion) {
+                            return self
+                                .info
+                                .controls
+                                .send_error_to_client(reply_tx, &cv, RadarError::ControlError(e))
+                                .await;
+                        }
+                    }
+                    _ => return Err(RadarError::CannotSetControlType(cv.id)),
+                };
+            }
+        }
+        Ok(())
     }
 
     fn process_frame(&mut self, data: &[u8]) {
@@ -184,7 +241,7 @@ impl FurunoDataReceiver {
             if angle < self.prev_angle {
                 let ms = self.info.full_rotation();
                 self.trails.set_rotation_speed(ms);
-                log::debug!("sweep_count = {}", self.sweep_count);
+                log::trace!("sweep_count = {}", self.sweep_count);
                 self.sweep_count = 0;
             }
             self.prev_angle = angle;
