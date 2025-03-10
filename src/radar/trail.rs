@@ -81,8 +81,8 @@ impl TrailBuffer {
         Ok(())
     }
 
-    pub fn set_relative_trails_length(&mut self, control_value: u16) -> Result<(), RadarError> {
-        let seconds: u32 = match control_value {
+    pub fn set_relative_trails_length(&mut self, control_value: u16) {
+        let milli_seconds: u32 = match control_value {
             0 => 0,
             1 => 15,
             2 => 30,
@@ -91,16 +91,17 @@ impl TrailBuffer {
             5 => 5 * 60,
             6 => 10 * 60,
             _ => {
-                return Err(RadarError::ControlError(ControlError::TooHigh(
-                    ControlType::TargetTrails,
-                    control_value as f32,
-                    6.,
-                )))
+                return;
             }
-        };
-        self.trail_length_ms = seconds * 1000;
-        log::info!("Trails length set to {} seconds", seconds);
-        Ok(())
+        } * 1000;
+
+        log::info!(
+            "Trails length {} -> {} ms",
+            self.trail_length_ms,
+            milli_seconds
+        );
+
+        self.trail_length_ms = milli_seconds;
     }
 
     pub fn set_rotation_speed(&mut self, ms: u32) {

@@ -307,7 +307,7 @@ impl SharedControls {
         }
     }
 
-    async fn send_reply_to_client(
+    pub async fn send_reply_to_client(
         &self,
         reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
         control: &Control,
@@ -1336,7 +1336,10 @@ mod test {
         let controls = SharedControls::new(HashMap::new(), false);
 
         assert!(controls.set(&ControlType::TargetTrails, 0., None).is_ok());
-        assert!(controls.set(&ControlType::TargetTrails, 6., None).is_ok());
+        assert_eq!(
+            controls.set(&ControlType::TargetTrails, 6., None).unwrap(),
+            Some(())
+        );
         assert!(controls.set(&ControlType::TargetTrails, 7., None).is_err());
         assert!(controls.set(&ControlType::TargetTrails, -1., None).is_err());
         assert!(controls.set(&ControlType::TargetTrails, 0.3, None).is_ok());
