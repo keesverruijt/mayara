@@ -38,5 +38,4 @@ message RadarMessage {
         bytes data = 5;
     }
     repeated Spoke spokes = 2;
-    repeated ControlValue controls = 3;
 }
