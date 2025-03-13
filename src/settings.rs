@@ -224,7 +224,8 @@ impl SharedControls {
             }
             None => Err(RadarError::CannotSetControlType(control_value.id)),
         } {
-            self.send_error_to_client(reply_tx, &control_value, e).await
+            self.send_error_to_client(reply_tx, &control_value, &e)
+                .await
         } else {
             Ok(())
         }
@@ -330,7 +331,7 @@ impl SharedControls {
         &self,
         reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
         cv: &ControlValue,
-        e: RadarError,
+        e: &RadarError,
     ) -> Result<(), RadarError> {
         if let Some(control) = self.get(&cv.id) {
             self.send_reply_to_client(reply_tx, &control, Some(e.to_string()))
@@ -860,14 +861,14 @@ impl Control {
                             format!("{},5 nm", v / 1852)
                         } else {
                             match v {
-                                57 => "1/32 nm",
-                                114 => "1/16 nm",
-                                231 => "1/8 nm",
-                                347 => "3/16 nm",
+                                57 | 58 => "1/32 nm",
+                                114 | 115 | 116 => "1/16 nm",
+                                231 | 232 => "1/8 nm",
+                                347 | 348 => "3/16 nm",
                                 463 => "1/4 nm",
-                                693 => "3/8 nm",
+                                693 | 694 | 695 => "3/8 nm",
                                 926 => "1/2 nm",
-                                1157 => "5/8 nm",
+                                1157 | 1158 => "5/8 nm",
                                 1389 => "3/4 nm",
                                 2315 => "1,25 nm",
                                 _ => "",

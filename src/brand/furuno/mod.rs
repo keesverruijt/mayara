@@ -2,14 +2,16 @@ use async_trait::async_trait;
 use bincode::deserialize;
 use log::log_enabled;
 use serde::Deserialize;
-use std::io;
+use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::time::Duration;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
 use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState};
 use crate::radar::{RadarInfo, SharedRadars};
 use crate::util::{c_string, PrintableSlice};
 
+mod command;
 mod data;
 mod report;
 mod settings;
@@ -19,15 +21,85 @@ const FURUNO_SPOKES: usize = 8192;
 // Maximum supported Length of a spoke in pixels.
 const FURUNO_SPOKE_LEN: usize = 1024;
 
-const FURUNO_BEACON_ADDRESS: SocketAddr =
-    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 31, 255, 255)), 10010);
+const FURUNO_BASE_PORT: u16 = 10000;
+const FURUNO_BEACON_PORT: u16 = FURUNO_BASE_PORT + 10;
+const FURUNO_DATA_PORT: u16 = FURUNO_BASE_PORT + 24;
+const FURUNO_COMMAND_PORT: u16 = FURUNO_BASE_PORT + 100;
+
+const FURUNO_BEACON_ADDRESS: SocketAddr = SocketAddr::new(
+    IpAddr::V4(Ipv4Addr::new(172, 31, 255, 255)),
+    FURUNO_BEACON_PORT,
+);
+
+enum CommandMode {
+    Set,
+    Request,
+    New,
+    X,
+    E,
+    O,
+}
+
+impl CommandMode {
+    fn to_char(&self) -> char {
+        match self {
+            CommandMode::Set => 'S',
+            CommandMode::Request => 'R',
+            CommandMode::New => 'N',
+            CommandMode::X => 'X',
+            CommandMode::E => 'E',
+            CommandMode::O => 'O',
+            // Add more cases as needed
+        }
+    }
+}
+
+impl From<u8> for CommandMode {
+    fn from(item: u8) -> Self {
+        match item {
+            b'S' => CommandMode::Set,
+            b'R' => CommandMode::Request,
+            b'N' => CommandMode::New,
+            b'X' => CommandMode::X,
+            b'E' => CommandMode::E,
+            b'O' => CommandMode::O,
+            _ => CommandMode::New,
+        }
+    }
+}
+
+// From MaxSea.Radar.BusinessObjects.RadarRanges
+static FURUNO_RADAR_RANGES: [i32; 22] = [
+    115,  // 1/16nm
+    231,  // 1/8nm
+    463,  // 1/4nm
+    926,  // 1/2nm
+    1389, // 3/4nm
+    1852,
+    2778, // 1,5nm
+    1852 * 2,
+    1852 * 3,
+    1852 * 4,
+    1852 * 6,
+    1852 * 8,
+    1852 * 12,
+    1852 * 16,
+    1852 * 24,
+    1852 * 32,
+    1852 * 36,
+    1852 * 48,
+    1852 * 64,
+    1852 * 72,
+    1852 * 96,
+    1852 * 120,
+];
 
 fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
     info.controls
         .set_string(&crate::settings::ControlType::UserName, info.key())
         .unwrap();
 
-    if let Some(info) = radars.located(info) {
+    if let Some(mut info) = radars.located(info) {
         // It's new, start the RadarProcessor thread
 
         // Load the model name afresh, it may have been modified from persisted data
@@ -41,6 +113,23 @@ fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
             info.set_legend(model == Model::HALO);
             radars.update(&info);
         } */
+
+        // Furuno radars use a single TCP/IP connection to send commands and
+        // receive status reports, so report_addr and send_command_addr are identical.
+        // Only one of these would be enough for Furuno.
+        let port: u16 = match login_to_radar(info.addr) {
+            Err(e) => {
+                log::error!("{}: Unable to connect for login: {}", info.key(), e);
+                radars.remove(&info.key());
+                return;
+            }
+            Ok(p) => p,
+        };
+        if port != info.send_command_addr.port() {
+            info.send_command_addr.set_port(port);
+            info.report_addr.set_port(port);
+            radars.update(&info);
+        }
 
         // Clone everything moved into future twice or more
         let data_name = info.key() + " data";
@@ -90,9 +179,10 @@ fn process_locator_report(
     }
 
     if report.len() == 32 && report[16] == b'R' && report[17] == b'D' {
-        return process_beacon_report(report, from, via, radars, subsys);
+        process_beacon_report(report, from, via, radars, subsys)
+    } else {
+        Ok(())
     }
-    Ok(())
 }
 
 // [01, 00, 00, 01, 00, 00, 00, 00, 00, 01, 00, 18, 01, 00, 00, 00, 52, 44, 30, 30, 33, 32, 31, 32, 01, 01, 00, 02, 00, 01, 00, 12] len 32
@@ -129,10 +219,10 @@ fn process_beacon_report(
 
                 // DRS: spoke data all on a well-known address
                 let spoke_data_addr: SocketAddrV4 =
-                    SocketAddrV4::new(Ipv4Addr::new(239, 255, 0, 2), 10024);
-                let report_addr: SocketAddrV4 =
-                    SocketAddrV4::new(Ipv4Addr::new(239, 255, 0, 2), 10094);
-                let send_command_addr: SocketAddrV4 = radar_addr.clone();
+                    SocketAddrV4::new(Ipv4Addr::new(239, 255, 0, 2), FURUNO_DATA_PORT);
+
+                let report_addr: SocketAddrV4 = SocketAddrV4::new(*from.ip(), FURUNO_COMMAND_PORT);
+                let send_command_addr: SocketAddrV4 = report_addr.clone();
                 let location_info: RadarInfo = RadarInfo::new(
                     LocatorId::Furuno,
                     "Furuno",
@@ -162,6 +252,48 @@ fn process_beacon_report(
     }
 
     Ok(())
+}
+
+const LOGIN_TIMEOUT: Duration = Duration::from_millis(500);
+
+fn login_to_radar(radar_addr: SocketAddrV4) -> Result<u16, io::Error> {
+    let mut stream =
+        std::net::TcpStream::connect_timeout(&std::net::SocketAddr::V4(radar_addr), LOGIN_TIMEOUT)?;
+
+    // fnet.dll function "login_via_copyright"
+    // From the 13th byte the message is:
+    // "COPYRIGHT (C) 2001 FURUNO ELECTRIC CO.,LTD. "
+    const LOGIN_MESSAGE: [u8; 56] = [
+        //                                              v- this byte is the only variable one
+        0x8, 0x1, 0x0, 0x38, 0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x43, 0x4f, 0x50, 0x59, 0x52,
+        0x49, 0x47, 0x48, 0x54, 0x20, 0x28, 0x43, 0x29, 0x20, 0x32, 0x30, 0x30, 0x31, 0x20, 0x46,
+        0x55, 0x52, 0x55, 0x4e, 0x4f, 0x20, 0x45, 0x4c, 0x45, 0x43, 0x54, 0x52, 0x49, 0x43, 0x20,
+        0x43, 0x4f, 0x2e, 0x2c, 0x4c, 0x54, 0x44, 0x2e, 0x20,
+    ];
+    const EXPECTED_HEADER: [u8; 8] = [0x9, 0x1, 0x0, 0xc, 0x1, 0x0, 0x0, 0x0];
+
+    stream.set_write_timeout(Some(LOGIN_TIMEOUT))?;
+    stream.set_read_timeout(Some(LOGIN_TIMEOUT))?;
+
+    stream.write_all(&LOGIN_MESSAGE)?;
+
+    let mut buf: [u8; 8] = [0; 8];
+    stream.read_exact(&mut buf)?;
+
+    if buf != EXPECTED_HEADER {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("Unexpected reply {:?}", buf),
+        ));
+    }
+    stream.read_exact(&mut buf[0..4])?;
+
+    let port = FURUNO_BASE_PORT + ((buf[0] as u16) << 8) + buf[1] as u16;
+    log::debug!(
+        "Furuno radar logged in; using port {} for report/command data",
+        port
+    );
+    Ok(port)
 }
 
 #[derive(Clone, Copy)]

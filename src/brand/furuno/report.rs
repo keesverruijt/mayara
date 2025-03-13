@@ -1,20 +1,29 @@
 use anyhow::{bail, Error};
 use log::{debug, error, info, trace};
+use num_traits::FromPrimitive;
+
 use std::io;
 use std::time::Duration;
-use tokio::net::UdpSocket;
+use tokio::io::AsyncReadExt;
+use tokio::io::WriteHalf;
+use tokio::net::{TcpSocket, TcpStream};
 use tokio::time::{sleep, sleep_until, Instant};
 use tokio_graceful_shutdown::SubsystemHandle;
 
-use crate::network::create_udp_multicast_listen;
+use super::command::CommandId;
+use super::CommandMode;
+use super::FURUNO_RADAR_RANGES;
 use crate::radar::{RadarError, RadarInfo};
 use crate::settings::{ControlType, ControlUpdate};
+
+use super::command::Command;
 
 pub struct FurunoReportReceiver {
     info: RadarInfo,
     key: String,
+    command_sender: Command,
     buf: Vec<u8>,
-    sock: Option<UdpSocket>,
+    stream: Option<TcpStream>,
     report_request_timeout: Instant,
     report_request_interval: Duration,
 }
@@ -23,53 +32,45 @@ impl FurunoReportReceiver {
     pub fn new(info: RadarInfo) -> FurunoReportReceiver {
         let key = info.key();
 
+        let command_sender = Command::new(&info);
+
         FurunoReportReceiver {
-            key: key,
-            info: info,
+            info,
+            key,
+            command_sender,
             buf: Vec::with_capacity(1000),
-            sock: None,
+            stream: None,
 
             report_request_timeout: Instant::now(),
             report_request_interval: Duration::from_millis(5000),
         }
     }
 
-    async fn start_socket(&mut self) -> io::Result<()> {
-        match create_udp_multicast_listen(&self.info.report_addr, &self.info.nic_addr) {
-            Ok(sock) => {
-                self.sock = Some(sock);
-                debug!(
-                    "{}: {} via {}: listening for reports",
-                    self.key, &self.info.report_addr, &self.info.nic_addr
-                );
-                Ok(())
-            }
-            Err(e) => {
-                sleep(Duration::from_millis(1000)).await;
-                debug!(
-                    "{}: {} via {}: create multicast failed: {}",
-                    self.key, &self.info.report_addr, &self.info.nic_addr, e
-                );
-                Ok(())
-            }
-        }
+    async fn start_stream(&mut self) -> Result<(), RadarError> {
+        let sock = TcpSocket::new_v4().map_err(|e| RadarError::Io(e))?;
+        self.stream = Some(
+            sock.connect(std::net::SocketAddr::V4(self.info.send_command_addr))
+                .await
+                .map_err(|e| RadarError::Io(e))?,
+        );
+        Ok(())
     }
 
     //
     // Process reports coming in from the radar on self.sock and commands from the
     // controller (= user) on self.info.command_tx.
     //
-    async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
+    async fn data_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
         debug!("{}: listening for reports", self.key);
         let mut command_rx = self.info.control_update_subscribe();
 
-        let report_socket = self.sock.take().unwrap();
+        let stream = self.stream.take().unwrap();
+        let (mut read, mut write) = tokio::io::split(stream);
+        self.command_sender.init(&mut write).await?;
 
         loop {
             self.report_request_timeout += self.report_request_interval;
             let timeout = self.report_request_timeout;
-            self.set_value(&ControlType::Range, 400.);
-            self.set_value_auto(&ControlType::Gain, 50., 1);
 
             tokio::select! {
                 _ = subsys.on_shutdown_requested() => {
@@ -78,14 +79,21 @@ impl FurunoReportReceiver {
                 },
 
                 _ = sleep_until(timeout) => {
+                    self.command_sender.send(&mut write, CommandMode::New, CommandId::AliveCheck, &[]).await?;
                 },
 
-                r = report_socket.recv_buf_from(&mut self.buf)  => {
+                r = read.read_buf(&mut self.buf)  => {
                     match r {
-                        Ok((_len, _addr)) => {
-                            if let Err(e) = self.process_report().await {
-                                error!("{}: {}", self.key, e);
+                        Ok(len) => {
+                            if len > 4 {
+                                if self.buf[len - 2] == 13 && self.buf[len - 1] == 10 {
+                                    self.buf.truncate(len - 2);
+                                    if let Err(e) = self.process_report().await {
+                                        error!("{}: {}", self.key, e);
+                                    }
+                                }
                             }
+
                             self.buf.clear();
                         }
                         Err(e) => {
@@ -96,7 +104,14 @@ impl FurunoReportReceiver {
                 },
 
                 r = command_rx.recv() => {
-                    let _ = self.process_control_update(r).await;
+                    match r {
+                        Err(_) => {},
+                        Ok(cv) => {
+                            if let Err(e) = self.process_control_update(&mut write, cv).await {
+                                return Err(e);
+                            }
+                        },
+                    }
                 }
             }
         }
@@ -104,40 +119,35 @@ impl FurunoReportReceiver {
 
     async fn process_control_update(
         &mut self,
-        r: Result<ControlUpdate, tokio::sync::broadcast::error::RecvError>,
+        write: &mut WriteHalf<TcpStream>,
+        control_update: ControlUpdate,
     ) -> Result<(), RadarError> {
-        if r.is_err() {
-            return Err(RadarError::Shutdown);
-        };
-        let control_update = r.unwrap();
+        let cv = control_update.control_value;
+        let reply_tx = control_update.reply_tx;
 
-        #[cfg(todo)]
-        match control_message {
-            ControlUpdate::Value(reply_tx, cv) => {
-                if let Err(e) = self
-                    .command_sender
-                    .set_control(&cv, &self.info.controls)
-                    .await
-                {
-                    return self
-                        .info
-                        .controls
-                        .send_error_to_controller(&reply_tx, &cv, e)
-                        .await;
-                } else {
-                    self.info.controls.set_refresh(&cv.id);
+        if let Err(e) = self.command_sender.set_control(write, &cv).await {
+            self.info
+                .controls
+                .send_error_to_client(reply_tx, &cv, &e)
+                .await?;
+            match &e {
+                RadarError::Io(_) => {
+                    return Err(e);
                 }
+                _ => {}
             }
-            _ => {}
+        } else {
+            self.info.controls.set_refresh(&cv.id);
         }
+
         Ok(())
     }
 
     pub async fn run(mut self, subsys: SubsystemHandle) -> Result<(), RadarError> {
-        self.start_socket().await?;
+        self.start_stream().await?;
         loop {
-            if self.sock.is_some() {
-                match self.socket_loop(&subsys).await {
+            if self.stream.is_some() {
+                match self.data_loop(&subsys).await {
                     Err(RadarError::Shutdown) => {
                         return Ok(());
                     }
@@ -145,10 +155,10 @@ impl FurunoReportReceiver {
                         // Ignore, reopen socket
                     }
                 }
-                self.sock = None;
+                self.stream = None;
             } else {
                 sleep(Duration::from_millis(1000)).await;
-                self.start_socket().await?;
+                self.start_stream().await?;
             }
         }
     }
@@ -249,30 +259,84 @@ impl FurunoReportReceiver {
     async fn process_report(&mut self) -> Result<(), Error> {
         let data = &self.buf;
 
-        if data.len() < 2 {
-            bail!("UDP report len {} dropped", data.len());
+        if data.len() < 4 || data[0] != '$' as u8 {
+            bail!("TCP report {:?} dropped", data);
         }
 
-        if data[1] != 0xc4 {
-            if data[1] == 0xc6 {
-                match data[0] {
-                    0x11 => {
-                        if data.len() != 3 || data[2] != 0 {
-                            bail!("Strange content of report 0x0a 0xc6: {:02X?}", data);
-                        }
-                        // this is just a response to the MFD sending 0x0a 0xc2,
-                        // not sure what purpose it serves.
-                    }
-                    _ => {
-                        trace!("Unknown report 0x{:02x} 0xc6: {:02X?}", data[0], data);
-                    }
-                }
-            } else {
-                trace!("Unknown report {:02X?} dropped", data)
+        log::trace!("{}: processing {}", self.key, std::str::from_utf8(data)?);
+
+        let args = &data[2..];
+        let mut values_str = match std::str::from_utf8(args) {
+            Ok(v) => v,
+            Err(_) => {
+                bail!(
+                    "{}: Ignoring non-ASCII string from radar: {:?}",
+                    self.key,
+                    args
+                );
             }
-            return Ok(());
         }
+        .split(',');
 
+        let cmd_str = values_str
+            .next()
+            .ok_or(io::Error::new(io::ErrorKind::Other, "No command ID"))?;
+        let cmd = u8::from_str_radix(cmd_str, 16)?;
+
+        let command_id = match CommandId::from_u8(cmd) {
+            Some(c) => c,
+            None => {
+                log::debug!("{}: ignoring unimplemented command {}", self.key, cmd_str);
+                return Ok(());
+            }
+        };
+
+        let mut values = Vec::new();
+
+        while let Some(value) = values_str.next() {
+            let parsed_value = value.trim().parse::<f32>()?;
+            values.push(parsed_value);
+        }
+        log::trace!("Parsed: ${:02X},{:?}", cmd, values);
+
+        match command_id {
+            CommandId::Status => {
+                if values.len() < 1 {
+                    bail!("No arguments for Status command");
+                }
+                self.set_value(&ControlType::Status, values[0]);
+            }
+            CommandId::Gain => {
+                if values.len() < 5 {
+                    bail!("Insufficient ({}) arguments for Gain command", values.len());
+                }
+                let auto = values[2] as u8;
+                let gain = if auto > 0 { values[3] } else { values[1] };
+                self.set_value_auto(&ControlType::Gain, gain, auto);
+            }
+            CommandId::Range => {
+                if values.len() < 3 {
+                    bail!(
+                        "Insufficient ({}) arguments for Range command",
+                        values.len()
+                    );
+                }
+                if values[2] != 0. {
+                    bail!("Cannot handle radar not set to NM range");
+                }
+                let index = values[0] as usize;
+                let range = FURUNO_RADAR_RANGES.get(index).unwrap_or(&0);
+                self.set_value(&ControlType::Range, *range as f32);
+            }
+            CommandId::OnTime => {
+                let hours = values[0] / 3600.0;
+                self.set_value(&ControlType::OperatingHours, hours);
+            }
+            CommandId::AliveCheck => {}
+            _ => {
+                bail!("TODO: Handle command {:?} values {:?}", command_id, values);
+            }
+        }
         Ok(())
     }
 }

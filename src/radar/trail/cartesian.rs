@@ -1,5 +1,6 @@
 use ndarray::{Array2, ArrayBase, Dim, OwnedRepr};
 
+#[allow(dead_code)]
 #[derive(Clone, Copy)]
 pub struct Point {
     pub x: f32,
@@ -12,6 +13,7 @@ pub struct PointInt {
     pub y: i16,
 }
 
+#[allow(dead_code)]
 pub struct PolarToCartesianLookup {
     spokes: usize,
     spoke_len: usize,
@@ -46,7 +48,7 @@ impl PolarToCartesianLookup {
         }
     }
 
-    // We trust that the optimizer will inline this
+    #[allow(dead_code)]
     pub fn get_point(&self, angle: usize, radius: usize) -> &Point {
         let angle = (angle + self.spokes) % self.spokes;
         &self.xy[[angle, radius]]

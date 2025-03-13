@@ -395,7 +395,7 @@ impl NavicoReportReceiver {
             return self
                 .info
                 .controls
-                .send_error_to_client(reply_tx, &cv, e)
+                .send_error_to_client(reply_tx, &cv, &e)
                 .await;
         } else {
             self.info.controls.set_refresh(&cv.id);

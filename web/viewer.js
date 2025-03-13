@@ -19,15 +19,25 @@ var webSocket;
 var RadarMessage;
 var renderer;
 var rangeDescriptions;
+var rangeDescriptionsFromControl;
 var noTransmitAngles;
 
-// Fill rangeDescriptions so that if we do replay of the demo, we show NM instead of m.
+// Weird lengths so our range rings show nm
 rangeDescriptions = {
+  28: "1/64 nm",
+  57: "1/32 nm",
+  86: "3/64 nm",
+  115: "1/16 nm",
+  173: "3/32 nm",
   231: "1/8 nm",
+  347: "3/16 nm",
   463: "1/4 nm",
+  694: "3/8 nm",
   926: "1/2 nm",
+  1041: "9/16 nm",
   1389: "3/4 nm",
   1852: "1 nm",
+  2083: "9/8 nm",
   3704: "2 nm",
   5556: "3 nm",
   7408: "4 nm",
@@ -185,7 +195,7 @@ function controlUpdate(control, controlValue) {
   if (control.name == "Range") {
     let range = parseFloat(controlValue.value);
     if (controlValue.descriptions) {
-      rangeDescriptions = control.descriptions;
+      rangeDescriptionsFromControl = control.descriptions;
     }
     renderer.setRange(range);
   }
@@ -233,9 +243,18 @@ function drawBackground(obj, txt) {
     obj.background_ctx.stroke();
     if (i > 0 && obj.range) {
       let r = Math.trunc((obj.range * i) / 4);
-      let text = rangeDescriptions ? rangeDescriptions[r] : undefined;
+      let text = rangeDescriptionsFromControl
+        ? rangeDescriptionsFromControl[r]
+        : undefined;
       if (text === undefined) {
-        if (r % 1000 == 0) {
+        let text = rangeDescriptions ? rangeDescriptions[r] : undefined;
+      }
+      if (text === undefined) {
+        if (r % 1852 == 0) {
+          text = r / 1852 + " nm";
+        } else if (r % 1852 == 926) {
+          text = r / 1852 + " nm";
+        } else if (r % 1000 == 0) {
           text = r / 1000 + " km";
         } else {
           text = r + " m";

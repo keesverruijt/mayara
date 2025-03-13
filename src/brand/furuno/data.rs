@@ -1,3 +1,4 @@
+use crate::brand::furuno::FURUNO_RADAR_RANGES;
 use crate::network::create_udp_multicast_listen;
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
@@ -177,7 +178,7 @@ impl FurunoDataReceiver {
                             return self
                                 .info
                                 .controls
-                                .send_error_to_client(reply_tx, &cv, RadarError::ControlError(e))
+                                .send_error_to_client(reply_tx, &cv, &RadarError::ControlError(e))
                                 .await;
                         }
                     }
@@ -423,12 +424,38 @@ impl FurunoDataReceiver {
         spoke
     }
 
+    // From RadarDLLAccess RmGetEchoData() we know that the following should be in the header:
+    // status, sweep_len, scale, range, angle, heading, hdg_flag.
+    //
+    // derived from ghidra fec/radar.dll function 'decode_sweep_2' @ 10002740
+    // called from DecodeImoEchoFormat
+    // Here's a typical header:
+    //  [2,    #  0: 0x02 - Always 2, checked in radar.dll
+    //   149,  #  1: 0x95
+    //   0,
+    //   1,
+    //   0, 0, 0, 0,
+    //   48,   #  8: 0x30
+    //   17,   #  9: 0x11
+    //   116,  # 10: 0x74 - low byte of sweep_len
+    //   219,  # 11: 0xDB - bits 2..0 (011) = bits 10..8 of sweep_len
+    //                    - bits 4..3 (11) = encoding 3
+    //                    - bits 7..5 (110) = ?
+    //   6,    # 12: 0x06
+    //   0,    # 13: 0x00
+    //   240,  # 14: 0xF0
+    //   9]    # 15: 0x09
+    //
+    //  multi byte data: sweep_len = 0b011 << 8 | 0x74 => 0x374 = 884
+
+    //  -> sweep_count=8 sweep_len=884 encoding=3 have_heading=0 range=496
     fn parse_metadata_header(data: &[u8]) -> FurunoSpokeMetadata {
         let sweep_count = (data[9] >> 1) as u32;
         let sweep_len = ((data[11] & 0x07) as u32) << 8 | data[10] as u32;
         let encoding = ((data[11] & 0x18) >> 3) as u8;
         let have_heading = ((data[15] & 0x30) >> 3) as u8;
-        let range = (((data[15] & 0x07) as u32) << 8) + data[14] as u32;
+        let range = FURUNO_RADAR_RANGES.get(data[12] as usize).unwrap_or(&0);
+        let range = *range as u32;
         let metadata = FurunoSpokeMetadata {
             sweep_count,
             sweep_len,
@@ -436,6 +463,15 @@ impl FurunoDataReceiver {
             have_heading,
             range,
         };
+        log::trace!(
+            "header {:?} -> sweep_count={} sweep_len={} encoding={} have_heading={} range={}",
+            &data[0..20],
+            sweep_count,
+            sweep_len,
+            encoding,
+            have_heading,
+            range
+        );
         metadata
     }
 }

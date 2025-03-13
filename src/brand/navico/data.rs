@@ -260,7 +260,7 @@ impl NavicoDataReceiver {
                         .send_error_to_client(
                             reply_tx,
                             &cv,
-                            RadarError::ControlError(reply.unwrap_err()),
+                            &RadarError::ControlError(reply.unwrap_err()),
                         )
                         .await;
                 }

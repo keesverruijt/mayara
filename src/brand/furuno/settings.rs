@@ -2,8 +2,10 @@ use std::collections::HashMap;
 
 use crate::{
     radar::RadarInfo,
-    settings::{Control, ControlType, Controls, SharedControls, HAS_AUTO_NOT_ADJUSTABLE},
+    settings::{Control, ControlType, SharedControls, HAS_AUTO_NOT_ADJUSTABLE},
 };
+
+use super::FURUNO_RADAR_RANGES;
 
 pub fn new(replay: bool) -> SharedControls {
     let mut controls = HashMap::new();
@@ -13,8 +15,9 @@ pub fn new(replay: bool) -> SharedControls {
         Control::new_string(ControlType::UserName).read_only(false),
     );
 
-    let max_value = 48. * 1852.;
-    let range_control = Control::new_numeric(ControlType::Range, 0., max_value).unit("m");
+    let max_value = 120. * 1852.;
+    let mut range_control = Control::new_numeric(ControlType::Range, 0., max_value).unit("m");
+    range_control.set_valid_values(FURUNO_RADAR_RANGES.into());
     controls.insert(ControlType::Range, range_control);
 
     controls.insert(
@@ -43,10 +46,6 @@ pub fn new(replay: bool) -> SharedControls {
         Control::new_auto(ControlType::Rain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE)
             .wire_scale_factor(255., false),
     );
-    controls.insert(
-        ControlType::TargetBoost,
-        Control::new_list(ControlType::TargetBoost, &["Off", "Low", "High"]),
-    );
 
     controls.insert(
         ControlType::OperatingHours,
@@ -69,11 +68,10 @@ pub fn new(replay: bool) -> SharedControls {
 
     let mut control = Control::new_list(
         ControlType::Status,
-        &["Off", "Standby", "Transmit", "", "", "SpinningUp"],
+        &["WarmingUp", "Standby", "Transmit", "NoConnection"],
     )
     .send_always();
     control.set_valid_values([1, 2].to_vec());
-
     controls.insert(ControlType::Status, control);
 
     controls.insert(
@@ -119,38 +117,26 @@ pub fn update_when_model_known(controls: &mut SharedControls, radar_info: &Radar
     controls.insert(
         ControlType::NoTransmitStart1,
         Control::new_numeric(ControlType::NoTransmitStart1, -180., 180.)
-            .wire_scale_factor(1800., true)
+            .unit("Deg")
             .wire_offset(-1.),
     );
     controls.insert(
         ControlType::NoTransmitEnd1,
         Control::new_numeric(ControlType::NoTransmitEnd1, -180., 180.)
             .unit("Deg")
-            .wire_scale_factor(1800., true)
             .wire_offset(-1.),
     );
 
     controls.insert(
-        ControlType::ScanSpeed,
-        Control::new_list(ControlType::ScanSpeed, &["Normal", "Fast"]),
+        ControlType::NoTransmitStart2,
+        Control::new_numeric(ControlType::NoTransmitStart2, -180., 180.)
+            .unit("Deg")
+            .wire_offset(-1.),
     );
     controls.insert(
-        ControlType::TargetExpansion,
-        Control::new_list(ControlType::TargetExpansion, &["Off", "On"]),
-    );
-    controls.insert(
-        ControlType::TargetSeparation,
-        Control::new_list(
-            ControlType::TargetSeparation,
-            &["Off", "Low", "Medium", "High"],
-        ),
-    );
-    controls.insert(
-        ControlType::Doppler,
-        Control::new_list(ControlType::Doppler, &["Off", "Normal", "Approaching"]),
-    );
-    controls.insert(
-        ControlType::DopplerSpeedThreshold,
-        Control::new_numeric(ControlType::DopplerSpeedThreshold, 0., 1000.),
+        ControlType::NoTransmitEnd2,
+        Control::new_numeric(ControlType::NoTransmitEnd2, -180., 180.)
+            .unit("Deg")
+            .wire_offset(-1.),
     );
 }

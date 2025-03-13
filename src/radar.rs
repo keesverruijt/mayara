@@ -50,6 +50,9 @@ pub enum RadarError {
     ParseJson(String),
     #[error("IP address changed")]
     IPAddressChanged,
+    #[cfg(windows)]
+    #[error("OS error: {0}")]
+    OSError(String),
 }
 
 // Tell axum how to convert `AppError` into a response.
@@ -184,7 +187,7 @@ pub(crate) struct RadarInfo {
     pub pixel_values: u8,                // How many values per pixel, 0..220 or so
     pub spokes: u16,                     // How many spokes per rotation
     pub max_spoke_len: u16,              // Fixed for some radars, variable for others
-    pub addr: SocketAddrV4,              // The assigned IP address of the radar
+    pub addr: SocketAddrV4,              // The IP address of the radar
     pub nic_addr: Ipv4Addr,              // IPv4 address of NIC via which radar can be reached
     pub spoke_data_addr: SocketAddrV4,   // Where the radar will send data spokes
     pub report_addr: SocketAddrV4,       // Where the radar will send reports
@@ -456,6 +459,12 @@ impl SharedRadars {
             }
         }
         Err(RadarError::NoSuchRadar(key.to_string()))
+    }
+
+    pub fn remove(&self, key: &str) {
+        let mut radars = self.radars.write().unwrap();
+
+        radars.info.remove(key);
     }
 
     pub fn cli_args(&self) -> Cli {
