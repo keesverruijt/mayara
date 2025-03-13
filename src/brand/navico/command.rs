@@ -231,8 +231,8 @@ impl Command {
                     let auto = auto as u32;
 
                     cmd.extend_from_slice(&[0x06, 0xc1, 0x02]);
-                    cmd.extend_from_slice(&auto.to_le_bytes());
-                    cmd.extend_from_slice(&v.to_le_bytes());
+                    cmd.extend_from_slice(&auto.to_be_bytes());
+                    cmd.extend_from_slice(&v.to_be_bytes());
                 }
             }
             ControlType::Rain => {
