@@ -130,6 +130,8 @@ impl Command {
         let auto: i32 = if cv.auto.unwrap_or(false) { 1 } else { 0 };
         let enabled: i32 = if cv.enabled.unwrap_or(false) { 1 } else { 0 };
 
+        log::trace!("set_control: {:?} = {} => {:.1}", cv.id, cv.value, value);
+
         let mut cmd = Vec::with_capacity(6);
 
         let id: CommandId = match cv.id {

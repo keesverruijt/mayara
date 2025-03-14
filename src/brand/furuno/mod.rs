@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use bincode::deserialize;
 use log::log_enabled;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
@@ -94,7 +95,7 @@ static FURUNO_RADAR_RANGES: [i32; 22] = [
     1852 * 120,
 ];
 
-fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
+fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) -> bool {
     info.controls
         .set_string(&crate::settings::ControlType::UserName, info.key())
         .unwrap();
@@ -121,7 +122,7 @@ fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
             Err(e) => {
                 log::error!("{}: Unable to connect for login: {}", info.key(), e);
                 radars.remove(&info.key());
-                return;
+                return false;
             }
             Ok(p) => p,
         };
@@ -154,35 +155,10 @@ fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
         subsys.start(SubsystemBuilder::new(report_name, |s| {
             report_receiver.run(s)
         }));
-    }
-}
 
-fn process_locator_report(
-    report: &[u8],
-    from: &SocketAddrV4,
-    via: &Ipv4Addr,
-    radars: &SharedRadars,
-    subsys: &SubsystemHandle,
-) -> io::Result<()> {
-    if report.len() < 2 {
-        return Ok(());
+        return true;
     }
-
-    if log_enabled!(log::Level::Debug) {
-        log::debug!(
-            "{}: Furuno report: {:02X?} len {}",
-            from,
-            report,
-            report.len()
-        );
-        log::debug!("{}: printable:     {}", from, PrintableSlice::new(report));
-    }
-
-    if report.len() == 32 && report[16] == b'R' && report[17] == b'D' {
-        process_beacon_report(report, from, via, radars, subsys)
-    } else {
-        Ok(())
-    }
+    return false;
 }
 
 // [01, 00, 00, 01, 00, 00, 00, 00, 00, 01, 00, 18, 01, 00, 00, 00, 52, 44, 30, 30, 33, 32, 31, 32, 01, 01, 00, 02, 00, 01, 00, 12] len 32
@@ -199,59 +175,15 @@ struct FurunoRadarReport {
     _filler3: [u8; 8],
 }
 
-fn process_beacon_report(
-    report: &[u8],
-    from: &SocketAddrV4,
-    nic_addr: &Ipv4Addr,
-    radars: &SharedRadars,
-    subsys: &SubsystemHandle,
-) -> Result<(), io::Error> {
-    match deserialize::<FurunoRadarReport>(report) {
-        Ok(data) => {
-            if let Some(name) = c_string(&data.name) {
-                if data.device_type != 0x18 {
-                    log::warn!(
-                        "Radar info packet uses device type {} instead of 24",
-                        data.device_type
-                    );
-                }
-                let radar_addr: SocketAddrV4 = from.clone();
-
-                // DRS: spoke data all on a well-known address
-                let spoke_data_addr: SocketAddrV4 =
-                    SocketAddrV4::new(Ipv4Addr::new(239, 255, 0, 2), FURUNO_DATA_PORT);
-
-                let report_addr: SocketAddrV4 = SocketAddrV4::new(*from.ip(), FURUNO_COMMAND_PORT);
-                let send_command_addr: SocketAddrV4 = report_addr.clone();
-                let location_info: RadarInfo = RadarInfo::new(
-                    LocatorId::Furuno,
-                    "Furuno",
-                    None,
-                    Some(name),
-                    64,
-                    FURUNO_SPOKES,
-                    FURUNO_SPOKE_LEN,
-                    radar_addr,
-                    nic_addr.clone(),
-                    spoke_data_addr,
-                    report_addr,
-                    send_command_addr,
-                    settings::new(radars.cli_args().replay),
-                );
-                found(location_info, radars, subsys);
-            }
-        }
-        Err(e) => {
-            log::error!(
-                "{} via {}: Failed to decode Furuno radar report: {}",
-                from,
-                nic_addr,
-                e
-            );
-        }
-    }
-
-    Ok(())
+#[derive(Deserialize, Debug, Copy, Clone)]
+#[repr(packed)]
+struct FurunoRadarModelReport {
+    _filler1: [u8; 24],
+    model: [u8; 32],
+    firmware_versions: [u8; 32],
+    firmware_version: [u8; 32],
+    serial_no: [u8; 32],
+    _filler2: [u8; 18],
 }
 
 const LOGIN_TIMEOUT: Duration = Duration::from_millis(500);
@@ -296,8 +228,10 @@ fn login_to_radar(radar_addr: SocketAddrV4) -> Result<u16, io::Error> {
     Ok(port)
 }
 
-#[derive(Clone, Copy)]
-struct FurunoLocatorState {}
+#[derive(Clone)]
+struct FurunoLocatorState {
+    radars: HashMap<SocketAddrV4, String>,
+}
 
 impl RadarLocatorState for FurunoLocatorState {
     fn process(
@@ -308,11 +242,141 @@ impl RadarLocatorState for FurunoLocatorState {
         radars: &SharedRadars,
         subsys: &SubsystemHandle,
     ) -> Result<(), io::Error> {
-        process_locator_report(message, from, nic_addr, radars, subsys)
+        self.process_locator_report(message, from, nic_addr, radars, subsys)
     }
 
     fn clone(&self) -> Box<dyn RadarLocatorState> {
-        Box::new(FurunoLocatorState {}) // Navico is stateless
+        Box::new(Clone::clone(self))
+    }
+}
+
+impl FurunoLocatorState {
+    fn process_locator_report(
+        &mut self,
+        report: &[u8],
+        from: &SocketAddrV4,
+        via: &Ipv4Addr,
+        radars: &SharedRadars,
+        subsys: &SubsystemHandle,
+    ) -> io::Result<()> {
+        if report.len() < 2 {
+            return Ok(());
+        }
+
+        if log_enabled!(log::Level::Debug) {
+            log::debug!(
+                "{}: Furuno report: {:02X?} len {}",
+                from,
+                report,
+                report.len()
+            );
+            log::debug!("{}: printable:     {}", from, PrintableSlice::new(report));
+        }
+
+        if report.len() == 32 && report[16] == b'R' && report[17] == b'D' {
+            self.process_beacon_report(report, from, via, radars, subsys)
+        } else if report.len() == 170 {
+            self.process_beacon_model_report(report, from, via, radars)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn process_beacon_report(
+        &mut self,
+        report: &[u8],
+        from: &SocketAddrV4,
+        nic_addr: &Ipv4Addr,
+        radars: &SharedRadars,
+        subsys: &SubsystemHandle,
+    ) -> Result<(), io::Error> {
+        match deserialize::<FurunoRadarReport>(report) {
+            Ok(data) => {
+                if let Some(name) = c_string(&data.name) {
+                    if data.device_type != 0x18 {
+                        log::warn!(
+                            "Radar info packet uses device type {} instead of 24",
+                            data.device_type
+                        );
+                    }
+                    let radar_addr: SocketAddrV4 = from.clone();
+
+                    // DRS: spoke data all on a well-known address
+                    let spoke_data_addr: SocketAddrV4 =
+                        SocketAddrV4::new(Ipv4Addr::new(239, 255, 0, 2), FURUNO_DATA_PORT);
+
+                    let report_addr: SocketAddrV4 =
+                        SocketAddrV4::new(*from.ip(), FURUNO_COMMAND_PORT);
+                    let send_command_addr: SocketAddrV4 = report_addr.clone();
+                    let location_info: RadarInfo = RadarInfo::new(
+                        LocatorId::Furuno,
+                        "Furuno",
+                        None,
+                        Some(name),
+                        64,
+                        FURUNO_SPOKES,
+                        FURUNO_SPOKE_LEN,
+                        radar_addr,
+                        nic_addr.clone(),
+                        spoke_data_addr,
+                        report_addr,
+                        send_command_addr,
+                        settings::new(radars.cli_args().replay),
+                    );
+                    let key = location_info.key();
+                    if found(location_info, radars, subsys) {
+                        self.radars.insert(from.clone(), key);
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!(
+                    "{} via {}: Failed to decode Furuno radar report: {}",
+                    from,
+                    nic_addr,
+                    e
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn process_beacon_model_report(
+        &mut self,
+        report: &[u8],
+        from: &SocketAddrV4,
+        nic_addr: &Ipv4Addr,
+        radars: &SharedRadars,
+    ) -> Result<(), io::Error> {
+        let radar_addr: SocketAddrV4 = from.clone();
+        // Is this known as a Furuno radar?
+        if let Some(key) = self.radars.get(&radar_addr) {
+            match deserialize::<FurunoRadarModelReport>(report) {
+                Ok(data) => {
+                    let model = c_string(&data.model);
+                    let serial_no = c_string(&data.serial_no);
+
+                    if let (Some(model), Some(serial_no)) = (model, serial_no) {
+                        radars.update_serial_no(key, serial_no.to_string());
+                        if let Ok(radar_info) = radars.find_radar_info(key) {
+                            let mut controls = radar_info.controls.clone();
+                            settings::update_when_model_known(&mut controls, &radar_info, model);
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!(
+                        "{} via {}: Failed to decode Furuno radar report: {}",
+                        from,
+                        nic_addr,
+                        e
+                    );
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -330,7 +394,9 @@ impl RadarLocator for FurunoLocator {
                 &FURUNO_BEACON_ADDRESS,
                 "Furuno Beacon",
                 None,
-                Box::new(FurunoLocatorState {}),
+                Box::new(FurunoLocatorState {
+                    radars: HashMap::new(),
+                }),
             ));
         }
     }

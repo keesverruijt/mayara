@@ -68,14 +68,14 @@ impl LocatorAddress {
         id: LocatorId,
         address: &SocketAddr,
         brand: &str,
-        ping: Option<&'static [u8]>,
+        adress_request_packet: Option<&'static [u8]>,
         locator: Box<dyn RadarLocatorState>,
     ) -> LocatorAddress {
         LocatorAddress {
             id,
             address: address.clone(),
             brand: brand.into(),
-            adress_request_packet: ping,
+            adress_request_packet,
             locator,
         }
     }

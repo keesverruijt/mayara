@@ -467,6 +467,28 @@ impl SharedRadars {
         radars.info.remove(key);
     }
 
+    ///
+    /// Update radar info in radars container
+    ///
+    pub fn update_serial_no(&self, key: &str, serial_no: String) {
+        let mut radars = self.radars.write().unwrap();
+
+        if let Some(radar_info) = {
+            if let Some(radar_info) = radars.info.get_mut(key) {
+                if radar_info.serial_no != Some(serial_no.clone()) {
+                    radar_info.serial_no = Some(serial_no);
+                    Some(radar_info.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } {
+            radars.persistent_data.store(&radar_info);
+        }
+    }
+
     pub fn cli_args(&self) -> Cli {
         let radars = self.radars.read().unwrap();
         radars.args.clone()

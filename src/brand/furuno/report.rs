@@ -312,6 +312,13 @@ impl FurunoReportReceiver {
                 }
                 let auto = values[2] as u8;
                 let gain = if auto > 0 { values[3] } else { values[1] };
+                log::trace!(
+                    "Gain: {} auto {} values[1]={} values[3]={}",
+                    gain,
+                    auto,
+                    values[1],
+                    values[3]
+                );
                 self.set_value_auto(&ControlType::Gain, gain, auto);
             }
             CommandId::Range => {

@@ -28,23 +28,19 @@ pub fn new(replay: bool) -> SharedControls {
         ControlType::BearingAlignment,
         Control::new_numeric(ControlType::BearingAlignment, -180., 180.)
             .unit("Deg")
-            .wire_scale_factor(1800., true)
-            .wire_offset(-1.),
+            .wire_offset(180.),
     );
     controls.insert(
         ControlType::Gain,
-        Control::new_auto(ControlType::Gain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE)
-            .wire_scale_factor(255., false),
+        Control::new_auto(ControlType::Gain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE),
     );
     controls.insert(
         ControlType::Sea,
-        Control::new_auto(ControlType::Sea, 0., 100., HAS_AUTO_NOT_ADJUSTABLE)
-            .wire_scale_factor(255., false),
+        Control::new_auto(ControlType::Sea, 0., 100., HAS_AUTO_NOT_ADJUSTABLE),
     );
     controls.insert(
         ControlType::Rain,
-        Control::new_auto(ControlType::Rain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE)
-            .wire_scale_factor(255., false),
+        Control::new_auto(ControlType::Rain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE),
     );
 
     controls.insert(
@@ -88,8 +84,22 @@ pub fn new(replay: bool) -> SharedControls {
     SharedControls::new(controls, replay)
 }
 
-pub fn update_when_model_known(controls: &mut SharedControls, radar_info: &RadarInfo) {
-    controls.set_model_name("Furuno".to_string());
+pub fn update_when_model_known(
+    controls: &mut SharedControls,
+    radar_info: &RadarInfo,
+    model_name: &str,
+) {
+    if let Some(model_control) = controls.get(&ControlType::ModelName) {
+        if model_control.value() == model_name {
+            return;
+        }
+        controls.set_model_name(model_name.to_string());
+    } else {
+        controls.insert(
+            ControlType::ModelName,
+            Control::new_string(ControlType::ModelName).read_only(true),
+        );
+    }
 
     let mut control = Control::new_string(ControlType::SerialNumber);
     if let Some(serial_number) = radar_info.serial_no.as_ref() {
@@ -100,12 +110,12 @@ pub fn update_when_model_known(controls: &mut SharedControls, radar_info: &Radar
     // Update the UserName; it had to be present at start so it could be loaded from
     // config. Override it if it is still the 'Furuno ... ' name.
     if controls.user_name() == radar_info.key() {
-        let mut user_name = "Furuno".to_string();
+        let mut user_name = model_name.to_string();
         if radar_info.serial_no.is_some() {
-            let mut serial = radar_info.serial_no.clone().unwrap();
+            let serial = radar_info.serial_no.clone().unwrap();
 
             user_name.push(' ');
-            user_name.push_str(&serial.split_off(7));
+            user_name.push_str(&serial);
         }
         if radar_info.which.is_some() {
             user_name.push(' ');
@@ -113,6 +123,8 @@ pub fn update_when_model_known(controls: &mut SharedControls, radar_info: &Radar
         }
         controls.set_user_name(user_name);
     }
+
+    // TODO: Add controls based on reverse engineered capability table
 
     controls.insert(
         ControlType::NoTransmitStart1,
