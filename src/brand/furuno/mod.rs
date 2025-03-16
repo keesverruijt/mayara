@@ -389,15 +389,15 @@ struct FurunoLocator {}
 
 #[async_trait]
 impl RadarLocator for FurunoLocator {
-    fn update_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
+    fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
         if !addresses
             .iter()
-            .any(|i| i.id == LocatorId::Furuno && i.brand == "Furuno Beacon")
+            .any(|i| i.id == LocatorId::Furuno && i.brand == "furuno")
         {
             addresses.push(LocatorAddress::new(
                 LocatorId::Furuno,
                 &FURUNO_BEACON_ADDRESS,
-                "Furuno Beacon",
+                "furuno",
                 Some(&FURUNO_ANNOUNCE_MAYARA_PACKET),
                 Box::new(FurunoLocatorState {
                     radars: HashMap::new(),

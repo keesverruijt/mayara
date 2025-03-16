@@ -7,8 +7,13 @@ use log::{info, warn};
 use miette::Result;
 use once_cell::sync::Lazy;
 use radar::SharedRadars;
-use std::time::Duration;
-use tokio::sync::mpsc;
+use serde::{Serialize, Serializer};
+use std::{
+    collections::{HashMap, HashSet},
+    net::IpAddr,
+    time::Duration,
+};
+use tokio::sync::{broadcast, mpsc};
 use tokio_graceful_shutdown::{SubsystemBuilder, Toplevel};
 use web::Web;
 
@@ -66,6 +71,49 @@ pub struct Cli {
 
 static GLOBAL_ARGS: Lazy<Cli> = Lazy::new(|| Cli::parse());
 
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct RadarInterfaceApi {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    listeners: Option<HashMap<String, String>>,
+}
+
+#[derive(Clone, Eq, PartialEq, Hash)]
+struct InterfaceId {
+    name: String,
+}
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct InterfaceApi {
+    brands: HashSet<String>,
+    interfaces: HashMap<InterfaceId, RadarInterfaceApi>,
+}
+
+impl RadarInterfaceApi {
+    fn new(status: Option<String>, listeners: Option<HashMap<String, String>>) -> Self {
+        Self { status, listeners }
+    }
+}
+
+impl InterfaceId {
+    fn new(name: String, address: IpAddr) -> Self {
+        Self {
+            name: format!("{} ({})", name, address),
+        }
+    }
+}
+
+impl Serialize for InterfaceId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.name.as_str())
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let log_level = GLOBAL_ARGS.verbose.log_level_filter();
@@ -101,11 +149,13 @@ async fn main() -> Result<()> {
     Toplevel::new(|s| async move {
         let signal_k = signalk::NavigationData::new();
 
+        let (tx_interface_request, _) = broadcast::channel(10);
+
         let radars = SharedRadars::new();
         let radars_clone1 = radars.clone();
 
         let locator = Locator::new(radars);
-        let web = Web::new(GLOBAL_ARGS.port, radars_clone1);
+        let web = Web::new(radars_clone1, tx_interface_request.clone());
 
         let (tx_ip_change, rx_ip_change) = mpsc::channel(1);
 
@@ -113,7 +163,7 @@ async fn main() -> Result<()> {
             signal_k.run(a, rx_ip_change).await
         }));
         s.start(SubsystemBuilder::new("Locator", |a| {
-            locator.run(a, tx_ip_change)
+            locator.run(a, tx_ip_change, tx_interface_request)
         }));
         s.start(SubsystemBuilder::new("Webserver", |a| web.run(a)));
     })

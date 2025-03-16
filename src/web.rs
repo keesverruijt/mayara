@@ -22,12 +22,13 @@ use std::{
     str::FromStr,
 };
 use thiserror::Error;
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::broadcast, sync::mpsc};
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::{
     radar::{Legend, RadarInfo, SharedRadars},
     settings::SharedControls,
+    InterfaceApi, GLOBAL_ARGS,
 };
 
 const RADAR_URI: &str = "/v1/api/radars";
@@ -52,25 +53,28 @@ pub enum WebError {
 #[derive(Clone)]
 pub struct Web {
     radars: SharedRadars,
-    port: u16,
-    shutdown_tx: tokio::sync::broadcast::Sender<()>,
+    shutdown_tx: broadcast::Sender<()>,
+    tx_interface_request: broadcast::Sender<Option<mpsc::Sender<InterfaceApi>>>,
 }
 
 impl Web {
-    pub fn new(port: u16, radars: SharedRadars) -> Self {
-        let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
+    pub fn new(
+        radars: SharedRadars,
+        tx_interface_request: broadcast::Sender<Option<mpsc::Sender<InterfaceApi>>>,
+    ) -> Self {
+        let (shutdown_tx, _) = broadcast::channel(1);
 
         Web {
             radars,
-            port,
             shutdown_tx,
+            tx_interface_request,
         }
     }
 
     pub async fn run(self, subsys: SubsystemHandle) -> Result<(), WebError> {
         let listener = TcpListener::bind(SocketAddr::new(
             IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-            self.port,
+            GLOBAL_ARGS.port,
         ))
         .await
         .map_err(|e| WebError::Io(e))?;
@@ -167,7 +171,7 @@ async fn get_radars(
             Ok(uri) => uri.host().unwrap_or("localhost").to_string(),
             Err(_) => "localhost".to_string(),
         },
-        state.port
+        GLOBAL_ARGS.port
     );
 
     debug!("target host = '{}'", host);
@@ -195,24 +199,6 @@ async fn get_radars(
     Json(api).into_response()
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RadarStatusApi {
-    brand: String,
-    status: String,
-}
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RadarInterfaceApi {
-    radars: Vec<RadarStatusApi>,
-}
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct InterfaceApi {
-    brands: Vec<String>,
-    interfaces: Vec<RadarInterfaceApi>,
-}
-
 #[debug_handler]
 async fn get_interfaces(
     State(state): State<Web>,
@@ -226,9 +212,12 @@ async fn get_interfaces(
 
     debug!("Interface state request from {} for host '{}'", addr, host);
 
-    let mut brands: Vec<String> = Vec::new();
-    let mut api: Vec<RadarInterfaceApi> = Vec::new();
-    Json(api).into_response()
+    let (tx, mut rx) = mpsc::channel(1);
+    state.tx_interface_request.send(Some(tx)).unwrap();
+    match rx.recv().await {
+        Some(api) => Json(api).into_response(),
+        _ => Json(Vec::<String>::new()).into_response(),
+    }
 }
 
 #[derive(Deserialize)]

@@ -299,12 +299,12 @@ struct RaymarineLocator {}
 
 #[async_trait]
 impl RadarLocator for RaymarineLocator {
-    fn update_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
+    fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
         if !addresses.iter().any(|i| i.id == LocatorId::Raymarine) {
             addresses.push(LocatorAddress::new(
                 LocatorId::Raymarine,
                 &RAYMARINE_BEACON_ADDRESS,
-                "Raymarine Beacon",
+                "raymarine",
                 None, // The Raymarine radars send the beacon reports by themselves, no polling needed
                 Box::new(RaymarineLocatorState::new()),
             ));

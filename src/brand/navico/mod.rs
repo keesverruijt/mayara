@@ -430,15 +430,12 @@ impl RadarLocatorState for NavicoLocatorState {
 struct NavicoLocator {}
 
 impl RadarLocator for NavicoLocator {
-    fn update_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
-        if !addresses
-            .iter()
-            .any(|i| i.id == LocatorId::Gen3Plus && i.brand == "Navico Beacon")
-        {
+    fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
+        if !addresses.iter().any(|i| i.id == LocatorId::Gen3Plus) {
             addresses.push(LocatorAddress::new(
                 LocatorId::Gen3Plus,
                 &NAVICO_BEACON_ADDRESS,
-                "Navico Beacon",
+                "navico",
                 Some(&NAVICO_ADDRESS_REQUEST_PACKET),
                 Box::new(NavicoLocatorState {}),
             ));
@@ -454,15 +451,12 @@ pub fn create_locator() -> Box<dyn RadarLocator + Send> {
 struct NavicoBR24Locator {}
 
 impl RadarLocator for NavicoBR24Locator {
-    fn update_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
-        if !addresses
-            .iter()
-            .any(|i| i.id == LocatorId::GenBR24 && i.brand == "Navico BR24 Beacon")
-        {
+    fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
+        if !addresses.iter().any(|i| i.id == LocatorId::GenBR24) {
             addresses.push(LocatorAddress::new(
                 LocatorId::GenBR24,
                 &NAVICO_BR24_BEACON_ADDRESS,
-                "Navico BR24 Beacon",
+                "navico",
                 Some(&NAVICO_ADDRESS_REQUEST_PACKET),
                 Box::new(NavicoLocatorState {}),
             ));

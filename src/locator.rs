@@ -7,7 +7,7 @@
 // Still, we use this location method for all radars so the process is uniform.
 //
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
@@ -16,6 +16,7 @@ use log::{debug, error, info, trace, warn};
 use miette::Result;
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use serde::Serialize;
+use tokio::sync::mpsc;
 use tokio::{net::UdpSocket, sync::mpsc::Sender, task::JoinSet, time::sleep};
 use tokio_graceful_shutdown::SubsystemHandle;
 
@@ -27,7 +28,7 @@ use crate::brand::navico;
 use crate::brand::raymarine;
 
 use crate::radar::{RadarError, SharedRadars};
-use crate::{network, Cli, GLOBAL_ARGS};
+use crate::{network, InterfaceApi, InterfaceId, RadarInterfaceApi, GLOBAL_ARGS};
 
 const LOCATOR_PACKET_BUFFER_LEN: usize = 300; // Long enough for any location packet
 
@@ -101,14 +102,20 @@ pub trait RadarLocatorState: Send {
 }
 
 pub trait RadarLocator {
-    fn update_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>);
+    fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>);
 }
 
 struct InterfaceState {
     active_nic_addresses: Vec<Ipv4Addr>,
     inactive_nic_names: HashMap<String, u32>,
     lost_nic_names: HashMap<String, u32>,
+    interface_api: InterfaceApi,
     first_loop: bool,
+}
+
+enum ResultType {
+    Locator(LocatorSocket, SocketAddrV4, Vec<u8>),
+    InterfaceRequest(mpsc::Sender<InterfaceApi>),
 }
 
 pub struct Locator {
@@ -124,6 +131,7 @@ impl Locator {
         self,
         subsys: SubsystemHandle,
         tx_ip_change: Sender<()>,
+        tx_interface_request: tokio::sync::broadcast::Sender<Option<Sender<InterfaceApi>>>,
     ) -> Result<(), RadarError> {
         let radars = &self.radars;
 
@@ -132,10 +140,14 @@ impl Locator {
             active_nic_addresses: Vec::new(),
             inactive_nic_names: HashMap::new(),
             lost_nic_names: HashMap::new(),
+            interface_api: InterfaceApi {
+                brands: HashSet::new(),
+                interfaces: HashMap::new(),
+            },
             first_loop: true,
         };
 
-        let listen_addresses = Self::compute_listen_addresses(&interface_state);
+        let listen_addresses = Self::compute_listen_addresses(&mut interface_state);
 
         loop {
             let cancellation_token = subsys.create_cancellation_token();
@@ -151,7 +163,7 @@ impl Locator {
                 debug!("No NIC addresses found");
                 sleep(Duration::from_millis(5000)).await;
             }
-            let sockets = sockets.unwrap();
+            let sockets: Vec<LocatorSocket> = sockets.unwrap();
 
             for socket in sockets {
                 spawn_receive(&mut set, socket);
@@ -177,6 +189,14 @@ impl Locator {
 
                 Err(RadarError::Timeout)
             });
+            let mut rx_interface_request = tx_interface_request.subscribe();
+            //let active_nic_addresses = interface_state.active_nic_addresses.clone();
+            set.spawn(async move {
+                match rx_interface_request.recv().await {
+                    Ok(Some(reply_channel)) => Ok(ResultType::InterfaceRequest(reply_channel)),
+                    _ => Err(RadarError::Shutdown),
+                }
+            });
 
             // Now that we're listening to the radars, send any address request (wake) packets
             if !GLOBAL_ARGS.replay {
@@ -191,7 +211,7 @@ impl Locator {
                 match join_result {
                     Ok(join_result) => {
                         match join_result {
-                            Ok((mut locator_socket, addr, buf)) => {
+                            Ok(ResultType::Locator(mut locator_socket, addr, buf)) => {
                                 trace!(
                                     "{} via {} -> {:02X?}",
                                     &addr,
@@ -208,6 +228,23 @@ impl Locator {
                                 );
                                 // Respawn this task
                                 spawn_receive(&mut set, locator_socket);
+                            }
+                            Ok(ResultType::InterfaceRequest(reply_channel)) => {
+                                // Respawn this task
+                                let _ = reply_channel
+                                    .send(interface_state.interface_api.clone())
+                                    .await;
+
+                                // Respawn this task
+                                let mut rx_interface_request = tx_interface_request.subscribe();
+                                set.spawn(async move {
+                                    match rx_interface_request.recv().await {
+                                        Ok(Some(reply_channel)) => {
+                                            Ok(ResultType::InterfaceRequest(reply_channel))
+                                        }
+                                        _ => Err(RadarError::Shutdown),
+                                    }
+                                });
                             }
                             Err(e) => {
                                 match e {
@@ -233,9 +270,13 @@ impl Locator {
         }
     }
 
-    fn compute_listen_addresses(interface_state: &InterfaceState) -> Vec<LocatorAddress> {
+    fn compute_listen_addresses(interface_state: &mut InterfaceState) -> Vec<LocatorAddress> {
         let mut listen_addresses: Vec<LocatorAddress> = Vec::new();
         let mut locators: Vec<Box<dyn RadarLocator>> = Vec::new();
+
+        let brands = &mut interface_state.interface_api.brands;
+        brands.clear();
+
         #[cfg(feature = "navico")]
         if GLOBAL_ARGS
             .brand
@@ -245,6 +286,7 @@ impl Locator {
         {
             locators.push(navico::create_locator());
             locators.push(navico::create_br24_locator());
+            brands.insert("navico".to_owned());
         }
         #[cfg(feature = "furuno")]
         if GLOBAL_ARGS
@@ -254,6 +296,7 @@ impl Locator {
             .eq_ignore_ascii_case("furuno")
         {
             locators.push(furuno::create_locator());
+            brands.insert("furuno".to_owned());
         }
         #[cfg(feature = "raymarine")]
         if GLOBAL_ARGS
@@ -263,27 +306,25 @@ impl Locator {
             .eq_ignore_ascii_case("raymarine")
         {
             locators.push(raymarine::create_locator());
+            brands.insert("raymarine".to_owned());
         }
 
         locators
             .iter()
-            .for_each(|x| x.update_listen_addresses(&mut listen_addresses));
+            .for_each(|x| x.set_listen_addresses(&mut listen_addresses));
 
         listen_addresses
     }
 }
 
-fn spawn_receive(
-    set: &mut JoinSet<Result<(LocatorSocket, SocketAddrV4, Vec<u8>), RadarError>>,
-    socket: LocatorSocket,
-) {
+fn spawn_receive(set: &mut JoinSet<Result<ResultType, RadarError>>, socket: LocatorSocket) {
     set.spawn(async move {
         let mut buf: Vec<u8> = Vec::with_capacity(LOCATOR_PACKET_BUFFER_LEN);
         let res = socket.sock.recv_buf_from(&mut buf).await;
 
         match res {
             Ok((_, addr)) => match addr {
-                SocketAddr::V4(addr) => Ok((socket, addr, buf)),
+                SocketAddr::V4(addr) => Ok(ResultType::Locator(socket, addr, buf)),
                 SocketAddr::V6(addr) => Err(RadarError::InterfaceNoV4(format!("{}", addr))),
             },
             Err(e) => Err(RadarError::Io(e)),
@@ -325,6 +366,9 @@ fn create_listen_sockets(
     let only_interface = &GLOBAL_ARGS.interface;
     let avoid_wifi = !GLOBAL_ARGS.allow_wifi;
 
+    let if_api = &mut interface_state.interface_api.interfaces;
+    if_api.clear();
+
     match NetworkInterface::show() {
         Ok(interfaces) => {
             trace!("getifaddrs() dump {:#?}", interfaces);
@@ -333,14 +377,23 @@ fn create_listen_sockets(
                 let mut active: bool = false;
 
                 if only_interface.is_none() || only_interface.as_ref() == Some(&itf.name) {
-                    if avoid_wifi && network::is_wireless_interface(&itf.name) {
-                        trace!("Ignoring wireless interface '{}'", itf.name);
-                        continue;
-                    }
                     for nic_addr in itf.addr {
                         if let (IpAddr::V4(nic_ip), Some(IpAddr::V4(nic_netmask))) =
                             (nic_addr.ip(), nic_addr.netmask())
                         {
+                            if avoid_wifi && network::is_wireless_interface(&itf.name) {
+                                trace!("Ignoring wireless interface '{}'", itf.name);
+                                if_api.insert(
+                                    InterfaceId::new(itf.name.clone(), nic_addr.ip().to_owned()),
+                                    RadarInterfaceApi::new(
+                                        Some("Wireless ignored".to_owned()),
+                                        None,
+                                    ),
+                                );
+                                continue;
+                            }
+                            let mut listeners = HashMap::new();
+
                             if !nic_ip.is_loopback() || only_interface.is_some() {
                                 if interface_state.lost_nic_names.contains_key(&itf.name)
                                     || !interface_state.active_nic_addresses.contains(&nic_ip)
@@ -376,20 +429,22 @@ fn create_listen_sockets(
                                                 &nic_netmask,
                                             ) {
                                             if only_interface.is_none() {
-                                                log::debug!(
-                                                    "{}/{} does not match bcast {}",
-                                                    nic_ip,
-                                                    nic_netmask,
-                                                    listen_addr.ip()
-                                                );
-                                                continue;
+                                                Err(std::io::Error::new(
+                                                    std::io::ErrorKind::AddrNotAvailable,
+                                                    format!("No match for {}", listen_addr.ip()),
+                                                ))
+                                            } else {
+                                                network::create_udp_listen(
+                                                    &listen_addr,
+                                                    &nic_ip,
+                                                    true,
+                                                )
                                             }
-                                            network::create_udp_listen(&listen_addr, &nic_ip, true)
                                         } else {
                                             network::create_udp_listen(&listen_addr, &nic_ip, false)
                                         };
 
-                                        match socket {
+                                        let status = match socket {
                                             Ok(socket) => {
                                                 sockets.push(LocatorSocket {
                                                     sock: socket,
@@ -400,14 +455,18 @@ fn create_listen_sockets(
                                                     "Listening on '{}' address {} for address {}",
                                                     itf.name, nic_ip, listen_addr,
                                                 );
+                                                "Listening".to_owned()
                                             }
                                             Err(e) => {
                                                 warn!(
-                                                "Cannot listen on '{}' address {} for address {}: {}",
-                                                itf.name, nic_ip, listen_addr, e
-                                            );
+                                                    "Cannot listen on '{}' address {} for address {}: {}",
+                                                    itf.name, nic_ip, listen_addr, e
+                                                );
+                                                e.to_string()
                                             }
-                                        }
+                                        };
+                                        listeners
+                                            .insert(radar_listen_address.brand.to_owned(), status);
                                     } else {
                                         trace!(
                                             "Ignoring IPv6 address {:?}",
@@ -417,6 +476,11 @@ fn create_listen_sockets(
                                 }
                                 active = true;
                             }
+
+                            if_api.insert(
+                                InterfaceId::new(itf.name.clone(), nic_addr.ip()),
+                                RadarInterfaceApi::new(None, Some(listeners)),
+                            );
                         }
                     }
                     if GLOBAL_ARGS.interface.is_some()
