@@ -5,6 +5,7 @@ use env_logger::Env;
 use locator::Locator;
 use log::{info, warn};
 use miette::Result;
+use once_cell::sync::Lazy;
 use radar::SharedRadars;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -63,11 +64,11 @@ pub struct Cli {
     allow_wifi: bool,
 }
 
+static GLOBAL_ARGS: Lazy<Cli> = Lazy::new(|| Cli::parse());
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Cli::parse();
-
-    let log_level = args.verbose.log_level_filter();
+    let log_level = GLOBAL_ARGS.verbose.log_level_filter();
     env_logger::Builder::from_env(Env::default())
         .filter_level(log_level)
         .filter_module("tungstenite::protocol", log::LevelFilter::Info)
@@ -75,37 +76,36 @@ async fn main() -> Result<()> {
         .filter_module("polling", log::LevelFilter::Info)
         .init();
 
-    network::set_replay(args.replay);
+    network::set_replay(GLOBAL_ARGS.replay);
 
     info!("Mayara {} loglevel {}", VERSION, log_level);
-    if args.replay {
+    if GLOBAL_ARGS.replay {
         warn!("Replay mode activated, this does the following:");
         warn!(" * A circle is drawn at the last two pixels in each spoke");
         warn!(" * Timestamp on each spoke is as if received now");
         warn!(" * Any 4G/HALO secondary radar B is ignored and not reported");
     }
-    if args.fake_errors {
+    if GLOBAL_ARGS.fake_errors {
         warn!("Fake error mode activated, this does the following:");
         warn!(" * Any control operation on Rain Clutter beyond values 0..10 will fail");
         warn!(" * Failure for value 11..13 are all different");
     }
-    if args.allow_wifi {
+    if GLOBAL_ARGS.allow_wifi {
         warn!("Allow WiFi mode activated, this does the following:");
         warn!(" * Radars will be detected even on WiFi interfaces");
     }
-    if args.output {
+    if GLOBAL_ARGS.output {
         warn!("Output mode activated; 'protobuf' formatted RadarMessage sent to stdout");
     }
 
     Toplevel::new(|s| async move {
-        let signal_k_args = args.clone();
-        let signal_k = signalk::NavigationData::new(signal_k_args);
+        let signal_k = signalk::NavigationData::new();
 
-        let radars = SharedRadars::new(args.clone());
+        let radars = SharedRadars::new();
         let radars_clone1 = radars.clone();
 
         let locator = Locator::new(radars);
-        let web = Web::new(args.port, radars_clone1);
+        let web = Web::new(GLOBAL_ARGS.port, radars_clone1);
 
         let (tx_ip_change, rx_ip_change) = mpsc::channel(1);
 

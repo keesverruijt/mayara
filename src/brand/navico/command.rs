@@ -6,6 +6,7 @@ use tokio::net::UdpSocket;
 use crate::network::create_multicast_send;
 use crate::radar::{RadarError, RadarInfo, SharedRadars};
 use crate::settings::{ControlType, ControlValue, SharedControls};
+use crate::GLOBAL_ARGS;
 
 use super::Model;
 
@@ -25,14 +26,12 @@ pub struct Command {
 
 impl Command {
     pub fn new(info: RadarInfo, model: Model, radars: SharedRadars) -> Self {
-        let args = radars.cli_args();
-
         Command {
             key: info.key(),
             info,
             model,
             sock: None,
-            fake_errors: args.fake_errors,
+            fake_errors: GLOBAL_ARGS.fake_errors,
         }
     }
 

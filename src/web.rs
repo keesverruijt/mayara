@@ -31,6 +31,7 @@ use crate::{
 };
 
 const RADAR_URI: &str = "/v1/api/radars";
+const INTERFACE_URI: &str = "/v1/api/interfaces";
 const SPOKES_URI: &str = "/v1/api/spokes/";
 const CONTROL_URI: &str = "/v1/api/control/";
 
@@ -81,6 +82,7 @@ impl Web {
 
         let app = Router::new()
             .route(RADAR_URI, get(get_radars))
+            .route(INTERFACE_URI, get(get_interfaces))
             .route(&format!("{}{}", SPOKES_URI, "{key}"), get(spokes_handler))
             .route(&format!("{}{}", CONTROL_URI, "{key}"), get(control_handler))
             .nest_service("/proto", proto_assets)
@@ -190,6 +192,42 @@ async fn get_radars(
 
         api.insert(id.to_owned(), v);
     }
+    Json(api).into_response()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RadarStatusApi {
+    brand: String,
+    status: String,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RadarInterfaceApi {
+    radars: Vec<RadarStatusApi>,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InterfaceApi {
+    brands: Vec<String>,
+    interfaces: Vec<RadarInterfaceApi>,
+}
+
+#[debug_handler]
+async fn get_interfaces(
+    State(state): State<Web>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: hyper::header::HeaderMap,
+) -> Response {
+    let host: String = match headers.get(axum::http::header::HOST) {
+        Some(host) => host.to_str().unwrap_or("localhost").to_string(),
+        None => "localhost".to_string(),
+    };
+
+    debug!("Interface state request from {} for host '{}'", addr, host);
+
+    let mut brands: Vec<String> = Vec::new();
+    let mut api: Vec<RadarInterfaceApi> = Vec::new();
     Json(api).into_response()
 }
 

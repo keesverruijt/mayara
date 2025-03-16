@@ -10,7 +10,10 @@ use std::{
 };
 use thiserror::Error;
 
-use crate::radar::{DopplerMode, Legend, RadarError};
+use crate::{
+    radar::{DopplerMode, Legend, RadarError},
+    GLOBAL_ARGS,
+};
 
 ///
 /// Radars have settings. There are some common ones that every radar supports:
@@ -35,8 +38,6 @@ use crate::radar::{DopplerMode, Legend, RadarError};
 pub struct Controls {
     #[serde(flatten)]
     controls: HashMap<ControlType, Control>,
-    #[serde(skip)]
-    replay: bool,
 
     #[serde(skip)]
     all_clients_tx: tokio::sync::broadcast::Sender<ControlValue>,
@@ -50,7 +51,7 @@ impl Controls {
     pub(self) fn insert(&mut self, control_type: ControlType, value: Control) {
         let v = Control {
             item: ControlDefinition {
-                is_read_only: self.replay,
+                is_read_only: GLOBAL_ARGS.replay,
                 ..value.item
             },
             ..value
@@ -59,7 +60,7 @@ impl Controls {
         self.controls.insert(control_type, v);
     }
 
-    pub(self) fn new_base(mut controls: HashMap<ControlType, Control>, replay: bool) -> Self {
+    pub(self) fn new_base(mut controls: HashMap<ControlType, Control>) -> Self {
         controls.insert(
             ControlType::UserName,
             Control::new_string(ControlType::UserName)
@@ -76,7 +77,7 @@ impl Controls {
             );
         }
 
-        if replay {
+        if GLOBAL_ARGS.replay {
             controls.iter_mut().for_each(|(_k, v)| {
                 v.item.is_read_only = true;
             });
@@ -119,7 +120,6 @@ impl Controls {
 
         Controls {
             controls,
-            replay,
             all_clients_tx,
             control_update_tx,
             data_update_tx,
@@ -161,9 +161,9 @@ impl SharedControls {
     // Create a new set of controls, for a radar.
     // There is only one set that is shared amongst the various threads and
     // structs, hence the word Shared.
-    pub fn new(controls: HashMap<ControlType, Control>, replay: bool) -> Self {
+    pub fn new(controls: HashMap<ControlType, Control>) -> Self {
         SharedControls {
-            controls: Arc::new(RwLock::new(Controls::new_base(controls, replay))),
+            controls: Arc::new(RwLock::new(Controls::new_base(controls))),
         }
     }
 
@@ -1334,7 +1334,7 @@ mod test {
 
     #[test]
     fn control_range_values() {
-        let controls = SharedControls::new(HashMap::new(), false);
+        let controls = SharedControls::new(HashMap::new());
 
         assert!(controls.set(&ControlType::TargetTrails, 0., None).is_ok());
         assert_eq!(

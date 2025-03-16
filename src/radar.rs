@@ -19,7 +19,7 @@ pub(crate) mod trail;
 use crate::config::Persistence;
 use crate::locator::LocatorId;
 use crate::settings::{ControlError, ControlType, ControlUpdate, ControlValue, SharedControls};
-use crate::Cli;
+use crate::GLOBAL_ARGS;
 
 // A "native to radar" bearing, usually [0..2048] or [0..4096] or [0..8192]
 pub(crate) type SpokeBearing = u16;
@@ -365,11 +365,10 @@ pub struct SharedRadars {
 }
 
 impl SharedRadars {
-    pub fn new(args: Cli) -> Self {
+    pub fn new() -> Self {
         SharedRadars {
             radars: Arc::new(RwLock::new(Radars {
                 info: HashMap::new(),
-                args,
                 persistent_data: Persistence::new(),
             })),
         }
@@ -381,7 +380,7 @@ impl SharedRadars {
         let mut radars = self.radars.write().unwrap();
 
         // For now, drop second radar in replay Mode...
-        if radars.args.replay && key.ends_with("-B") {
+        if GLOBAL_ARGS.replay && key.ends_with("-B") {
             return None;
         }
 
@@ -488,17 +487,11 @@ impl SharedRadars {
             radars.persistent_data.store(&radar_info);
         }
     }
-
-    pub fn cli_args(&self) -> Cli {
-        let radars = self.radars.read().unwrap();
-        radars.args.clone()
-    }
 }
 
 #[derive(Clone, Debug)]
 struct Radars {
     pub info: HashMap<String, RadarInfo>,
-    pub args: Cli,
     pub persistent_data: Persistence,
 }
 

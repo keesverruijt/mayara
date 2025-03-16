@@ -10,7 +10,7 @@ use crate::{
 
 use super::Model;
 
-pub fn new(model: Option<&str>, replay: bool) -> SharedControls {
+pub fn new(model: Option<&str>) -> SharedControls {
     let mut controls = HashMap::new();
 
     let mut control = Control::new_string(ControlType::ModelName);
@@ -100,7 +100,7 @@ pub fn new(model: Option<&str>, replay: bool) -> SharedControls {
         .wire_scale_factor(255., false),
     );
 
-    SharedControls::new(controls, replay)
+    SharedControls::new(controls)
 }
 
 pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_info: &RadarInfo) {

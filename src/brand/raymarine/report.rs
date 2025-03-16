@@ -282,7 +282,6 @@ impl RaymarineReportReceiver {
         let key = info.key();
 
         let command_sender = Command::new(info.clone(), model.clone(), radars.clone());
-        let args = radars.cli_args();
 
         RaymarineReportReceiver {
             key: key,
@@ -290,7 +289,6 @@ impl RaymarineReportReceiver {
             buf: Vec::with_capacity(1000),
             sock: None,
             radars,
-            args,
             model,
             command_sender,
             range_timeout: None,

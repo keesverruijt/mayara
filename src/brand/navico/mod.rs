@@ -12,6 +12,7 @@ use crate::radar::{RadarInfo, SharedRadars};
 use crate::settings::ControlType;
 use crate::util::c_string;
 use crate::util::PrintableSlice;
+use crate::GLOBAL_ARGS;
 
 mod command;
 mod data;
@@ -210,9 +211,8 @@ fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
         let data_name = info.key() + " data";
         let report_name = info.key() + " reports";
         let info_clone = info.clone();
-        let args = radars.cli_args();
 
-        if args.output {
+        if GLOBAL_ARGS.output {
             let info_clone2 = info.clone();
 
             subsys.start(SubsystemBuilder::new("stdout", move |s| {
@@ -220,7 +220,7 @@ fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
             }));
         }
 
-        let data_receiver = data::NavicoDataReceiver::new(info, args.replay);
+        let data_receiver = data::NavicoDataReceiver::new(info);
         let report_receiver = report::NavicoReportReceiver::new(info_clone, radars.clone(), model);
 
         subsys.start(SubsystemBuilder::new(
@@ -305,7 +305,7 @@ fn process_beacon_report(
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
-                        settings::new(None, radars.cli_args().replay),
+                        settings::new(None),
                     );
                     found(location_info, radars, subsys);
 
@@ -325,7 +325,7 @@ fn process_beacon_report(
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
-                        settings::new(None, radars.cli_args().replay),
+                        settings::new(None),
                     );
                     found(location_info, radars, subsys);
                 }
@@ -359,7 +359,7 @@ fn process_beacon_report(
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
-                        settings::new(None, radars.cli_args().replay),
+                        settings::new(None),
                     );
                     found(location_info, radars, subsys);
                 }
@@ -393,7 +393,7 @@ fn process_beacon_report(
                         radar_data.into(),
                         radar_report.into(),
                         radar_send.into(),
-                        settings::new(Some(BR24_MODEL_NAME), radars.cli_args().replay),
+                        settings::new(Some(BR24_MODEL_NAME)),
                     );
                     found(location_info, radars, subsys);
                 }

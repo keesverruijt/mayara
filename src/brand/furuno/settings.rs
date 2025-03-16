@@ -7,7 +7,7 @@ use crate::{
 
 use super::FURUNO_RADAR_RANGES;
 
-pub fn new(replay: bool) -> SharedControls {
+pub fn new() -> SharedControls {
     let mut controls = HashMap::new();
 
     controls.insert(
@@ -81,7 +81,7 @@ pub fn new(replay: bool) -> SharedControls {
         .wire_scale_factor(255., false),
     );
 
-    SharedControls::new(controls, replay)
+    SharedControls::new(controls)
 }
 
 pub fn update_when_model_known(

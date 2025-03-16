@@ -27,7 +27,7 @@ use crate::brand::navico;
 use crate::brand::raymarine;
 
 use crate::radar::{RadarError, SharedRadars};
-use crate::{network, Cli};
+use crate::{network, Cli, GLOBAL_ARGS};
 
 const LOCATOR_PACKET_BUFFER_LEN: usize = 300; // Long enough for any location packet
 
@@ -105,7 +105,6 @@ pub trait RadarLocator {
 }
 
 struct InterfaceState {
-    args: Cli,
     active_nic_addresses: Vec<Ipv4Addr>,
     inactive_nic_names: HashMap<String, u32>,
     lost_nic_names: HashMap<String, u32>,
@@ -130,7 +129,6 @@ impl Locator {
 
         debug!("Entering loop, listening for radars");
         let mut interface_state = InterfaceState {
-            args: self.radars.cli_args(),
             active_nic_addresses: Vec::new(),
             inactive_nic_names: HashMap::new(),
             lost_nic_names: HashMap::new(),
@@ -147,7 +145,7 @@ impl Locator {
             let sockets = create_listen_sockets(&listen_addresses, &mut interface_state);
             let mut set = JoinSet::new();
             if sockets.is_err() {
-                if interface_state.args.interface.is_some() {
+                if GLOBAL_ARGS.interface.is_some() {
                     return Err(sockets.err().unwrap());
                 }
                 debug!("No NIC addresses found");
@@ -181,7 +179,7 @@ impl Locator {
             });
 
             // Now that we're listening to the radars, send any address request (wake) packets
-            if !interface_state.args.replay {
+            if !GLOBAL_ARGS.replay {
                 for x in &listen_addresses {
                     if let Some(address_request) = x.adress_request_packet {
                         send_multicast_packet(&x.address, address_request);
@@ -239,8 +237,7 @@ impl Locator {
         let mut listen_addresses: Vec<LocatorAddress> = Vec::new();
         let mut locators: Vec<Box<dyn RadarLocator>> = Vec::new();
         #[cfg(feature = "navico")]
-        if interface_state
-            .args
+        if GLOBAL_ARGS
             .brand
             .as_ref()
             .unwrap_or(&"navico".to_owned())
@@ -250,8 +247,7 @@ impl Locator {
             locators.push(navico::create_br24_locator());
         }
         #[cfg(feature = "furuno")]
-        if interface_state
-            .args
+        if GLOBAL_ARGS
             .brand
             .as_ref()
             .unwrap_or(&"furuno".to_owned())
@@ -260,8 +256,7 @@ impl Locator {
             locators.push(furuno::create_locator());
         }
         #[cfg(feature = "raymarine")]
-        if interface_state
-            .args
+        if GLOBAL_ARGS
             .brand
             .as_ref()
             .unwrap_or(&"raymarine".to_owned())
@@ -327,8 +322,8 @@ fn create_listen_sockets(
     listen_addresses: &Vec<LocatorAddress>,
     interface_state: &mut InterfaceState,
 ) -> Result<Vec<LocatorSocket>, RadarError> {
-    let only_interface = &interface_state.args.interface;
-    let avoid_wifi = !interface_state.args.allow_wifi;
+    let only_interface = &GLOBAL_ARGS.interface;
+    let avoid_wifi = !GLOBAL_ARGS.allow_wifi;
 
     match NetworkInterface::show() {
         Ok(interfaces) => {
@@ -424,11 +419,11 @@ fn create_listen_sockets(
                             }
                         }
                     }
-                    if interface_state.args.interface.is_some()
+                    if GLOBAL_ARGS.interface.is_some()
                         && interface_state.active_nic_addresses.len() == 0
                     {
                         return Err(RadarError::InterfaceNoV4(
-                            interface_state.args.interface.clone().unwrap(),
+                            GLOBAL_ARGS.interface.clone().unwrap(),
                         ));
                     }
                 }
@@ -452,11 +447,9 @@ fn create_listen_sockets(
             }
             interface_state.first_loop = false;
 
-            if interface_state.args.interface.is_some()
-                && interface_state.active_nic_addresses.len() == 0
-            {
+            if GLOBAL_ARGS.interface.is_some() && interface_state.active_nic_addresses.len() == 0 {
                 return Err(RadarError::InterfaceNotFound(
-                    interface_state.args.interface.clone().unwrap(),
+                    GLOBAL_ARGS.interface.clone().unwrap(),
                 ));
             }
 

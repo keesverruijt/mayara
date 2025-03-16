@@ -25,14 +25,12 @@ pub struct Command {
 
 impl Command {
     pub fn new(info: RadarInfo, model: Model, radars: SharedRadars) -> Self {
-        let args = radars.cli_args();
-
         Command {
             key: info.key(),
             info,
             model,
             sock: None,
-            fake_errors: args.fake_errors,
+            fake_errors: GLOBAL_ARGS.fake_errors,
         }
     }
 

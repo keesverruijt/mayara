@@ -17,7 +17,7 @@ use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::{
     radar::{GeoPosition, RadarError},
-    Cli,
+    GLOBAL_ARGS,
 };
 
 /// The hostname of the devices we are searching for.
@@ -60,13 +60,11 @@ pub(crate) fn get_position_i64() -> (Option<i64>, Option<i64>) {
     return (None, None);
 }
 
-pub(crate) struct NavigationData {
-    args: Cli,
-}
+pub(crate) struct NavigationData {}
 
 impl NavigationData {
-    pub(crate) fn new(args: Cli) -> Self {
-        NavigationData { args }
+    pub(crate) fn new() -> Self {
+        NavigationData {}
     }
 
     pub(crate) async fn run(
@@ -115,10 +113,10 @@ impl NavigationData {
 
         let mdns = ServiceDaemon::new().expect("Failed to create daemon");
 
-        if self.args.signalk_interface.is_some() {
+        if GLOBAL_ARGS.signalk_interface.is_some() {
             let _ = mdns.disable_interface(IfKind::All);
             let _ = mdns.enable_interface(IfKind::Name(
-                self.args.signalk_interface.as_ref().unwrap().to_string(),
+                GLOBAL_ARGS.signalk_interface.as_ref().unwrap().to_string(),
             ));
         }
         let tcp_locator = mdns

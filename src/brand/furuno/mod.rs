@@ -11,6 +11,7 @@ use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState};
 use crate::radar::{RadarInfo, SharedRadars};
 use crate::util::{c_string, PrintableSlice};
+use crate::GLOBAL_ARGS;
 
 mod command;
 mod data;
@@ -140,9 +141,8 @@ fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) -> bo
         // Clone everything moved into future twice or more
         let data_name = info.key() + " data";
         let report_name = info.key() + " reports";
-        let args = radars.cli_args();
 
-        if args.output {
+        if GLOBAL_ARGS.output {
             let info_clone2 = info.clone();
 
             subsys.start(SubsystemBuilder::new("stdout", move |s| {
@@ -150,7 +150,7 @@ fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) -> bo
             }));
         }
 
-        let data_receiver = data::FurunoDataReceiver::new(info.clone(), args);
+        let data_receiver = data::FurunoDataReceiver::new(info.clone());
         subsys.start(SubsystemBuilder::new(
             data_name,
             move |s: SubsystemHandle| data_receiver.run(s),
@@ -326,7 +326,7 @@ impl FurunoLocatorState {
                         spoke_data_addr,
                         report_addr,
                         send_command_addr,
-                        settings::new(radars.cli_args().replay),
+                        settings::new(),
                     );
                     let key = location_info.key();
                     if found(location_info, radars, subsys) {

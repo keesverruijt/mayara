@@ -7,7 +7,7 @@ use crate::{
 
 use super::Model;
 
-pub fn new(model: Option<&str>, replay: bool) -> SharedControls {
+pub fn new(model: Option<&str>) -> SharedControls {
     let mut controls = HashMap::new();
 
     controls.insert(
@@ -73,7 +73,7 @@ pub fn new(model: Option<&str>, replay: bool) -> SharedControls {
 
     controls.insert(ControlType::Status, control);
 
-    SharedControls::new(controls, replay)
+    SharedControls::new(controls)
 }
 
 pub fn update_when_model_known(

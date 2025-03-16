@@ -12,6 +12,7 @@ use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState}
 use crate::network::LittleEndianSocketAddrV4;
 use crate::radar::{RadarInfo, SharedRadars};
 use crate::util::{c_string, PrintableSlice};
+use crate::GLOBAL_ARGS;
 
 // mod command;
 // mod data;
@@ -100,9 +101,7 @@ fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
         radars.update(&info);
 
         // Clone everything moved into future twice or more
-        let args = radars.cli_args();
-
-        if args.output {
+        if GLOBAL_ARGS.output {
             let info_clone2 = info.clone();
 
             subsys.start(SubsystemBuilder::new("stdout", move |s| {
@@ -152,7 +151,6 @@ impl RaymarineLocatorState {
         &mut self,
         report: &[u8],
         via: &Ipv4Addr,
-        replay: bool,
     ) -> Result<Option<RadarInfo>, Error> {
         match deserialize::<RaymarineBeacon36>(report) {
             Ok(data) => {
@@ -197,7 +195,7 @@ impl RaymarineLocatorState {
                         radar_addr.into(),
                         radar_addr.into(),
                         radar_send.into(),
-                        settings::new(info.model_name.as_deref(), replay),
+                        settings::new(info.model_name.as_deref()),
                     );
 
                     return Ok(Some(location_info));
@@ -210,12 +208,7 @@ impl RaymarineLocatorState {
         Ok(None)
     }
 
-    fn process_beacon_56_report(
-        &mut self,
-        report: &[u8],
-        _via: &Ipv4Addr,
-        _replay: bool,
-    ) -> Result<(), Error> {
+    fn process_beacon_56_report(&mut self, report: &[u8], _via: &Ipv4Addr) -> Result<(), Error> {
         match deserialize::<RaymarineBeacon56>(report) {
             Ok(data) => {
                 if data.beacon_type != 0x01 {
@@ -274,12 +267,7 @@ impl RadarLocatorState for RaymarineLocatorState {
             36 => {
                 // Common Raymarine message
 
-                match Self::process_beacon_36_report(
-                    self,
-                    report,
-                    nic_addr,
-                    radars.cli_args().replay,
-                ) {
+                match Self::process_beacon_36_report(self, report, nic_addr) {
                     Ok(Some(info)) => {
                         found(info, radars, subsys);
                     }
@@ -289,20 +277,13 @@ impl RadarLocatorState for RaymarineLocatorState {
                     }
                 }
             }
-            56 => {
-                match Self::process_beacon_56_report(
-                    self,
-                    report,
-                    nic_addr,
-                    radars.cli_args().replay,
-                ) {
-                    Ok(()) => {}
+            56 => match Self::process_beacon_56_report(self, report, nic_addr) {
+                Ok(()) => {}
 
-                    Err(e) => {
-                        log::error!("{}: Error processing beacon: {}", from, e);
-                    }
+                Err(e) => {
+                    log::error!("{}: Error processing beacon: {}", from, e);
                 }
-            }
+            },
             _ => {}
         }
 
@@ -415,13 +396,13 @@ mod tests {
         ];
 
         let mut state = RaymarineLocatorState::new();
-        let r = state.process_beacon_36_report(&DATA1_36, &VIA, false);
+        let r = state.process_beacon_36_report(&DATA1_36, &VIA);
         assert!(r.is_ok());
         let r = r.unwrap();
         assert!(r.is_none());
-        let r = state.process_beacon_56_report(&DATA1_56, &VIA, false);
+        let r = state.process_beacon_56_report(&DATA1_56, &VIA);
         assert!(r.is_ok());
-        let r = state.process_beacon_36_report(&DATA1_36, &VIA, false);
+        let r = state.process_beacon_36_report(&DATA1_36, &VIA);
         assert!(r.is_ok());
         let r = r.unwrap();
         assert!(r.is_some());
@@ -443,13 +424,13 @@ mod tests {
         );
 
         let mut state = RaymarineLocatorState::new();
-        let r = state.process_beacon_36_report(&DATA2_36, &VIA, false);
+        let r = state.process_beacon_36_report(&DATA2_36, &VIA);
         assert!(r.is_ok());
         let r = r.unwrap();
         assert!(r.is_none());
-        let r = state.process_beacon_56_report(&DATA2_56, &VIA, false);
+        let r = state.process_beacon_56_report(&DATA2_56, &VIA);
         assert!(r.is_ok());
-        let r = state.process_beacon_36_report(&DATA2_36, &VIA, false);
+        let r = state.process_beacon_36_report(&DATA2_36, &VIA);
         assert!(r.is_ok());
         let r = r.unwrap();
         assert!(r.is_some());
@@ -471,13 +452,13 @@ mod tests {
         );
 
         let mut state = RaymarineLocatorState::new();
-        let r = state.process_beacon_36_report(&DATA3_36, &VIA, false);
+        let r = state.process_beacon_36_report(&DATA3_36, &VIA);
         assert!(r.is_ok());
         let r = r.unwrap();
         assert!(r.is_none());
-        let r = state.process_beacon_56_report(&DATA3_56, &VIA, false);
+        let r = state.process_beacon_56_report(&DATA3_56, &VIA);
         assert!(r.is_ok());
-        let r = state.process_beacon_36_report(&DATA3_36, &VIA, false);
+        let r = state.process_beacon_36_report(&DATA3_36, &VIA);
         assert!(r.is_ok());
         let r = r.unwrap();
         assert!(r.is_some());

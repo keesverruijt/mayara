@@ -15,9 +15,9 @@ use crate::locator::LocatorId;
 use crate::network::create_udp_multicast_listen;
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
-use crate::radar::*;
 use crate::settings::{ControlError, ControlType, DataUpdate};
 use crate::util::PrintableSpoke;
+use crate::{radar::*, GLOBAL_ARGS};
 
 use super::{NAVICO_SPOKES, NAVICO_SPOKES_RAW, RADAR_LINE_DATA_LENGTH, SPOKES_PER_FRAME};
 
@@ -119,12 +119,11 @@ pub struct NavicoDataReceiver {
     data_update_rx: tokio::sync::broadcast::Receiver<DataUpdate>,
     doppler: DopplerMode,
     pixel_to_blob: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH],
-    replay: bool,
     trails: TrailBuffer,
 }
 
 impl NavicoDataReceiver {
-    pub fn new(info: RadarInfo, replay: bool) -> NavicoDataReceiver {
+    pub fn new(info: RadarInfo) -> NavicoDataReceiver {
         let key = info.key();
 
         let data_update_rx = info.controls.data_update_subscribe();
@@ -147,7 +146,6 @@ impl NavicoDataReceiver {
             data_update_rx,
             doppler: DopplerMode::None,
             pixel_to_blob,
-            replay,
             trails,
         }
     }
@@ -512,7 +510,7 @@ impl NavicoDataReceiver {
             generic_spoke.push(pixel_to_blob[high_nibble_index][pixel]);
         }
 
-        if self.replay {
+        if GLOBAL_ARGS.replay {
             // Generate circle at extreme range
             let pixel = 0xff as usize;
             generic_spoke.pop();

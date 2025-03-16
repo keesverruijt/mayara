@@ -4,7 +4,7 @@ use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
 use crate::settings::{ControlType, DataUpdate};
 use crate::util::PrintableSpoke;
-use crate::{radar::*, Cli};
+use crate::{radar::*, Cli, GLOBAL_ARGS};
 
 use core::panic;
 use log::{debug, trace};
@@ -21,7 +21,6 @@ use super::{FURUNO_SPOKES, FURUNO_SPOKE_LEN};
 pub struct FurunoDataReceiver {
     key: String,
     info: RadarInfo,
-    args: Cli,
     sock: Option<UdpSocket>,
     data_update_rx: tokio::sync::broadcast::Receiver<DataUpdate>,
 
@@ -42,7 +41,7 @@ struct FurunoSpokeMetadata {
 }
 
 impl FurunoDataReceiver {
-    pub fn new(info: RadarInfo, args: Cli) -> FurunoDataReceiver {
+    pub fn new(info: RadarInfo) -> FurunoDataReceiver {
         let key = info.key();
 
         let data_update_rx = info.controls.data_update_subscribe();
@@ -59,7 +58,6 @@ impl FurunoDataReceiver {
         FurunoDataReceiver {
             key,
             info,
-            args,
             sock: None,
             data_update_rx,
             trails,
@@ -409,7 +407,7 @@ impl FurunoDataReceiver {
             spoke.data[i] = b >> 2;
             i += 1;
         }
-        if self.args.replay {
+        if GLOBAL_ARGS.replay {
             spoke.data[sweep.len() - 1] = 64;
             spoke.data[sweep.len() - 2] = 64;
             spoke.data[FURUNO_SPOKE_LEN - 1] = 64;
