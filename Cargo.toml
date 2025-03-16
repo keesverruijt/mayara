@@ -39,6 +39,7 @@ network-interface = "2.0.0"
 nix = { version = "0.29.0", features = ["net", "socket"] }
 num-derive = "0.4.2"
 num-traits = "0.2.19"
+once_cell = "1.21.1"
 protobuf = "3.5.1"
 rust-embed = { version = "8.5.0", features = ["axum","interpolate-folder-path"] }
 serde = { version = "1.0.206", features = ["derive", "serde_derive"] }
