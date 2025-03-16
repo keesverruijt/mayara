@@ -32,6 +32,11 @@ const FURUNO_BEACON_ADDRESS: SocketAddr = SocketAddr::new(
     FURUNO_BEACON_PORT,
 );
 
+const FURUNO_ANNOUNCE_MAYARA_PACKET: [u8; 32] = [
+    0x1, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x18, 0x1, 0x0, 0x0, 0x0, b'M', b'A',
+    b'Y', b'A', b'R', b'A', 0x0, 0x0, 0x1, 0x1, 0x0, 0x2, 0x0, 0x1, 0x0, 0x12,
+];
+
 enum CommandMode {
     Set,
     Request,
@@ -393,7 +398,7 @@ impl RadarLocator for FurunoLocator {
                 LocatorId::Furuno,
                 &FURUNO_BEACON_ADDRESS,
                 "Furuno Beacon",
-                None,
+                Some(&FURUNO_ANNOUNCE_MAYARA_PACKET),
                 Box::new(FurunoLocatorState {
                     radars: HashMap::new(),
                 }),
