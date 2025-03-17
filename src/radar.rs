@@ -19,7 +19,7 @@ pub(crate) mod trail;
 use crate::config::Persistence;
 use crate::locator::LocatorId;
 use crate::settings::{ControlError, ControlType, ControlUpdate, ControlValue, SharedControls};
-use crate::GLOBAL_ARGS;
+use crate::{Brand, GLOBAL_ARGS};
 
 // A "native to radar" bearing, usually [0..2048] or [0..4096] or [0..8192]
 pub(crate) type SpokeBearing = u16;
@@ -181,7 +181,7 @@ pub(crate) struct RadarInfo {
     key: String,
     pub id: usize,
     pub locator_id: LocatorId,
-    pub brand: String,
+    pub brand: Brand,
     pub serial_no: Option<String>,       // Serial # for this radar
     pub which: Option<String>,           // "A", "B" or None
     pub pixel_values: u8,                // How many values per pixel, 0..220 or so
@@ -204,7 +204,7 @@ pub(crate) struct RadarInfo {
 impl RadarInfo {
     pub fn new(
         locator_id: LocatorId,
-        brand: &str,
+        brand: Brand,
         serial_no: Option<&str>,
         which: Option<&str>,
         pixel_values: u8, // How many values per pixel, 0..220 or so
@@ -238,7 +238,7 @@ impl RadarInfo {
             },
             id: usize::MAX,
             locator_id,
-            brand: brand.to_owned(),
+            brand,
             serial_no: serial_no.map(String::from),
             which: which.map(String::from),
             pixel_values,
@@ -486,6 +486,23 @@ impl SharedRadars {
         } {
             radars.persistent_data.store(&radar_info);
         }
+    }
+
+    pub fn is_active_radar(&self, brand: &Brand, ip: &Ipv4Addr) -> bool {
+        let radars = self.radars.read().unwrap();
+        for (_, info) in radars.info.iter() {
+            log::trace!(
+                "is_active_radar: brand {}/{} ip {}/{}",
+                info.brand,
+                brand,
+                info.nic_addr,
+                ip
+            );
+            if info.brand == *brand && info.nic_addr == *ip {
+                return true;
+            }
+        }
+        false
     }
 }
 

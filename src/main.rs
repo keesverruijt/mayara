@@ -10,7 +10,7 @@ use radar::SharedRadars;
 use serde::{Serialize, Serializer};
 use std::{
     collections::{HashMap, HashSet},
-    net::IpAddr,
+    net::{IpAddr, Ipv4Addr},
     time::Duration,
 };
 use tokio::sync::{broadcast, mpsc};
@@ -46,7 +46,7 @@ pub struct Cli {
 
     /// Limit radar location to a single brand
     #[arg(short, long)]
-    brand: Option<String>,
+    brand: Option<Brand>,
 
     /// Limit Signal K location to a single interface
     #[arg(short, long)]
@@ -71,13 +71,60 @@ pub struct Cli {
 
 static GLOBAL_ARGS: Lazy<Cli> = Lazy::new(|| Cli::parse());
 
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Brand {
+    Furuno,
+    Garmin,
+    Navico,
+    Raymarine,
+}
+
+impl Into<Brand> for &str {
+    fn into(self) -> Brand {
+        match self.to_ascii_lowercase().as_str() {
+            "furuno" => Brand::Furuno,
+            "garmin" => Brand::Garmin,
+            "navico" => Brand::Navico,
+            "raymarine" => Brand::Raymarine,
+            _ => panic!("Invalid brand"),
+        }
+    }
+}
+
+impl Serialize for Brand {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Furuno => serializer.serialize_str("Furuno"),
+            Self::Garmin => serializer.serialize_str("Garmin"),
+            Self::Navico => serializer.serialize_str("Navico"),
+            Self::Raymarine => serializer.serialize_str("Raymarine"),
+        }
+    }
+}
+
+impl std::fmt::Display for Brand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Furuno => write!(f, "Furuno"),
+            Self::Garmin => write!(f, "Garmin"),
+            Self::Navico => write!(f, "Navico"),
+            Self::Raymarine => write!(f, "Raymarine"),
+        }
+    }
+}
+
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct RadarInterfaceApi {
     #[serde(skip_serializing_if = "Option::is_none")]
     status: Option<String>,
+    #[serde(skip)]
+    ip: Option<Ipv4Addr>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    listeners: Option<HashMap<String, String>>,
+    listeners: Option<HashMap<Brand, String>>,
 }
 
 #[derive(Clone, Eq, PartialEq, Hash)]
@@ -87,20 +134,31 @@ struct InterfaceId {
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct InterfaceApi {
-    brands: HashSet<String>,
+    brands: HashSet<Brand>,
     interfaces: HashMap<InterfaceId, RadarInterfaceApi>,
 }
 
 impl RadarInterfaceApi {
-    fn new(status: Option<String>, listeners: Option<HashMap<String, String>>) -> Self {
-        Self { status, listeners }
+    fn new(
+        status: Option<String>,
+        ip: Option<Ipv4Addr>,
+        listeners: Option<HashMap<Brand, String>>,
+    ) -> Self {
+        Self {
+            status,
+            ip,
+            listeners,
+        }
     }
 }
 
 impl InterfaceId {
-    fn new(name: String, address: IpAddr) -> Self {
+    fn new(name: &str, address: Option<&IpAddr>) -> Self {
         Self {
-            name: format!("{} ({})", name, address),
+            name: match address {
+                Some(addr) => format!("{} ({})", name, addr),
+                None => name.to_owned(),
+            },
         }
     }
 }

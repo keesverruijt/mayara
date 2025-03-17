@@ -12,7 +12,7 @@ use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState}
 use crate::network::LittleEndianSocketAddrV4;
 use crate::radar::{RadarInfo, SharedRadars};
 use crate::util::{c_string, PrintableSlice};
-use crate::GLOBAL_ARGS;
+use crate::{Brand, GLOBAL_ARGS};
 
 // mod command;
 // mod data;
@@ -184,7 +184,7 @@ impl RaymarineLocatorState {
                     let radar_send: SocketAddrV4 = data.radar.into();
                     let location_info: RadarInfo = RadarInfo::new(
                         LocatorId::Raymarine,
-                        "Raymarine",
+                        Brand::Raymarine,
                         None,
                         None,
                         16,
@@ -304,7 +304,7 @@ impl RadarLocator for RaymarineLocator {
             addresses.push(LocatorAddress::new(
                 LocatorId::Raymarine,
                 &RAYMARINE_BEACON_ADDRESS,
-                "raymarine",
+                Brand::Raymarine,
                 None, // The Raymarine radars send the beacon reports by themselves, no polling needed
                 Box::new(RaymarineLocatorState::new()),
             ));

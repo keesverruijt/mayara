@@ -11,7 +11,7 @@ use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState};
 use crate::radar::{RadarInfo, SharedRadars};
 use crate::util::{c_string, PrintableSlice};
-use crate::GLOBAL_ARGS;
+use crate::{Brand, GLOBAL_ARGS};
 
 mod command;
 mod data;
@@ -315,7 +315,7 @@ impl FurunoLocatorState {
                     let send_command_addr: SocketAddrV4 = report_addr.clone();
                     let location_info: RadarInfo = RadarInfo::new(
                         LocatorId::Furuno,
-                        "Furuno",
+                        Brand::Furuno,
                         None,
                         Some(name),
                         64,
@@ -390,14 +390,11 @@ struct FurunoLocator {}
 #[async_trait]
 impl RadarLocator for FurunoLocator {
     fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
-        if !addresses
-            .iter()
-            .any(|i| i.id == LocatorId::Furuno && i.brand == "furuno")
-        {
+        if !addresses.iter().any(|i| i.id == LocatorId::Furuno) {
             addresses.push(LocatorAddress::new(
                 LocatorId::Furuno,
                 &FURUNO_BEACON_ADDRESS,
-                "furuno",
+                Brand::Furuno,
                 Some(&FURUNO_ANNOUNCE_MAYARA_PACKET),
                 Box::new(FurunoLocatorState {
                     radars: HashMap::new(),

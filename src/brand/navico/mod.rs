@@ -12,7 +12,7 @@ use crate::radar::{RadarInfo, SharedRadars};
 use crate::settings::ControlType;
 use crate::util::c_string;
 use crate::util::PrintableSlice;
-use crate::GLOBAL_ARGS;
+use crate::{Brand, GLOBAL_ARGS};
 
 mod command;
 mod data;
@@ -294,7 +294,7 @@ fn process_beacon_report(
                     let radar_send: SocketAddrV4 = data.a.send.into();
                     let location_info: RadarInfo = RadarInfo::new(
                         LocatorId::Gen3Plus,
-                        "Navico",
+                        Brand::Navico,
                         Some(serial_no),
                         Some("A"),
                         16,
@@ -314,7 +314,7 @@ fn process_beacon_report(
                     let radar_send: SocketAddrV4 = data.b.send.into();
                     let location_info: RadarInfo = RadarInfo::new(
                         LocatorId::Gen3Plus,
-                        "Navico",
+                        Brand::Navico,
                         Some(serial_no),
                         Some("B"),
                         16,
@@ -348,7 +348,7 @@ fn process_beacon_report(
                     let radar_send: SocketAddrV4 = data.a.send.into();
                     let location_info: RadarInfo = RadarInfo::new(
                         LocatorId::Gen3Plus,
-                        "Navico",
+                        Brand::Navico,
                         Some(serial_no),
                         None,
                         16,
@@ -382,7 +382,7 @@ fn process_beacon_report(
                     let radar_send: SocketAddrV4 = data.send.into();
                     let location_info: RadarInfo = RadarInfo::new(
                         LocatorId::GenBR24,
-                        "Navico",
+                        Brand::Navico,
                         Some(serial_no),
                         None,
                         16,
@@ -435,7 +435,7 @@ impl RadarLocator for NavicoLocator {
             addresses.push(LocatorAddress::new(
                 LocatorId::Gen3Plus,
                 &NAVICO_BEACON_ADDRESS,
-                "navico",
+                Brand::Navico,
                 Some(&NAVICO_ADDRESS_REQUEST_PACKET),
                 Box::new(NavicoLocatorState {}),
             ));
@@ -456,7 +456,7 @@ impl RadarLocator for NavicoBR24Locator {
             addresses.push(LocatorAddress::new(
                 LocatorId::GenBR24,
                 &NAVICO_BR24_BEACON_ADDRESS,
-                "navico",
+                Brand::Navico,
                 Some(&NAVICO_ADDRESS_REQUEST_PACKET),
                 Box::new(NavicoLocatorState {}),
             ));
