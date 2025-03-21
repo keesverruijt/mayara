@@ -20,14 +20,13 @@ use web::Web;
 mod brand;
 mod config;
 mod locator;
+mod network;
 mod protos;
 mod radar;
 mod settings;
 mod signalk;
 mod util;
 mod web;
-
-mod network;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

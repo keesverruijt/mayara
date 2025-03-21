@@ -14,6 +14,7 @@ use std::{
 use thiserror::Error;
 use tokio_graceful_shutdown::SubsystemHandle;
 
+pub(crate) mod target;
 pub(crate) mod trail;
 
 use crate::config::Persistence;
@@ -164,6 +165,10 @@ impl RangeDetection {
     }
 }
 
+/// A geographic position expressed in degrees latitude and longitude.
+/// Latitude is positive in the northern hemisphere, negative in the southern.
+/// Longitude is positive in the eastern hemisphere, negative in the western.
+/// The range for latitude is -90 to 90, and for longitude is -180 to 180.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) struct GeoPosition {
     lat: f64,
@@ -173,6 +178,12 @@ pub(crate) struct GeoPosition {
 impl GeoPosition {
     pub(crate) fn new(lat: f64, lon: f64) -> Self {
         GeoPosition { lat, lon }
+    }
+}
+
+impl fmt::Display for GeoPosition {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "({}, {})", self.lat, self.lon)
     }
 }
 

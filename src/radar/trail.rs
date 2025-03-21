@@ -6,8 +6,6 @@ use crate::radar::trail::cartesian::PointInt;
 use crate::radar::{GeoPosition, Legend, SpokeBearing, BLOB_HISTORY_COLORS};
 use crate::settings::{ControlError, ControlType};
 
-use super::RadarError;
-
 const MARGIN_I16: i16 = 100;
 const MARGIN_USIZE: usize = MARGIN_I16 as usize;
 
