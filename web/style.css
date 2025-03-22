@@ -10,7 +10,13 @@ html {
 }
 
 td.myr {
-  background-color: lightgray;
+  background-color: rgb(3, 37, 37);
+}
+
+
+td.myr_error {
+  color: firebrick;
+  background-color: rgb(3, 37, 37);
 }
 
 div.myr_controller {

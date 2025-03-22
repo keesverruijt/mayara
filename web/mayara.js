@@ -44,6 +44,49 @@ function radarsLoaded(d) {
   setTimeout(loadRadars, 15000);
 }
 
+function interfacesLoaded(d) {
+  let c = Object.keys(d.interfaces).length;
+  if (c > 0) {
+    let r = document.getElementById("interfaces");
+    r.innerHTML = "<div>" + c + " interfaces detected</div><table></table>";
+    r = r.getElementsByTagName("table")[0];
+
+    let brands = ["Interface", ...d.brands];
+    let hdr = van.add(r, tr());
+    brands.forEach((v) => van.add(hdr, td({ class: "myr" }, v)));
+
+    let interfaces = d.interfaces;
+    if (interfaces) {
+      console.log("interfaces", interfaces);
+      Object.keys(interfaces).forEach(function (v, i) {
+        let row = van.add(r, tr());
+
+        van.add(row, td({ class: "myr" }, v));
+        if (interfaces[v].status) {
+          van.add(
+            row,
+            td(
+              {
+                class: "myr_error",
+                colspan: d.brands.length,
+              },
+              interfaces[v].status
+            )
+          );
+        } else {
+          d.brands.forEach((b) => {
+            let status = interfaces[v].listeners[b];
+            van.add(row, td({ class: "myr" }, status));
+            console.log("v", v, "b", b, "status", status);
+          });
+        }
+      });
+    }
+  }
+
+  setTimeout(loadRadars, 15000);
+}
+
 function loadRadars() {
   fetch("/v1/api/radars")
     .then((res) => res.json())
@@ -51,6 +94,14 @@ function loadRadars() {
     .catch((err) => setTimeout(loadRadars, 15000));
 }
 
+function loadInterfaces() {
+  fetch("/v1/api/interfaces")
+    .then((res) => res.json())
+    .then((out) => interfacesLoaded(out))
+    .catch((err) => setTimeout(loadInterfaces, 15000));
+}
+
 window.onload = function () {
   loadRadars();
+  loadInterfaces();
 };
