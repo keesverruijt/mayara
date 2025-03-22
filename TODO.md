@@ -4,18 +4,22 @@ Working:
 
 * Start, logging
 * Detect BR24, 3G, 4G and HALO radars
+* Detect Raymarine radars (tested with Quantum 2)
+* Detect Furuno radars (tested with DRS4D-NXT)
 * Provide webserver for static and dynamic pages
-* Serve navico radar data
-* Control navico radar (tested with 4G and HALO)
-* Detect Furuno radar (tested with DRS4D-NXT)
+* Serve Navico and Furuno radar data
+* Control Navico radar (tested with 4G and HALO)
+* Trails in relative mode
 
 Work in Progress:
 
-* Read data from Furuno
+* Target acquisition (M)ARPA
 * Detect Garmin xHD (but not yet know if different from HD)
+* Furuno control
 
 TODO:
 
+* Guard zones
 * Everything else
 
 
