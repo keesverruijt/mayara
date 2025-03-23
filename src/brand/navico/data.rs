@@ -15,6 +15,7 @@ use crate::locator::LocatorId;
 use crate::network::create_udp_multicast_listen;
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
+use crate::radar::target::TargetBuffer;
 use crate::settings::{ControlError, ControlType, DataUpdate};
 use crate::util::PrintableSpoke;
 use crate::{radar::*, GLOBAL_ARGS};
@@ -120,6 +121,7 @@ pub struct NavicoDataReceiver {
     doppler: DopplerMode,
     pixel_to_blob: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH],
     trails: TrailBuffer,
+    targets: TargetBuffer,
 }
 
 impl NavicoDataReceiver {
@@ -138,6 +140,8 @@ impl NavicoDataReceiver {
             }
         }
 
+        let targets = TargetBuffer::new(info.id, NAVICO_SPOKES, NAVICO_SPOKE_LEN, true);
+
         NavicoDataReceiver {
             key,
             statistics: Statistics { broken_packets: 0 },
@@ -147,6 +151,7 @@ impl NavicoDataReceiver {
             doppler: DopplerMode::None,
             pixel_to_blob,
             trails,
+            targets,
         }
     }
 
@@ -552,6 +557,7 @@ impl NavicoDataReceiver {
             .ok();
         spoke.data = generic_spoke;
 
+        self.targets.process_spoke(&mut spoke, &self.info.legend);
         spoke
     }
 }

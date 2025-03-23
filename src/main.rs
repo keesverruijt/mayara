@@ -66,6 +66,10 @@ pub struct Cli {
     /// Allow wifi mode
     #[arg(long, default_value_t = false)]
     allow_wifi: bool,
+
+    /// Stationary mode
+    #[arg(long, default_value_t = false)]
+    stationary: bool,
 }
 
 static GLOBAL_ARGS: Lazy<Cli> = Lazy::new(|| Cli::parse());

@@ -10,7 +10,9 @@ use strum::{EnumIter, IntoEnumIterator};
 use kalman::{KalmanFilter, LocalPosition, Polar};
 use ndarray::Array2;
 
-use super::GeoPosition;
+use crate::{protos::RadarMessage::radar_message::Spoke, signalk, GLOBAL_ARGS};
+
+use super::{GeoPosition, Legend};
 
 mod arpa;
 mod kalman;
@@ -176,24 +178,32 @@ struct HistorySpokes {
 #[derive(Debug, Clone)]
 pub struct TargetBuffer {
     setup: TargetSetup,
-    next_target_id: u32,
+    next_target_id: usize,
     history: HistorySpokes,
-    targets: Rc<RefCell<HashMap<u32, ArpaTarget>>>,
+    targets: Rc<RefCell<HashMap<usize, ArpaTarget>>>,
     // wxLongLong m_doppler_arpa_update_time[SPOKES_MAX];
     m_clear_contours: bool,
     m_auto_learn_state: i32,
     // std::deque<GeoPosition> m_delete_target_position;
     // std::deque<DynamicTargetData*> m_remote_target_queue;
+
+    // Average course
+    course: f64,
+    course_weight: u16,
+    course_samples: u16,
+
+    rotation_speed_ms: u32,
 }
 
 #[derive(Debug, Clone)]
 pub(self) struct TargetSetup {
-    radar_id: u32,
+    radar_id: usize,
     spokes: i32,
     spokes_f64: f64,
     spoke_len: i32,
     have_doppler: bool,
     pixels_per_meter: f64,
+    stationary: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -239,7 +249,7 @@ pub(crate) struct ArpaTarget {
     m_stationary: i32,
     m_doppler_target: Doppler,
     pub m_refreshed: RefreshState,
-    m_target_id: u32,
+    m_target_id: usize,
     m_transferred_target: bool,
     m_kalman: KalmanFilter,
     contour: Contour,
@@ -259,7 +269,8 @@ impl HistorySpoke {
 }
 
 impl HistorySpokes {
-    fn new(spokes: i32, spoke_len: i32, stationary: bool) -> Self {
+    fn new(spokes: i32, spoke_len: i32) -> Self {
+        let stationary = GLOBAL_ARGS.stationary;
         Self {
             spokes: Box::new(vec![
                 HistorySpoke::new(
@@ -709,13 +720,11 @@ impl TargetSetup {
 }
 
 impl TargetBuffer {
-    pub fn new(
-        radar_id: u32,
-        stationary: bool,
-        spokes: i32,
-        spoke_len: i32,
-        have_doppler: bool,
-    ) -> Self {
+    pub fn new(radar_id: usize, spokes: usize, spoke_len: usize, have_doppler: bool) -> Self {
+        let stationary = GLOBAL_ARGS.stationary;
+        let spokes = spokes as i32;
+        let spoke_len = spoke_len as i32;
+
         TargetBuffer {
             setup: TargetSetup {
                 radar_id,
@@ -724,22 +733,43 @@ impl TargetBuffer {
                 spoke_len,
                 have_doppler,
                 pixels_per_meter: 0.0,
+                stationary,
             },
             next_target_id: 0,
 
-            history: HistorySpokes::new(spokes, spoke_len, stationary),
+            history: HistorySpokes::new(spokes, spoke_len),
             targets: Rc::new(RefCell::new(HashMap::new())),
             m_clear_contours: false,
             m_auto_learn_state: 0,
+
+            course: 0.,
+            course_weight: 0,
+            course_samples: 0,
+
+            rotation_speed_ms: 0,
         }
+    }
+
+    pub fn set_rotation_speed(&mut self, ms: u32) {
+        self.rotation_speed_ms = ms;
     }
 
     pub fn set_pixels_per_meter(&mut self, pixels_per_meter: f64) {
         self.setup.pixels_per_meter = pixels_per_meter;
     }
 
-    fn get_next_target_id(&mut self) -> u32 {
-        const MAX_TARGET_ID: u32 = 100000;
+    fn reset_history(&mut self) {
+        self.history = HistorySpokes::new(self.setup.spokes, self.setup.spoke_len);
+    }
+
+    fn clear_contours(&mut self) {
+        for (_, t) in self.targets.borrow_mut().iter_mut() {
+            t.contour.length = 0;
+            t.m_average_contour_length = 0;
+        }
+    }
+    fn get_next_target_id(&mut self) -> usize {
+        const MAX_TARGET_ID: usize = 100000;
 
         self.next_target_id += 1;
         if self.next_target_id >= MAX_TARGET_ID {
@@ -753,7 +783,7 @@ impl TargetBuffer {
     // FUNCTIONS COMING FROM "RadarArpa"
     //
 
-    fn find_target_id_by_position(&self, pos: &GeoPosition) -> Option<u32> {
+    fn find_target_id_by_position(&self, pos: &GeoPosition) -> Option<usize> {
         let mut best_id = None;
         let mut min_dist = 1000.;
         for (id, target) in self.targets.borrow().iter() {
@@ -1145,6 +1175,115 @@ impl TargetBuffer {
       m_remote_target_queue.push_back(target);
     }
       */
+
+    fn sample_course(&mut self, bearing: &Option<u32>) {
+        let hdt = bearing
+            .map(|x| x as f64 / self.setup.spokes_f64)
+            .or_else(|| signalk::get_heading_true());
+
+        if let Some(mut hdt) = hdt {
+            self.course_samples += 1;
+            if self.course_samples == 128 {
+                self.course_samples = 0;
+                while self.course - hdt > 180. {
+                    hdt += 360.;
+                }
+                while self.course - hdt < -180. {
+                    hdt -= 360.;
+                }
+                if self.course_weight < 16 {
+                    self.course_weight += 1;
+                }
+                self.course += (self.course - hdt) / self.course_weight as f64;
+            }
+        }
+    }
+
+    pub(crate) fn process_spoke(&mut self, spoke: &mut Spoke, legend: &Legend) {
+        let time = spoke.time.unwrap();
+
+        // TODO self.m_last_received_spoke = self.mod_spokes(spoke.bearing);
+        // TODO self.m_previous_angle = self.mod_spokes(spoke.angle);
+        self.sample_course(&spoke.bearing); // Calculate course as the moving average of m_hdt over one revolution
+
+        let pos = match crate::signalk::get_radar_position() {
+            Some(p) => p,
+            None => {
+                return;
+            }
+        };
+
+        // TODO main bang size erase
+
+        // Recompute 'pixels_per_meter' based on the actual spoke length and range in meters.
+        if spoke.range == 0 {
+            return;
+        }
+
+        // TODO: Range Adjustment compensation
+        let pixels_per_meter = spoke.data.len() as f64 / spoke.range as f64;
+
+        if (self.setup.pixels_per_meter != pixels_per_meter) {
+            log::debug!(
+                " detected spoke range change from {} to {} pixels/m, {} meters",
+                self.setup.pixels_per_meter,
+                pixels_per_meter,
+                spoke.range
+            );
+            self.setup.pixels_per_meter = pixels_per_meter;
+            self.reset_history();
+            self.clear_contours();
+        }
+
+        // TODO: Think about orientation -- I don't think we have one in mayara: it is always head up?
+
+        let stabilized_mode = spoke.bearing.is_some();
+        let weakest_normal_blob = legend.strong_return;
+        let angle = if stabilized_mode {
+            spoke.bearing.unwrap()
+        } else {
+            spoke.angle
+        } as usize;
+
+        let background_on = self.setup.stationary; // TODO m_autolearning_on_off.GetValue() == 1;
+        self.history.spokes[angle].time = time;
+        self.history.spokes[angle].sweep.clear();
+        self.history.spokes[angle].pos = pos;
+
+        for radius in 0..spoke.data.len() {
+            if spoke.data[radius] >= weakest_normal_blob {
+                // and add 1 if above threshold and set the left 0 and 1 bits, used for ARPA
+                self.history.spokes[angle].sweep[radius] = 0xC0; // 1100 0000
+                if background_on {
+                    if let Some(layer) = self.history.stationary_layer.as_deref_mut() {
+                        if layer[[angle, radius]] < u8::MAX {
+                            layer[[angle, radius]] += 1;
+                        }
+                    }
+                    // count the number of hits for this pixel
+                }
+            }
+
+            if spoke.data[radius] == legend.doppler_approaching {
+                //  approaching doppler target (255)
+                // and add 1 if above threshold and set bit 2, used for ARPA
+                self.history.spokes[angle].sweep[radius] = 0xE0; // this is  1110 0000, bit 2 indicates this is a doppler approaching target
+            }
+            if spoke.data[radius] == legend.doppler_receding {
+                //  receding doppler target (254)
+                // and add 1 if above threshold and set bit 3, used for ARPA
+                self.history.spokes[angle].sweep[radius] = 0xD0; // this is  1101 0000, bit 3 indicates this is a doppler receding target
+            }
+        }
+
+        // TODO GUARD ZONES
+        #[cfg(GuardZones)]
+        for zone in 0..GUARD_ZONES {
+            //if (m_guard_zone[z]->m_alarm_on) {
+            //  m_guard_zone[z]->ProcessSpoke(angle, data, m_history[bearing].line, len);
+            //}
+        }
+    }
 }
 
 impl Contour {
@@ -1164,7 +1303,7 @@ impl Contour {
 impl ArpaTarget {
     pub fn new(
         position: ExtendedPosition,
-        uid: u32,
+        uid: usize,
         spokes: usize,
         m_status: TargetStatus,
         have_doppler: bool,
@@ -1282,7 +1421,6 @@ impl ArpaTarget {
         dist: i32,
         pass: Pass,
     ) -> Result<Self, Error> {
-        let prev_refresh = target.m_refresh_time;
         // refresh may be called from guard directly, better check
         let own_pos = crate::signalk::get_radar_position();
         if target.m_status == TargetStatus::LOST
@@ -1401,11 +1539,10 @@ impl ArpaTarget {
         if pass == Pass::Third {
             target.m_doppler_target = Doppler::ANY; // in the last pass we are not critical
         }
-        let mut found = history.get_target(&target.m_doppler_target, pol.clone(), dist1); // main target search
+        let found = history.get_target(&target.m_doppler_target, pol.clone(), dist1); // main target search
 
         match found {
             Ok((contour, pos)) => {
-                let mut found = true;
                 let dist_angle =
                     ((pol.angle - starting_position.angle) as f64 * pol.r as f64 / 326.) as i32;
                 let dist_radial = pol.r - starting_position.r;
@@ -1605,7 +1742,7 @@ impl ArpaTarget {
                     target.m_transferred_target = false;
                 }
             }
-            Err(e) => return Self::refresh_target_not_found(target, pol, pass),
+            Err(_e) => return Self::refresh_target_not_found(target, pol, pass),
         };
         return Ok(target);
     }
