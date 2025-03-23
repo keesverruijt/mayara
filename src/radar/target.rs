@@ -5,6 +5,7 @@ use std::{
     f64::consts::PI,
     rc::Rc,
 };
+use strum::{EnumIter, IntoEnumIterator};
 
 use kalman::{KalmanFilter, LocalPosition, Polar};
 use ndarray::Array2;
@@ -66,6 +67,14 @@ impl ExtendedPosition {
     fn empty() -> Self {
         Self::new(GeoPosition::new(0., 0.), 0., 0., 0, 0., 0.)
     }
+}
+
+// We try to find each target three times, with different conditions each time
+#[derive(Debug, Clone, Copy, PartialEq, EnumIter)]
+enum Pass {
+    First,
+    Second,
+    Third,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -199,19 +208,16 @@ struct Contour {
 }
 
 #[derive(Debug, Clone)]
-enum ContourError {
+enum Error {
     RangeTooHigh,
     RangeTooLow,
     NoEchoAtStart,
     StartPointNotOnContour,
     BrokenContour,
     NoContourFound,
-}
-
-#[derive(Debug, Clone)]
-enum TargetError {
     AlreadyFound,
     NotFound,
+    ContourLengthTooHigh,
     Lost,
     WeightedContourLengthTooHigh,
     WaitForRefresh,
@@ -493,11 +499,7 @@ impl HistorySpokes {
      *
      *
      */
-    fn get_contour(
-        &mut self,
-        doppler: &Doppler,
-        pol: Polar,
-    ) -> Result<(Contour, Polar), ContourError> {
+    fn get_contour(&mut self, doppler: &Doppler, pol: Polar) -> Result<(Contour, Polar), Error> {
         let mut pol = pol;
         let mut count = 0;
         let mut current = pol;
@@ -514,13 +516,13 @@ impl HistorySpokes {
 
         // check if p inside blob
         if pol.r as usize >= self.spokes.len() {
-            return Err(ContourError::RangeTooHigh);
+            return Err(Error::RangeTooHigh);
         }
         if pol.r < 4 {
-            return Err(ContourError::RangeTooLow);
+            return Err(Error::RangeTooLow);
         }
         if !self.pix(doppler, pol.angle, pol.r) {
-            return Err(ContourError::NoEchoAtStart);
+            return Err(Error::NoEchoAtStart);
         }
 
         // first find the orientation of border point p
@@ -536,7 +538,7 @@ impl HistorySpokes {
             }
         }
         if !succes {
-            return Err(ContourError::StartPointNotOnContour);
+            return Err(Error::StartPointNotOnContour);
         }
         index = (index + 1) % 4; // determines starting direction
 
@@ -555,7 +557,7 @@ impl HistorySpokes {
                 index = (index + 1) % 4;
             }
             if !succes {
-                return Err(ContourError::BrokenContour);
+                return Err(Error::BrokenContour);
             }
             // next point found
             current = next;
@@ -599,7 +601,7 @@ impl HistorySpokes {
         doppler: &Doppler,
         pol: Polar,
         dist1: i32,
-    ) -> Result<(Contour, Polar), ContourError> {
+    ) -> Result<(Contour, Polar), Error> {
         let mut pol = pol;
 
         // general target refresh
@@ -612,9 +614,49 @@ impl HistorySpokes {
             self.find_nearest_contour(doppler, &mut pol, dist)
         };
         if !contour_found {
-            return Err(ContourError::NoContourFound);
+            return Err(Error::NoContourFound);
         }
         self.get_contour(doppler, pol)
+    }
+
+    // resets the pixels of the current blob (plus DISTANCE_BETWEEN_TARGETS) so that blob will not be found again in the same sweep
+    // We not only reset the blob but all pixels in a radial "square" covering the blob
+    fn reset_pixels(&mut self, contour: &Contour, pos: &Polar, pixels_per_meter: &f64) {
+        const DISTANCE_BETWEEN_TARGETS: i32 = 30;
+        const SHADOW_MARGIN: i32 = 5;
+        const TARGET_DISTANCE_FOR_BLANKING_SHADOW: f64 = 6000.; // 6 km
+
+        for a in contour.min_angle - DISTANCE_BETWEEN_TARGETS
+            ..=contour.max_angle + DISTANCE_BETWEEN_TARGETS
+        {
+            let a = self.mod_spokes(a);
+            for r in max(contour.min_r - DISTANCE_BETWEEN_TARGETS, 0)
+                ..=min(
+                    contour.max_r + DISTANCE_BETWEEN_TARGETS,
+                    self.spokes[0].sweep.len() as i32 - 1,
+                )
+            {
+                self.spokes[a].sweep[r as usize] &= 0x40; // also clear both Doppler bits
+            }
+        }
+
+        let distance_to_radar = pos.r as f64 / pixels_per_meter;
+        // For larger targets clear the "shadow" of the target until 4 * r ????
+        if contour.length > 20 && distance_to_radar < TARGET_DISTANCE_FOR_BLANKING_SHADOW {
+            let mut max = contour.max_angle;
+            if contour.min_angle - SHADOW_MARGIN > contour.max_angle + SHADOW_MARGIN {
+                max += self.spokes.len() as i32;
+            }
+            for a in contour.min_angle - SHADOW_MARGIN..=max + SHADOW_MARGIN {
+                let a = self.mod_spokes(a);
+                for r in
+                    contour.max_r as usize..=min(4 * contour.max_r as usize, self.spokes.len() - 1)
+                {
+                    self.spokes[a].sweep[r] &= 0x40;
+                    // also clear both Doppler bits
+                }
+            }
+        }
     }
 }
 
@@ -822,13 +864,14 @@ impl TargetBuffer {
     }
 
     pub(crate) fn refresh_all_arpa_targets(&mut self) {
+        if self.setup.pixels_per_meter == 0. {
+            return;
+        }
         log::debug!(
             "***refresh loop start m_targets.size={}",
             self.targets.borrow().len()
         );
-        if self.setup.pixels_per_meter != 0. {
-            self.cleanup_lost_targets();
-        }
+        self.cleanup_lost_targets();
 
         // main target refresh loop
 
@@ -839,36 +882,47 @@ impl TargetBuffer {
         let search_radius =
             (speed * TODO_ROTATION_SPEED_MS as f64 * self.setup.pixels_per_meter / 1000.) as i32;
         log::debug!(
-            "Search radius={}, pix/m={}",
+            "refresh_all_arpa_targets with search radius={}, pix/m={}",
             search_radius,
             self.setup.pixels_per_meter
         );
 
-        for (_id, target) in self.targets.borrow().iter() {
-            if (target.position.speed_kn >= 2.5 && target.age_rotations >= TODO_TARGET_AGE_TO_MIXER)
-                || self.m_auto_learn_state >= 1
-            {
+        for pass in Pass::iter() {
+            let radius = match pass {
+                Pass::First => search_radius / 4,
+                Pass::Second => search_radius / 3,
+                Pass::Third => search_radius,
+            };
+
+            for (_id, target) in self.targets.borrow_mut().iter_mut() {
+                if pass == Pass::First
+                    && !((target.position.speed_kn >= 2.5
+                        && target.age_rotations >= TODO_TARGET_AGE_TO_MIXER)
+                        || self.m_auto_learn_state >= 1)
+                {
+                    continue;
+                }
                 let clone = target.clone();
-                if let Some(_target) = ArpaTarget::refresh_target(
+                match ArpaTarget::refresh_target(
                     clone,
                     &self.setup,
                     &mut self.history,
-                    search_radius / 4,
-                    0,
-                ) { // was 5
+                    radius / 4,
+                    pass,
+                ) {
+                    Ok(t) => *target = t,
+                    Err(e) => {
+                        match e {
+                            Error::Lost => {
+                                // Delete the target
+                            }
+                            _ => {
+                                log::debug!("Target {} refresh error {:?}", target.m_target_id, e);
+                            }
+                        }
+                    }
                 }
             }
-        }
-
-        // pass 1 of target refresh
-        #[cfg(Todo)]
-        for (_id, target) in self.targets.borrow_mut().iter_mut() {
-            target.refresh_target(self, search_radius / 3, 1);
-        }
-
-        #[cfg(Todo)]
-        for (_id, target) in self.targets.borrow_mut().iter_mut() {
-            target.refresh_target(self, search_radius, 2);
         }
     }
 
@@ -1144,13 +1198,90 @@ impl ArpaTarget {
         }
     }
 
+    fn refresh_target_not_found(
+        mut target: ArpaTarget,
+        pol: Polar,
+        pass: Pass,
+    ) -> Result<Self, Error> {
+        // target not found
+        log::debug!(
+            "Not found id={}, angle={}, r={}, pass={:?}, lost_count={}, status={:?}",
+            target.m_target_id,
+            pol.angle,
+            pol.r,
+            pass,
+            target.m_lost_count,
+            target.m_status
+        );
+
+        if target.m_small_fast && pass == Pass::Second && target.m_status == TargetStatus::Acquire2
+        {
+            // status 2, as it was not found,status was not increased.
+            // small and fast targets MUST be found in the third sweep, and on a small distance, that is in pass 1.
+            log::debug!("smallandfast set lost id={}", target.m_target_id);
+            return Err(Error::Lost);
+        }
+
+        // delete low status targets immediately when not found
+        if ((target.m_status == TargetStatus::Acquire1
+            || target.m_status == TargetStatus::Acquire2)
+            && pass == Pass::Third)
+            || target.m_status == TargetStatus::Acquire0
+        {
+            log::debug!(
+                "low status deleted id={}, angle={}, r={}, pass={:?}, lost_count={}",
+                target.m_target_id,
+                pol.angle,
+                pol.r,
+                pass,
+                target.m_lost_count
+            );
+            return Err(Error::Lost);
+        }
+        if pass == Pass::Third {
+            target.m_lost_count += 1;
+        }
+
+        // delete if not found too often
+        if target.m_lost_count > MAX_LOST_COUNT {
+            return Err(Error::Lost);
+        }
+        target.m_refreshed = RefreshState::NotFound;
+        // Send RATTM message also for not seen messages
+        /*
+        if (pass == LAST_PASS && m_status > m_ri.m_target_age_to_mixer.GetValue()) {
+            pol = Pos2Polar(self.position, own_pos);
+            if (m_status >= m_ri.m_target_age_to_mixer.GetValue()) {
+                //   f64 dist2target = pol.r / self.pixels_per_meter;
+                LOG_ARPA(wxT(" pass not found as AIVDM targetid=%i"), m_target_id);
+                if (m_transferred_target) {
+                    //  LOG_ARPA(wxT(" passTTM targetid=%i"), m_target_id);
+                    //  f64 s1 = self.position.dlat_dt;                                   // m per second
+                    //  f64 s2 = self.position.dlon_dt;                                   // m  per second
+                    //  m_course = rad2deg(atan2(s2, s1));
+                    //  PassTTMtoOCPN(&pol, s);
+
+                    PassAIVDMtoOCPN(&pol);
+                }
+                // MakeAndTransmitTargetMessage();
+                // MakeAndTransmitCoT();
+            }
+        }
+        */
+
+        // The target wasn't found, but we do want to keep it around
+        // as it may pop up on the next scan.
+        target.m_transferred_target = false;
+        return Ok(target);
+    }
+
     pub fn refresh_target(
         mut target: ArpaTarget,
         setup: &TargetSetup,
         history: &mut HistorySpokes,
         dist: i32,
-        pass: i32,
-    ) -> Result<Self, TargetError> {
+        pass: Pass,
+    ) -> Result<Self, Error> {
         let prev_refresh = target.m_refresh_time;
         // refresh may be called from guard directly, better check
         let own_pos = crate::signalk::get_radar_position();
@@ -1158,10 +1289,10 @@ impl ArpaTarget {
             || target.m_refreshed == RefreshState::OutOfScope
             || own_pos.is_none()
         {
-            return Err(TargetError::Lost);
+            return Err(Error::Lost);
         }
         if target.m_refreshed == RefreshState::Found {
-            return Err(TargetError::AlreadyFound);
+            return Err(Error::AlreadyFound);
         }
 
         let own_pos = ExtendedPosition::new(own_pos.unwrap(), 0., 0., 0, 0., 0.);
@@ -1182,7 +1313,7 @@ impl ArpaTarget {
             // the 100 is a margin on the rotation period
             // the next image of the target is not yet there
 
-            return Err(TargetError::WaitForRefresh);
+            return Err(Error::WaitForRefresh);
         }
 
         // set new refresh time
@@ -1191,7 +1322,7 @@ impl ArpaTarget {
 
         // PREDICTION CYCLE
 
-        log::debug!("Begin prediction cycle m_target_id={}, status={:?}, angle={}, r={}, contour={}, pass={}, lat={}, lon={}",
+        log::debug!("Begin prediction cycle m_target_id={}, status={:?}, angle={}, r={}, contour={}, pass={:?}, lat={}, lon={}",
                target.m_target_id, target.m_status, pol.angle, pol.r, target.contour.length, pass, target.position.pos.lat, target.position.pos.lon);
 
         // estimated new target time
@@ -1205,7 +1336,7 @@ impl ArpaTarget {
 
         if target.position.pos.lat > 90. || target.position.pos.lat < -90. {
             log::trace!("Target {} has unlikely latitude", target.m_target_id);
-            return Err(TargetError::Lost);
+            return Err(Error::Lost);
         }
 
         let mut x_local = LocalPosition::new(
@@ -1230,16 +1361,20 @@ impl ArpaTarget {
             * setup.pixels_per_meter) as i32;
 
         // zooming and target movement may  cause r to be out of bounds
-        log::trace!("PREDICTION m_target_id={}, pass={}, status={:?}, angle={}.{}, r={}.{}, contour={}, speed={}, sd_speed_kn={} doppler={:?}, lostcount={}",
+        log::trace!("PREDICTION m_target_id={}, pass={:?}, status={:?}, angle={}.{}, r={}.{}, contour={}, speed={}, sd_speed_kn={} doppler={:?}, lostcount={}",
                target.m_target_id, pass, target.m_status, alfa0, pol.angle, r0, pol.r, target.contour.length, target.position.speed_kn,
                target.position.sd_speed_kn, target.m_doppler_target, target.m_lost_count);
         if pol.r >= setup.spoke_len || pol.r <= 0 {
-            target.m_refreshed = RefreshState::OutOfScope;
             // delete target if too far out
-            log::trace!("R out of bounds, target deleted m_target_id={}, angle={}, r={}, contour={}, pass={}", target.m_target_id,
-                 pol.angle, pol.r, target.contour.length, pass);
-            target.set_status_lost();
-            return Some(target);
+            log::trace!(
+                "R out of bounds,  m_target_id={}, angle={}, r={}, contour={}, pass={:?}",
+                target.m_target_id,
+                pol.angle,
+                pol.r,
+                target.contour.length,
+                pass
+            );
+            return Err(Error::Lost);
         }
         target.expected = pol; // save expected polar position
 
@@ -1247,9 +1382,7 @@ impl ArpaTarget {
         // now search for the target at the expected polar position in pol
         let mut dist1 = dist;
 
-        const LAST_PASS: i32 = 2;
-
-        if pass == LAST_PASS {
+        if pass == Pass::Third {
             // this is doubtfull $$$
             if target.m_status == TargetStatus::Acquire0
                 || target.m_status == TargetStatus::Acquire1
@@ -1262,24 +1395,26 @@ impl ArpaTarget {
               } */
         }
 
-        let back = pol;
+        let starting_position = pol;
 
         // here we really search for the target
-        if pass == LAST_PASS {
+        if pass == Pass::Third {
             target.m_doppler_target = Doppler::ANY; // in the last pass we are not critical
         }
         let mut found = history.get_target(&target.m_doppler_target, pol.clone(), dist1); // main target search
 
         match found {
             Ok((contour, pos)) => {
-                let dist_angle = ((pol.angle - back.angle) as f64 * pol.r as f64 / 326.) as i32;
-                let dist_radial = pol.r - back.r;
+                let mut found = true;
+                let dist_angle =
+                    ((pol.angle - starting_position.angle) as f64 * pol.r as f64 / 326.) as i32;
+                let dist_radial = pol.r - starting_position.r;
                 let dist_total =
                     ((dist_angle * dist_angle + dist_radial * dist_radial) as f64).sqrt() as i32;
 
-                log::debug!("id={}, Found dist_angle={}, dist_radial={}, dist_total={}, pol.angle={}, back.angle={}, doppler={:?}", 
+                log::debug!("id={}, Found dist_angle={}, dist_radial={}, dist_total={}, pol.angle={}, starting_position.angle={}, doppler={:?}", 
         target.m_target_id,
-                 dist_angle, dist_radial, dist_total, pol.angle, back.angle, target.m_doppler_target);
+                 dist_angle, dist_radial, dist_total, pol.angle, starting_position.angle, target.m_doppler_target);
 
                 if target.m_doppler_target != Doppler::ANY {
                     let backup = target.m_doppler_target;
@@ -1296,277 +1431,183 @@ impl ArpaTarget {
                 if target.m_average_contour_length != 0
                     && (target.contour.length < target.m_average_contour_length / 2
                         || target.contour.length > target.m_average_contour_length * 2)
-                    && pass <= LAST_PASS - 1
+                    && pass != Pass::Third
                 {
-                    return Err(TargetError::WeightedContourLengthTooHigh);
+                    return Err(Error::WeightedContourLengthTooHigh);
                 }
 
-                if found {
-                    target.reset_pixels(buffer);
-                    log::debug!("target Found ResetPixels m_target_id={}, angle={}, r={}, contour={}, pass={}, doppler={:?}",
+                history.reset_pixels(&contour, &pos, &setup.pixels_per_meter);
+                log::debug!("target Found ResetPixels m_target_id={}, angle={}, r={}, contour={}, pass={:?}, doppler={:?}",
                  target.m_target_id, pol.angle, pol.r, target.contour.length, pass, target.m_doppler_target);
-                    if target.contour.length >= MAX_CONTOUR_LENGTH as i32 - 2 {
-                        // don't use this blob, could be radar interference
-                        // The pixels of the blob have been reset, so you won't find it again
-                        found = false;
-                        log::debug!("reset found because of max contour length id={}, angle={}, r={}, contour={}, pass={}", 
+                if target.contour.length >= MAX_CONTOUR_LENGTH as i32 - 2 {
+                    // don't use this blob, could be radar interference
+                    // The pixels of the blob have been reset, so you won't find it again
+                    log::debug!("reset found because of max contour length id={}, angle={}, r={}, contour={}, pass={:?}", 
                 target.m_target_id, pol.angle,
                  pol.r, target.contour.length, pass);
+                    return Err(Error::ContourLengthTooHigh);
+                }
+
+                target.m_lost_count = 0;
+                let mut p_own = ExtendedPosition::empty();
+                p_own.pos = history.spokes[history.mod_spokes(pol.angle) as usize].pos;
+                target.age_rotations += 1;
+                target.m_status = match target.m_status {
+                    TargetStatus::Acquire0 => TargetStatus::Acquire1,
+                    TargetStatus::Acquire1 => TargetStatus::Acquire2,
+                    TargetStatus::Acquire2 => TargetStatus::ACQUIRE3,
+                    TargetStatus::ACQUIRE3 | TargetStatus::ACTIVE => TargetStatus::ACTIVE,
+                    _ => TargetStatus::Acquire0,
+                };
+                if target.m_status == TargetStatus::Acquire0 {
+                    // as this is the first measurement, move target to measured position
+                    // ExtendedPosition p_own;
+                    // p_own.pos = m_ri.m_history[MOD_SPOKES(pol.angle)].pos;  // get the position at receive time
+                    target.position = setup.polar2pos(&pol, &mut p_own); // using own ship location from the time of reception, only lat and lon
+                    target.position.dlat_dt = 0.;
+                    target.position.dlon_dt = 0.;
+                    target.position.sd_speed_kn = 0.;
+                    target.expected = pol;
+                    log::debug!(
+                        "calculated id={} pos={}",
+                        target.m_target_id,
+                        target.position.pos
+                    );
+                    target.age_rotations = 0;
+                }
+
+                // Kalman filter to  calculate the apostriori local position and speed based on found position (pol)
+                if target.m_status == TargetStatus::Acquire2
+                    || target.m_status == TargetStatus::ACQUIRE3
+                {
+                    target.m_kalman.update_p();
+                    target.m_kalman.set_measurement(
+                        &mut pol,
+                        &mut x_local,
+                        &target.expected,
+                        setup.pixels_per_meter,
+                    ); // pol is measured position in polar coordinates
+                }
+                // x_local expected position in local coordinates
+
+                target.position.time = pol.time; // set the target time to the newly found time, this is the time the spoke was received
+
+                if target.m_status != TargetStatus::Acquire1 {
+                    // if status == 1, then this was first measurement, keep position at measured position
+                    target.position.pos.lat =
+                        own_pos.pos.lat + x_local.pos.lat / METERS_PER_DEGREE_LATITUDE;
+                    target.position.pos.lon = own_pos.pos.lon
+                        + x_local.pos.lon / meters_per_degree_longitude(&own_pos.pos.lat);
+                    target.position.dlat_dt = x_local.dlat_dt; // meters / sec
+                    target.position.dlon_dt = x_local.dlon_dt; // meters /sec
+                    target.position.sd_speed_kn = x_local.sd_speed_m_s * 3600. / 1852.;
+                }
+
+                // Here we bypass the Kalman filter to predict the speed of the target
+                // Kalman filter is too slow to adjust to the speed of (fast) new targets
+                // This method however only works for targets where the accuricy of the position is high,
+                // that is small targets in relation to the size of the target.
+
+                if target.m_status == TargetStatus::Acquire2 {
+                    // determine if this is a small and fast target
+                    let dist_angle = pol.angle - alfa0;
+                    let dist_r = pol.r - r0;
+                    let size_angle = max(
+                        history.mod_spokes(target.contour.max_angle - target.contour.min_angle),
+                        1,
+                    );
+                    let size_r = max(target.contour.max_r - target.contour.min_r, 1);
+                    let test = (dist_r as f64 / size_r as f64).abs()
+                        + (dist_angle as f64 / size_angle as f64).abs();
+                    target.m_small_fast = test > 2.;
+                    log::debug!("smallandfast, id={}, test={}, dist_r={}, size_r={}, dist_angle={}, size_angle={}",
+          target.m_target_id, test, dist_r, size_r, dist_angle, size_angle);
+                }
+
+                const FORCED_POSITION_STATUS: u32 = 8;
+                const FORCED_POSITION_AGE_FAST: u32 = 5;
+
+                if target.m_small_fast
+                    && target.age_rotations >= 2
+                    && target.age_rotations < FORCED_POSITION_STATUS
+                    && (target.age_rotations < FORCED_POSITION_AGE_FAST
+                        || target.position.speed_kn > 10.)
+                {
+                    // Do a linear extrapolation of the estimated position instead of the kalman filter, as it
+                    // takes too long to get up to speed for these targets.
+                    let prev_pos = prev_position.pos;
+                    let new_pos = setup.polar2pos(&pol, &p_own).pos;
+                    let delta_lat = new_pos.lat - prev_pos.lat;
+                    let delta_lon = new_pos.lon - prev_pos.lon;
+                    let delta_t = pol.time - prev_position.time;
+                    if delta_t > 1000 {
+                        // delta_t < 1000; speed unreliable due to uncertainties in location
+                        let d_lat_dt =
+                            (delta_lat / (delta_t as f64)) * METERS_PER_DEGREE_LATITUDE * 1000.;
+                        let d_lon_dt = (delta_lon / (delta_t as f64))
+                            * meters_per_degree_longitude(&new_pos.lat)
+                            * 1000.;
+                        log::debug!("id={}, FORCED m_status={:?}, d_lat_dt={}, d_lon_dt={}, delta_lon_meter={}, delta_lat_meter={}, deltat={}",
+                   target.m_target_id, target.m_status, d_lat_dt, d_lon_dt,
+                     delta_lon * METERS_PER_DEGREE_LATITUDE, delta_lat * METERS_PER_DEGREE_LATITUDE, delta_t);
+                        // force new position and speed, dependent of overridefactor
+
+                        let factor: f64 = (0.8_f64).powf((target.age_rotations - 1) as f64);
+                        target.position.pos.lat += factor * (new_pos.lat - target.position.pos.lat);
+                        target.position.pos.lon += factor * (new_pos.lon - target.position.pos.lon);
+                        target.position.dlat_dt += factor * (d_lat_dt - target.position.dlat_dt); // in meters/sec
+                        target.position.dlon_dt += factor * (d_lon_dt - target.position.dlon_dt);
+                        // in meters/sec
                     }
                 }
 
-                if found {
-                    target.m_lost_count = 0;
-                    let mut p_own = ExtendedPosition::empty();
-                    p_own.pos = buffer.history[buffer.mod_spokes(pol.angle) as usize].pos;
-                    target.age_rotations += 1;
-                    target.m_status = match target.m_status {
-                        TargetStatus::Acquire0 => TargetStatus::Acquire1,
-                        TargetStatus::Acquire1 => TargetStatus::Acquire2,
-                        TargetStatus::Acquire2 => TargetStatus::ACQUIRE3,
-                        TargetStatus::ACQUIRE3 | TargetStatus::ACTIVE => TargetStatus::ACTIVE,
-                        _ => TargetStatus::Acquire0,
-                    };
-                    if target.m_status == TargetStatus::Acquire0 {
-                        // as this is the first measurement, move target to measured position
-                        // ExtendedPosition p_own;
-                        // p_own.pos = m_ri.m_history[MOD_SPOKES(pol.angle)].pos;  // get the position at receive time
-                        target.position = buffer.polar2pos(&pol, &mut p_own); // using own ship location from the time of reception, only lat and lon
-                        target.position.dlat_dt = 0.;
-                        target.position.dlon_dt = 0.;
-                        target.position.sd_speed_kn = 0.;
-                        target.expected = pol;
-                        log::debug!(
-                            "calculated id={} pos={}",
-                            target.m_target_id,
-                            target.position.pos
-                        );
-                        target.age_rotations = 0;
+                // set refresh time to the time of the spoke where the target was found
+                target.m_refresh_time = target.position.time;
+                if target.age_rotations >= 1 {
+                    let s1 = target.position.dlat_dt; // m per second
+                    let s2 = target.position.dlon_dt; // m  per second
+                    target.position.speed_kn = (s1 * s1 + s2 * s2).sqrt() * 3600. / 1852.; // and convert to nautical miles per hour
+                    target.m_course = f64::atan2(s2, s1).to_degrees();
+                    if target.m_course < 0. {
+                        target.m_course += 360.;
                     }
 
-                    // Kalman filter to  calculate the apostriori local position and speed based on found position (pol)
-                    if target.m_status == TargetStatus::Acquire2
-                        || target.m_status == TargetStatus::ACQUIRE3
-                    {
-                        target.m_kalman.update_p();
-                        target.m_kalman.set_measurement(
-                            &mut pol,
-                            &mut x_local,
-                            &target.expected,
-                            setup.pixels_per_meter,
-                        ); // pol is measured position in polar coordinates
-                    }
-                    // x_local expected position in local coordinates
-
-                    target.position.time = pol.time; // set the target time to the newly found time, this is the time the spoke was received
-
-                    if target.m_status != TargetStatus::Acquire1 {
-                        // if status == 1, then this was first measurement, keep position at measured position
-                        target.position.pos.lat =
-                            own_pos.pos.lat + x_local.pos.lat / METERS_PER_DEGREE_LATITUDE;
-                        target.position.pos.lon = own_pos.pos.lon
-                            + x_local.pos.lon / meters_per_degree_longitude(&own_pos.pos.lat);
-                        target.position.dlat_dt = x_local.dlat_dt; // meters / sec
-                        target.position.dlon_dt = x_local.dlon_dt; // meters /sec
-                        target.position.sd_speed_kn = x_local.sd_speed_m_s * 3600. / 1852.;
-                    }
-
-                    // Here we bypass the Kalman filter to predict the speed of the target
-                    // Kalman filter is too slow to adjust to the speed of (fast) new targets
-                    // This method however only works for targets where the accuricy of the position is high,
-                    // that is small targets in relation to the size of the target.
-
-                    if target.m_status == TargetStatus::Acquire2 {
-                        // determine if this is a small and fast target
-                        let dist_angle = pol.angle - alfa0;
-                        let dist_r = pol.r - r0;
-                        let size_angle = max(
-                            buffer.mod_spokes(target.contour.max_angle - target.contour.min_angle),
-                            1,
-                        );
-                        let size_r = max(target.contour.max_r - target.contour.min_r, 1);
-                        let test = (dist_r as f64 / size_r as f64).abs()
-                            + (dist_angle as f64 / size_angle as f64).abs();
-                        target.m_small_fast = test > 2.;
-                        log::debug!("smallandfast, id={}, test={}, dist_r={}, size_r={}, dist_angle={}, size_angle={}",
-          target.m_target_id, test, dist_r, size_r, dist_angle, size_angle);
-                    }
-
-                    const FORCED_POSITION_STATUS: u32 = 8;
-                    const FORCED_POSITION_AGE_FAST: u32 = 5;
-
-                    if target.m_small_fast
-                        && target.age_rotations >= 2
-                        && target.age_rotations < FORCED_POSITION_STATUS
-                        && (target.age_rotations < FORCED_POSITION_AGE_FAST
-                            || target.position.speed_kn > 10.)
-                    {
-                        // Do a linear extrapolation of the estimated position instead of the kalman filter, as it
-                        // takes too long to get up to speed for these targets.
-                        let prev_pos = prev_position.pos;
-                        let new_pos = buffer.polar2pos(&pol, &p_own).pos;
-                        let delta_lat = new_pos.lat - prev_pos.lat;
-                        let delta_lon = new_pos.lon - prev_pos.lon;
-                        let delta_t = pol.time - prev_position.time;
-                        if delta_t > 1000 {
-                            // delta_t < 1000; speed unreliable due to uncertainties in location
-                            let d_lat_dt =
-                                (delta_lat / (delta_t as f64)) * METERS_PER_DEGREE_LATITUDE * 1000.;
-                            let d_lon_dt = (delta_lon / (delta_t as f64))
-                                * meters_per_degree_longitude(&new_pos.lat)
-                                * 1000.;
-                            log::debug!("id={}, FORCED m_status={:?}, d_lat_dt={}, d_lon_dt={}, delta_lon_meter={}, delta_lat_meter={}, deltat={}",
-                   target.m_target_id, target.m_status, d_lat_dt, d_lon_dt,
-                     delta_lon * METERS_PER_DEGREE_LATITUDE, delta_lat * METERS_PER_DEGREE_LATITUDE, delta_t);
-                            // force new position and speed, dependent of overridefactor
-
-                            let factor: f64 = (0.8_f64).powf((target.age_rotations - 1) as f64);
-                            target.position.pos.lat +=
-                                factor * (new_pos.lat - target.position.pos.lat);
-                            target.position.pos.lon +=
-                                factor * (new_pos.lon - target.position.pos.lon);
-                            target.position.dlat_dt +=
-                                factor * (d_lat_dt - target.position.dlat_dt); // in meters/sec
-                            target.position.dlon_dt +=
-                                factor * (d_lon_dt - target.position.dlon_dt);
-                            // in meters/sec
-                        }
-                    }
-
-                    // set refresh time to the time of the spoke where the target was found
-                    target.m_refresh_time = target.position.time;
-                    if target.age_rotations >= 1 {
-                        let s1 = target.position.dlat_dt; // m per second
-                        let s2 = target.position.dlon_dt; // m  per second
-                        target.position.speed_kn = (s1 * s1 + s2 * s2).sqrt() * 3600. / 1852.; // and convert to nautical miles per hour
-                        target.m_course = f64::atan2(s2, s1).to_degrees();
-                        if target.m_course < 0. {
-                            target.m_course += 360.;
-                        }
-
-                        log::debug!("FOUND {} CYCLE id={}, status={:?}, age={}, angle={}.{}, r={}.{}, contour={}, speed={}, sd_speed_kn={}, doppler={:?}",
+                    log::debug!("FOUND {:?} CYCLE id={}, status={:?}, age={}, angle={}.{}, r={}.{}, contour={}, speed={}, sd_speed_kn={}, doppler={:?}",
               pass, target.m_target_id, target.m_status, target.age_rotations, alfa0, pol.angle, r0, pol.r, target.contour.length, target.position.speed_kn,
               target.position.sd_speed_kn, target.m_doppler_target);
 
-                        target.m_previous_contour_length = target.contour.length;
-                        // send target data to OCPN and other radar
-                        if target.m_target_id == 0 {
-                            target.m_target_id = buffer.get_next_target_id();
+                    target.m_previous_contour_length = target.contour.length;
+                    // send target data to OCPN and other radar
+
+                    const WEIGHT_FACTOR: f64 = 0.1;
+
+                    if target.contour.length != 0 {
+                        if target.m_average_contour_length == 0 && target.contour.length != 0 {
+                            target.m_average_contour_length = target.contour.length;
+                        } else {
+                            target.m_average_contour_length +=
+                                ((target.contour.length - target.m_average_contour_length) as f64
+                                    * WEIGHT_FACTOR) as i32;
                         }
-
-                        if target.age_rotations > FORCED_POSITION_STATUS {
-                            let _ = buffer.pos2polar(&target.position, &own_pos);
-                        }
-                        if target.age_rotations > 4 { // 4? quite arbitrary, target should be stable
-                             // TODO TransferTargetToOtherRadar();
-                             // TODO SendTargetToNearbyRadar();
-                        }
-
-                        const WEIGHT_FACTOR: f64 = 0.1;
-
-                        if target.contour.length != 0 {
-                            if target.m_average_contour_length == 0 && target.contour.length != 0 {
-                                target.m_average_contour_length = target.contour.length;
-                            } else {
-                                target.m_average_contour_length +=
-                                    ((target.contour.length - target.m_average_contour_length)
-                                        as f64
-                                        * WEIGHT_FACTOR) as i32;
-                            }
-                        }
-
-                        //if (m_status >= m_ri.m_target_age_to_mixer.GetValue()) {
-                        //  f64 dist2target = pol.r / self.pixels_per_meter;
-                        // TODO: PassAIVDMtoOCPN(&pol);  // status s not yet used
-
-                        // TODO: MakeAndTransmitTargetMessage();
-
-                        // MakeAndTransmitCoT();
-                        //}
                     }
+
+                    //if (m_status >= m_ri.m_target_age_to_mixer.GetValue()) {
+                    //  f64 dist2target = pol.r / self.pixels_per_meter;
+                    // TODO: PassAIVDMtoOCPN(&pol);  // status s not yet used
+
+                    // TODO: MakeAndTransmitTargetMessage();
+
+                    // MakeAndTransmitCoT();
+                    //}
+
                     target.m_refreshed = RefreshState::Found;
                     // A target that has been found is no longer considered a transferred target
                     target.m_transferred_target = false;
                 }
             }
-            Err(e) => {
-                // target not found
-                log::debug!(
-                    "Not found id={}, angle={}, r={}, pass={}, lost_count={}, status={:?}",
-                    target.m_target_id,
-                    pol.angle,
-                    pol.r,
-                    pass,
-                    target.m_lost_count,
-                    target.m_status
-                );
-
-                if target.m_small_fast
-                    && pass == LAST_PASS - 1
-                    && target.m_status == TargetStatus::Acquire2
-                {
-                    // status 2, as it was not found,status was not increased.
-                    // small and fast targets MUST be found in the third sweep, and on a small distance, that is in pass 1.
-                    log::debug!("smallandfast set lost id={}", target.m_target_id);
-                    target.set_status_lost();
-                    target.m_refreshed = RefreshState::OutOfScope;
-                    return Some(target);
-                }
-
-                // delete low status targets immediately when not found
-                if ((target.m_status == TargetStatus::Acquire1
-                    || target.m_status == TargetStatus::Acquire2)
-                    && pass == LAST_PASS)
-                    || target.m_status == TargetStatus::Acquire0
-                {
-                    log::debug!(
-                        "low status deleted id={}, angle={}, r={}, pass={}, lost_count={}",
-                        target.m_target_id,
-                        pol.angle,
-                        pol.r,
-                        pass,
-                        target.m_lost_count
-                    );
-                    target.set_status_lost();
-                    target.m_refreshed = RefreshState::OutOfScope;
-                    return Some(target);
-                }
-                if pass == LAST_PASS {
-                    target.m_lost_count += 1;
-                }
-
-                // delete if not found too often
-                if target.m_lost_count > MAX_LOST_COUNT {
-                    target.set_status_lost();
-                    target.m_refreshed = RefreshState::OutOfScope;
-                    return Some(target);
-                }
-                target.m_refreshed = RefreshState::NotFound;
-                // Send RATTM message also for not seen messages
-                /*
-                if (pass == LAST_PASS && m_status > m_ri.m_target_age_to_mixer.GetValue()) {
-                    pol = Pos2Polar(self.position, own_pos);
-                    if (m_status >= m_ri.m_target_age_to_mixer.GetValue()) {
-                        //   f64 dist2target = pol.r / self.pixels_per_meter;
-                        LOG_ARPA(wxT(" pass not found as AIVDM targetid=%i"), m_target_id);
-                        if (m_transferred_target) {
-                            //  LOG_ARPA(wxT(" passTTM targetid=%i"), m_target_id);
-                            //  f64 s1 = self.position.dlat_dt;                                   // m per second
-                            //  f64 s2 = self.position.dlon_dt;                                   // m  per second
-                            //  m_course = rad2deg(atan2(s2, s1));
-                            //  PassTTMtoOCPN(&pol, s);
-
-                            PassAIVDMtoOCPN(&pol);
-                        }
-                        // MakeAndTransmitTargetMessage();
-                        // MakeAndTransmitCoT();
-                    }
-                }
-                */
-                target.m_transferred_target = false;
-            }
+            Err(e) => return Self::refresh_target_not_found(target, pol, pass),
         };
-        return Some(target);
+        return Ok(target);
     }
 
     /// Count the number of pixels in the target, and the number of approaching and receding pixels
@@ -1981,7 +2022,7 @@ impl ArpaTarget {
   */
 
     fn set_status_lost(&mut self) {
-        self.contour.length = 0;
+        self.contour = Contour::new();
         self.m_previous_contour_length = 0;
         self.m_lost_count = 0;
         self.m_kalman.reset_filter();
@@ -1993,45 +2034,5 @@ impl ArpaTarget {
         self.position.dlat_dt = 0.;
         self.position.dlon_dt = 0.;
         self.position.speed_kn = 0.;
-    }
-
-    // resets the pixels of the current blob (plus DISTANCE_BETWEEN_TARGETS) so that blob will not be found again in the same sweep
-    // We not only reset the blob but all pixels in a radial "square" covering the blob
-    fn reset_pixels(&self, buffer: &mut TargetBuffer) {
-        const DISTANCE_BETWEEN_TARGETS: i32 = 30;
-        const SHADOW_MARGIN: i32 = 5;
-        const TARGET_DISTANCE_FOR_BLANKING_SHADOW: f64 = 6000.; // 6 km
-
-        let setup = &buffer.setup;
-
-        for a in self.contour.min_angle - DISTANCE_BETWEEN_TARGETS
-            ..=self.contour.max_angle + DISTANCE_BETWEEN_TARGETS
-        {
-            let a = buffer.history.mod_spokes(a);
-            for r in max(self.contour.min_r - DISTANCE_BETWEEN_TARGETS, 0)
-                ..=min(
-                    self.contour.max_r + DISTANCE_BETWEEN_TARGETS,
-                    setup.spoke_len - 1,
-                )
-            {
-                buffer.history.spokes[a].sweep[r as usize] &= 0x40; // also clear both Doppler bits
-            }
-        }
-
-        let distance_to_radar = self.m_polar_pos.r as f64 / setup.pixels_per_meter;
-        // For larger targets clear the "shadow" of the target until 4 * r ????
-        if self.contour.length > 20 && distance_to_radar < TARGET_DISTANCE_FOR_BLANKING_SHADOW {
-            let mut max = self.contour.max_angle;
-            if self.contour.min_angle - SHADOW_MARGIN > self.contour.max_angle + SHADOW_MARGIN {
-                max += setup.spokes;
-            }
-            for a in self.contour.min_angle - SHADOW_MARGIN..=max + SHADOW_MARGIN {
-                let a = buffer.history.mod_spokes(a);
-                for r in self.contour.max_r..=min(4 * self.contour.max_r, setup.spoke_len - 1) {
-                    buffer.history.spokes[a].sweep[r as usize] &= 0x40;
-                    // also clear both Doppler bits
-                }
-            }
-        }
     }
 }
