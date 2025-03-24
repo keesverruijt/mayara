@@ -4,7 +4,7 @@ use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
 use crate::settings::{ControlType, DataUpdate};
 use crate::util::PrintableSpoke;
-use crate::{radar::*, Cli, GLOBAL_ARGS};
+use crate::{radar::*, GLOBAL_ARGS};
 
 use core::panic;
 use log::{debug, trace};
@@ -47,7 +47,7 @@ impl FurunoDataReceiver {
         let data_update_rx = info.controls.data_update_subscribe();
 
         // let pixel_to_blob = Self::pixel_to_blob(&info.legend);
-        let mut trails = TrailBuffer::new(info.legend.clone(), FURUNO_SPOKES, FURUNO_SPOKE_LEN);
+        let mut trails = TrailBuffer::new(&info);
         if let Some(control) = info.controls.get(&ControlType::DopplerTrailsOnly) {
             if let Some(value) = control.value {
                 let value = value > 0.;
@@ -154,33 +154,17 @@ impl FurunoDataReceiver {
                 self.info.legend = legend;
             }
             DataUpdate::ControlValue(reply_tx, cv) => {
-                match cv.id {
-                    ControlType::ClearTrails => {
-                        self.trails.clear();
+                match self.trails.set_control_value(&self.info.controls, &cv) {
+                    Ok(()) => {
+                        return Ok(());
                     }
-                    ControlType::DopplerTrailsOnly => {
-                        let value = cv.value.parse::<u16>().unwrap_or(0) > 0;
-                        self.trails.set_doppler_trail_only(value);
+                    Err(e) => {
+                        return self
+                            .info
+                            .controls
+                            .send_error_to_client(reply_tx, &cv, &e)
+                            .await;
                     }
-                    ControlType::TargetTrails => {
-                        let value = cv.value.parse::<u16>().unwrap_or(0);
-                        self.trails.set_relative_trails_length(value);
-                    }
-                    ControlType::TrailsMotion => {
-                        let true_motion = match cv.value.as_str() {
-                            "0" => false,
-                            "1" => true,
-                            _ => return Err(RadarError::CannotSetControlType(cv.id)),
-                        };
-                        if let Err(e) = self.trails.set_trails_mode(true_motion) {
-                            return self
-                                .info
-                                .controls
-                                .send_error_to_client(reply_tx, &cv, &RadarError::ControlError(e))
-                                .await;
-                        }
-                    }
-                    _ => return Err(RadarError::CannotSetControlType(cv.id)),
                 };
             }
         }
@@ -419,6 +403,9 @@ impl FurunoDataReceiver {
             angle,
             PrintableSpoke::new(&spoke.data)
         );
+
+        self.trails.update_trails(&mut spoke, &self.info.legend);
+
         spoke
     }
 

@@ -15,8 +15,7 @@ use crate::locator::LocatorId;
 use crate::network::create_udp_multicast_listen;
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
-use crate::radar::target::TargetBuffer;
-use crate::settings::{ControlError, ControlType, DataUpdate};
+use crate::settings::{ControlType, DataUpdate};
 use crate::util::PrintableSpoke;
 use crate::{radar::*, GLOBAL_ARGS};
 
@@ -121,7 +120,6 @@ pub struct NavicoDataReceiver {
     doppler: DopplerMode,
     pixel_to_blob: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH],
     trails: TrailBuffer,
-    targets: TargetBuffer,
 }
 
 impl NavicoDataReceiver {
@@ -131,7 +129,7 @@ impl NavicoDataReceiver {
         let data_update_rx = info.controls.data_update_subscribe();
 
         let pixel_to_blob = Self::pixel_to_blob(&info.legend);
-        let mut trails = TrailBuffer::new(info.legend.clone(), NAVICO_SPOKES, NAVICO_SPOKE_LEN);
+        let mut trails = TrailBuffer::new(&info);
 
         if let Some(control) = info.controls.get(&ControlType::DopplerTrailsOnly) {
             if let Some(value) = control.value {
@@ -139,8 +137,6 @@ impl NavicoDataReceiver {
                 trails.set_doppler_trail_only(value);
             }
         }
-
-        let targets = TargetBuffer::new(info.id, NAVICO_SPOKES, NAVICO_SPOKE_LEN, true);
 
         NavicoDataReceiver {
             key,
@@ -151,7 +147,6 @@ impl NavicoDataReceiver {
             doppler: DopplerMode::None,
             pixel_to_blob,
             trails,
-            targets,
         }
     }
 
@@ -221,52 +216,18 @@ impl NavicoDataReceiver {
                 self.info.legend = legend;
             }
             DataUpdate::ControlValue(reply_tx, cv) => {
-                let mut reply: Result<(), ControlError> = match cv.id {
-                    ControlType::ClearTrails => {
-                        self.trails.clear();
-                        Ok(())
+                match self.trails.set_control_value(&self.info.controls, &cv) {
+                    Ok(()) => {
+                        return Ok(());
                     }
-                    ControlType::DopplerTrailsOnly => {
-                        let r = self.info.controls.set_string(&cv.id, cv.value.to_string());
-                        if r.is_ok() {
-                            let value = cv.value.parse::<u16>().unwrap_or(0) > 0;
-                            self.trails.set_doppler_trail_only(value);
-                        }
-                        r.map(|_| ())
+                    Err(e) => {
+                        return self
+                            .info
+                            .controls
+                            .send_error_to_client(reply_tx, &cv, &e)
+                            .await;
                     }
-                    ControlType::TargetTrails => {
-                        let value = cv.value.parse::<u16>().unwrap_or(0);
-                        self.trails.set_relative_trails_length(value);
-                        Ok(())
-                    }
-                    ControlType::TrailsMotion => {
-                        let true_motion = match cv.value.as_str() {
-                            "0" => false,
-                            "1" => true,
-                            _ => return Err(RadarError::CannotSetControlType(cv.id)),
-                        };
-                        self.trails.set_trails_mode(true_motion)
-                    }
-                    _ => Err(ControlError::NotSupported(cv.id)),
                 };
-                if reply.is_ok() {
-                    reply = self
-                        .info
-                        .controls
-                        .set_string(&cv.id, cv.value.to_string())
-                        .map(|_| ());
-                }
-                if reply.is_err() {
-                    let _ = self
-                        .info
-                        .controls
-                        .send_error_to_client(
-                            reply_tx,
-                            &cv,
-                            &RadarError::ControlError(reply.unwrap_err()),
-                        )
-                        .await;
-                }
             }
         }
 
@@ -541,9 +502,10 @@ impl NavicoDataReceiver {
                     as u32
             })
         };
-
-        self.trails
-            .update_trails(range, heading.map(|x| x as u16), angle, &mut generic_spoke);
+        let time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .ok();
 
         let mut spoke = Spoke::new();
         spoke.range = range;
@@ -551,13 +513,11 @@ impl NavicoDataReceiver {
         spoke.bearing = heading;
 
         (spoke.lat, spoke.lon) = crate::signalk::get_position_i64();
-        spoke.time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .ok();
+        spoke.time = time;
         spoke.data = generic_spoke;
 
-        self.targets.process_spoke(&mut spoke, &self.info.legend);
+        self.trails.update_trails(&mut spoke, &self.info.legend);
+
         spoke
     }
 }

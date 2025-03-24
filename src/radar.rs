@@ -206,6 +206,7 @@ pub(crate) struct RadarInfo {
     pub legend: Legend,                  // What pixel values mean
     pub controls: SharedControls,        // Which controls there are, not complete in beginning
     pub range_detection: Option<RangeDetection>, // if Some, then ranges are flexible, detected and persisted
+    pub doppler: bool,                           // Does it support Doppler?
     rotation_timestamp: Instant,
 
     // Channels
@@ -227,6 +228,7 @@ impl RadarInfo {
         report_addr: SocketAddrV4,
         send_command_addr: SocketAddrV4,
         controls: SharedControls,
+        doppler: bool,
     ) -> Self {
         let (message_tx, _message_rx) = tokio::sync::broadcast::channel(32);
 
@@ -264,6 +266,7 @@ impl RadarInfo {
             message_tx,
             range_detection: None,
             controls,
+            doppler,
             rotation_timestamp: Instant::now() - Duration::from_secs(2),
         }
     }

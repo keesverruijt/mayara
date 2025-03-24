@@ -1,10 +1,15 @@
 use cartesian::PolarToCartesianLookup;
 use ndarray::{s, Array2};
+use tokio::sync::mpsc::Sender;
 
 mod cartesian;
+use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::radar::trail::cartesian::PointInt;
 use crate::radar::{GeoPosition, Legend, SpokeBearing, BLOB_HISTORY_COLORS};
-use crate::settings::{ControlError, ControlType};
+use crate::settings::{ControlError, ControlType, ControlValue, Controls, SharedControls};
+
+use super::target::TargetBuffer;
+use super::{RadarError, RadarInfo};
 
 const MARGIN_I16: i16 = 100;
 const MARGIN_USIZE: usize = MARGIN_I16 as usize;
@@ -27,6 +32,7 @@ pub struct TrailBuffer {
     true_trails: Box<Array2<u8>>,
     true_trails_offset: PointInt,
     relative_trails: Box<Vec<u16>>,
+    targets: TargetBuffer,
     trail_length_ms: u32,
     rotation_speed_ms: u32,
     minimal_legend_value: u8,
@@ -36,10 +42,17 @@ pub struct TrailBuffer {
 }
 
 impl TrailBuffer {
-    pub fn new(legend: Legend, spokes: usize, max_spoke_len: usize) -> Self {
-        let minimal_legend_value = legend.strong_return;
-        let trail_size: i16 = (max_spoke_len as i16 * 2 + MARGIN_I16 * 2) as i16;
-        let cartesian_lookup = PolarToCartesianLookup::new(spokes, max_spoke_len);
+    pub fn new(info: &RadarInfo) -> Self {
+        let legend = info.legend.clone();
+        let spokes = info.spokes as usize;
+        let max_spoke_len = info.max_spoke_len as usize;
+        let minimal_legend_value = info.legend.strong_return;
+        let trail_size: i16 = (info.max_spoke_len as i16 * 2 + MARGIN_I16 * 2) as i16;
+        let cartesian_lookup =
+            PolarToCartesianLookup::new(info.spokes as usize, info.max_spoke_len as usize);
+
+        let targets = TargetBuffer::new(info);
+
         TrailBuffer {
             legend,
             spokes,
@@ -56,6 +69,7 @@ impl TrailBuffer {
             ))),
             true_trails_offset: PointInt { x: 0, y: 0 },
             relative_trails: Box::new(vec![0; spokes * max_spoke_len]),
+            targets,
             trail_length_ms: 0,
             rotation_speed_ms: 0,
             minimal_legend_value,
@@ -63,6 +77,66 @@ impl TrailBuffer {
             pixels_per_meter: 0.0,
             have_heading: false,
         }
+    }
+
+    pub fn set_control_value(
+        &mut self,
+        controls: &SharedControls,
+        cv: &ControlValue,
+    ) -> Result<(), RadarError> {
+        let mut reply = match cv.id {
+            ControlType::ClearTrails => {
+                self.clear();
+                Ok(())
+            }
+            ControlType::DopplerTrailsOnly => {
+                let r = controls.set_string(&cv.id, cv.value.to_string());
+                if r.is_ok() {
+                    let value = cv.value.parse::<u16>().unwrap_or(0) > 0;
+                    self.set_doppler_trail_only(value);
+                }
+                r.map(|_| ()).map_err(|e| RadarError::ControlError(e))
+            }
+            ControlType::TargetTrails => {
+                let value = cv.value.parse::<u16>().unwrap_or(0);
+                self.set_relative_trails_length(value);
+                Ok(())
+            }
+            ControlType::TrailsMotion => {
+                let true_motion = match cv.value.as_str() {
+                    "0" => false,
+                    "1" => true,
+                    _ => return Err(RadarError::CannotSetControlType(cv.id)),
+                };
+                self.set_trails_mode(true_motion)
+                    .map_err(|e| RadarError::ControlError(e))
+            }
+            ControlType::ClearTargets => {
+                self.targets.delete_all_targets();
+                Ok(())
+            }
+            ControlType::DopplerAutoTrack => {
+                let arpa = match cv.value.as_str() {
+                    "0" => false,
+                    "1" => true,
+                    _ => return Err(RadarError::CannotSetControlType(cv.id)),
+                };
+                if let Err(e) = self.targets.set_arpa_via_doppler(arpa) {
+                    return Err(RadarError::ControlError(e));
+                } else {
+                    Ok(())
+                }
+            }
+            _ => return Err(RadarError::CannotSetControlType(cv.id)),
+        };
+
+        if reply.is_ok() {
+            reply = controls
+                .set_string(&cv.id, cv.value.to_string())
+                .map(|_| ())
+                .map_err(|e| RadarError::ControlError(e));
+        }
+        reply
     }
 
     pub fn set_trails_mode(&mut self, value: bool) -> Result<(), ControlError> {
@@ -104,31 +178,28 @@ impl TrailBuffer {
 
     pub fn set_rotation_speed(&mut self, ms: u32) {
         self.rotation_speed_ms = ms;
+        self.targets.set_rotation_speed(ms);
     }
 
-    pub fn update_trails(
-        &mut self,
-        range: u32,
-        heading: Option<SpokeBearing>,
-        bearing: SpokeBearing,
-        data: &mut Vec<u8>,
-    ) {
-        if range != self.previous_range && range != 0 {
+    pub fn update_trails(&mut self, spoke: &mut Spoke, legend: &Legend) {
+        if spoke.range != self.previous_range && spoke.range != 0 {
             if self.previous_range != 0 {
-                let zoom_factor = self.previous_range as f64 / range as f64;
+                let zoom_factor = self.previous_range as f64 / spoke.range as f64;
                 self.zoom_relative_trails(zoom_factor);
             }
-            self.previous_range = range;
+            self.previous_range = spoke.range;
         }
 
-        if let Some(heading) = heading {
+        if let Some(bearing) = spoke.bearing {
             self.have_heading = true;
-            self.update_true_trails(range, heading, data);
+            self.update_true_trails(spoke.range, bearing as u16, &mut spoke.data);
         } else {
             self.have_heading = false;
         }
 
-        self.update_relative_trails(bearing, data);
+        self.update_relative_trails(spoke.angle as u16, &mut spoke.data);
+
+        self.targets.process_spoke(spoke, legend);
     }
 
     fn update_true_trails(&mut self, range: u32, bearing: SpokeBearing, data: &mut Vec<u8>) {

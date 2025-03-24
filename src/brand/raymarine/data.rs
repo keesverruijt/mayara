@@ -538,6 +538,8 @@ impl RaymarineDataReceiver {
             .ok();
         spoke.data = generic_spoke;
 
+        self.trails.update_trails(&mut spoke, &self.info.legend);
+
         spoke
     }
 }

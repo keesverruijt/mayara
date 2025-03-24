@@ -1,18 +1,24 @@
+use bitflags::bitflags;
 use std::{
     cell::RefCell,
     cmp::{max, min},
     collections::HashMap,
     f64::consts::PI,
     rc::Rc,
+    sync::{Arc, RwLock},
 };
 use strum::{EnumIter, IntoEnumIterator};
 
 use kalman::{KalmanFilter, LocalPosition, Polar};
 use ndarray::Array2;
 
-use crate::{protos::RadarMessage::radar_message::Spoke, signalk, GLOBAL_ARGS};
+use crate::{
+    protos::RadarMessage::radar_message::Spoke,
+    settings::{ControlError, ControlType},
+    signalk, GLOBAL_ARGS,
+};
 
-use super::{GeoPosition, Legend};
+use super::{GeoPosition, Legend, RadarInfo, SpokeBearing};
 
 mod arpa;
 mod kalman;
@@ -163,9 +169,36 @@ const FOUR_DIRECTIONS: [Polar; 4] = [
     },
 ];
 
+bitflags! {
+    /// Represents a set of flags.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    struct HistoryPixel: u8 {
+        /// The value `TARGET`, at bit position `7`.
+        const TARGET = 0b10000000;
+        /// The value `BACKUP`, at bit position `6`.
+        const BACKUP = 0b01000000;
+        /// The value `APPROACHING`, at bit position `5`.
+        const APPROACHING = 0b00100000;
+        /// The value `RECEDING`, at bit position `4`.
+        const RECEDING = 0b00010000;
+        /// The value `CONTOUR`, at bit position `3`.
+        const CONTOUR = 0b00001000;
+
+        /// The default value for a new one.
+        const INITIAL = Self::TARGET.bits() | Self::BACKUP.bits();
+        const NO_TARGET = !(Self::INITIAL.bits());
+    }
+}
+
+impl HistoryPixel {
+    fn new() -> Self {
+        HistoryPixel::INITIAL
+    }
+}
+
 #[derive(Debug, Clone)]
 struct HistorySpoke {
-    sweep: Vec<u8>,
+    sweep: Vec<HistoryPixel>,
     time: u64,
     pos: GeoPosition,
 }
@@ -180,19 +213,19 @@ pub struct TargetBuffer {
     setup: TargetSetup,
     next_target_id: usize,
     history: HistorySpokes,
-    targets: Rc<RefCell<HashMap<usize, ArpaTarget>>>,
-    // wxLongLong m_doppler_arpa_update_time[SPOKES_MAX];
+    targets: Arc<RwLock<HashMap<usize, ArpaTarget>>>,
+
+    arpa_via_doppler: bool,
+
     m_clear_contours: bool,
     m_auto_learn_state: i32,
-    // std::deque<GeoPosition> m_delete_target_position;
-    // std::deque<DynamicTargetData*> m_remote_target_queue;
 
     // Average course
     course: f64,
     course_weight: u16,
     course_samples: u16,
 
-    rotation_speed_ms: u32,
+    scanned_angle: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -203,6 +236,7 @@ pub(self) struct TargetSetup {
     spoke_len: i32,
     have_doppler: bool,
     pixels_per_meter: f64,
+    rotation_speed_ms: u32,
     stationary: bool,
 }
 
@@ -234,8 +268,8 @@ enum Error {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ArpaTarget {
-    pub m_status: TargetStatus,
+struct ArpaTarget {
+    m_status: TargetStatus,
 
     m_average_contour_length: i32,
     m_small_fast: bool,
@@ -243,7 +277,6 @@ pub(crate) struct ArpaTarget {
     m_lost_count: i32,
     m_refresh_time: u64,
     m_automatic: bool,
-    m_polar_pos: Polar,
     m_radar_pos: GeoPosition,
     m_course: f64,
     m_stationary: i32,
@@ -263,7 +296,7 @@ pub(crate) struct ArpaTarget {
 }
 
 impl HistorySpoke {
-    fn new(sweep: Vec<u8>, time: u64, pos: GeoPosition) -> Self {
+    fn new(sweep: Vec<HistoryPixel>, time: u64, pos: GeoPosition) -> Self {
         Self { sweep, time, pos }
     }
 }
@@ -274,7 +307,7 @@ impl HistorySpokes {
         Self {
             spokes: Box::new(vec![
                 HistorySpoke::new(
-                    vec![0; spoke_len as usize],
+                    vec![HistoryPixel::new(); spoke_len as usize],
                     0,
                     GeoPosition::new(0., 0.)
                 );
@@ -307,20 +340,20 @@ impl HistorySpokes {
             }
         }
         let history = self.spokes[angle].sweep[rad];
-        let bit0 = (history & 0x80) != 0; // above threshold bit
-        let bit1 = (history & 0x40) != 0; // backup bit does not get cleared when target is refreshed
-        let bit2 = (history & 0x20) != 0; // this is Doppler approaching bit
-        let bit3 = (history & 0x10) != 0; // this is Doppler receding bit
+        let target = history.contains(HistoryPixel::TARGET); // above threshold bit
+        let backup = history.contains(HistoryPixel::BACKUP); // backup bit does not get cleared when target is refreshed
+        let approaching = history.contains(HistoryPixel::APPROACHING); // this is Doppler approaching bit
+        let receding = history.contains(HistoryPixel::RECEDING); // this is Doppler receding bit
 
         match doppler {
-            Doppler::ANY => bit0,
-            Doppler::NO_DOPPLER => bit0 && !bit2 && !bit3,
-            Doppler::APPROACHING => bit2,
-            Doppler::RECEDING => bit3,
-            Doppler::ANY_DOPPLER => bit2 || bit3,
-            Doppler::NOT_RECEDING => bit0 && !bit3,
-            Doppler::NOT_APPROACHING => bit0 && !bit2,
-            Doppler::ANY_PLUS => bit1,
+            Doppler::ANY => target,
+            Doppler::NO_DOPPLER => target && !approaching && !receding,
+            Doppler::APPROACHING => approaching,
+            Doppler::RECEDING => receding,
+            Doppler::ANY_DOPPLER => approaching || receding,
+            Doppler::NOT_RECEDING => target && !receding,
+            Doppler::NOT_APPROACHING => target && !approaching,
+            Doppler::ANY_PLUS => backup,
         }
     }
 
@@ -413,7 +446,8 @@ impl HistorySpokes {
         for a in min_angle.angle..=max_angle.angle {
             let a_normalized = self.mod_spokes(a);
             for r in min_r.r..=max_r.r {
-                self.spokes[a_normalized].sweep[r as usize] &= 0x3f;
+                self.spokes[a_normalized].sweep[r as usize]
+                    .intersection(HistoryPixel::NO_TARGET | HistoryPixel::CONTOUR);
             }
         }
         return false;
@@ -630,6 +664,7 @@ impl HistorySpokes {
         self.get_contour(doppler, pol)
     }
 
+    //
     // resets the pixels of the current blob (plus DISTANCE_BETWEEN_TARGETS) so that blob will not be found again in the same sweep
     // We not only reset the blob but all pixels in a radial "square" covering the blob
     fn reset_pixels(&mut self, contour: &Contour, pos: &Polar, pixels_per_meter: &f64) {
@@ -647,7 +682,8 @@ impl HistorySpokes {
                     self.spokes[0].sweep.len() as i32 - 1,
                 )
             {
-                self.spokes[a].sweep[r as usize] &= 0x40; // also clear both Doppler bits
+                self.spokes[a].sweep[r as usize].intersection(HistoryPixel::BACKUP);
+                // also clear both Doppler bits
             }
         }
 
@@ -663,10 +699,16 @@ impl HistorySpokes {
                 for r in
                     contour.max_r as usize..=min(4 * contour.max_r as usize, self.spokes.len() - 1)
                 {
-                    self.spokes[a].sweep[r] &= 0x40;
+                    self.spokes[a].sweep[r].intersection(HistoryPixel::BACKUP);
                     // also clear both Doppler bits
                 }
             }
+        }
+
+        // Draw the contour in the history. This is copied to the output data
+        // on the next sweep.
+        for p in &contour.contour {
+            self.spokes[p.angle as usize].sweep[p.r as usize].insert(HistoryPixel::CONTOUR);
         }
     }
 }
@@ -720,25 +762,28 @@ impl TargetSetup {
 }
 
 impl TargetBuffer {
-    pub fn new(radar_id: usize, spokes: usize, spoke_len: usize, have_doppler: bool) -> Self {
+    pub fn new(info: &RadarInfo) -> Self {
         let stationary = GLOBAL_ARGS.stationary;
-        let spokes = spokes as i32;
-        let spoke_len = spoke_len as i32;
+        let spokes = info.spokes as i32;
+        let spoke_len = info.max_spoke_len as i32;
 
         TargetBuffer {
             setup: TargetSetup {
-                radar_id,
+                radar_id: info.id,
                 spokes,
                 spokes_f64: spokes as f64,
                 spoke_len,
-                have_doppler,
+                have_doppler: info.doppler,
                 pixels_per_meter: 0.0,
+
+                rotation_speed_ms: 0,
                 stationary,
             },
             next_target_id: 0,
+            arpa_via_doppler: false,
 
             history: HistorySpokes::new(spokes, spoke_len),
-            targets: Rc::new(RefCell::new(HashMap::new())),
+            targets: Arc::new(RwLock::new(HashMap::new())),
             m_clear_contours: false,
             m_auto_learn_state: 0,
 
@@ -746,16 +791,20 @@ impl TargetBuffer {
             course_weight: 0,
             course_samples: 0,
 
-            rotation_speed_ms: 0,
+            scanned_angle: -1,
         }
     }
 
     pub fn set_rotation_speed(&mut self, ms: u32) {
-        self.rotation_speed_ms = ms;
+        self.setup.rotation_speed_ms = ms;
     }
 
-    pub fn set_pixels_per_meter(&mut self, pixels_per_meter: f64) {
-        self.setup.pixels_per_meter = pixels_per_meter;
+    pub fn set_arpa_via_doppler(&mut self, arpa: bool) -> Result<(), ControlError> {
+        if arpa && !self.setup.have_doppler {
+            return Err(ControlError::NotSupported(ControlType::DopplerAutoTrack));
+        }
+        self.arpa_via_doppler = arpa;
+        Ok(())
     }
 
     fn reset_history(&mut self) {
@@ -763,7 +812,7 @@ impl TargetBuffer {
     }
 
     fn clear_contours(&mut self) {
-        for (_, t) in self.targets.borrow_mut().iter_mut() {
+        for (_, t) in self.targets.write().unwrap().iter_mut() {
             t.contour.length = 0;
             t.m_average_contour_length = 0;
         }
@@ -786,7 +835,7 @@ impl TargetBuffer {
     fn find_target_id_by_position(&self, pos: &GeoPosition) -> Option<usize> {
         let mut best_id = None;
         let mut min_dist = 1000.;
-        for (id, target) in self.targets.borrow().iter() {
+        for (id, target) in self.targets.read().unwrap().iter() {
             if target.m_status != TargetStatus::LOST {
                 let dif_lat = pos.lat - target.position.pos.lat;
                 let dif_lon = (pos.lon - target.position.pos.lon) * pos.lat.to_radians().cos();
@@ -808,7 +857,7 @@ impl TargetBuffer {
     /// Delete the target that is closest to the position   
     fn delete_target(&mut self, pos: &GeoPosition) {
         if let Some(id) = self.find_target_id_by_position(pos) {
-            self.targets.borrow_mut().remove(&id);
+            self.targets.write().unwrap().remove(&id);
         } else {
             log::debug!(
                 "Could not find (M)ARPA target to delete within 1000 meters from {}",
@@ -834,72 +883,33 @@ impl TargetBuffer {
         let id = self.get_next_target_id();
         let target = ArpaTarget::new(
             target_pos,
+            GeoPosition::new(0., 0.),
             id,
             self.setup.spokes as usize,
             status,
             self.setup.have_doppler,
         );
-        self.targets.borrow_mut().insert(id, target);
+        self.targets.write().unwrap().insert(id, target);
     }
 
-    /*
-    void RadarArpa::DrawArpaTargetsPanel(double scale, double arpa_rotate) {
-      wxPoint boat_center;
-      GeoPosition radar_pos, target_pos;
-      double offset_lat = 0.;
-      double offset_lon = 0.;
-
-      if (!m_pi.m_settings.drawing_method && m_ri->GetRadarPosition(&radar_pos)) {
-        m_ri->GetRadarPosition(&radar_pos);
-        for (auto target = m_targets.cbegin(); target != m_targets.cend(); target++) {
-          if ((*target).m_status == LOST) {
-            continue;
-          }
-          target_pos = (*target).m_radar_pos;
-          offset_lat = (radar_pos.lat - target_pos.lat) * 60. * 1852. * m_ri.m_panel_zoom / m_ri.m_range.GetValue();
-          offset_lon = (radar_pos.lon - target_pos.lon) * 60. * 1852. * cos(deg2rad(target_pos.lat)) * m_ri.m_panel_zoom /
-                       m_ri.m_range.GetValue();
-          glPushMatrix();
-          glRotated(arpa_rotate, 0.0, 0.0, 1.0);
-          glTranslated(-offset_lon, offset_lat, 0);
-          glScaled(scale, scale, 1.);
-          DrawContour(target->get());
-          glPopMatrix();
-        }
-      }
-
-      else {
-        glPushMatrix();
-        glTranslated(0., 0., 0.);
-        glRotated(arpa_rotate, 0.0, 0.0, 1.0);
-        glScaled(scale, scale, 1.);
-        for (auto target = m_targets.cbegin(); target != m_targets.cend(); target++) {
-          if ((*target).m_status != LOST) {
-            DrawContour(target->get());
-          }
-        }
-        glPopMatrix();
-      }
-    }
-      */
-
-    pub(crate) fn cleanup_lost_targets(&mut self) {
+    fn cleanup_lost_targets(&mut self) {
         // remove targets with status LOST
         self.targets
-            .borrow_mut()
+            .write()
+            .unwrap()
             .retain(|_, t| t.m_status != TargetStatus::LOST);
-        for (_, v) in self.targets.borrow_mut().iter_mut() {
+        for (_, v) in self.targets.write().unwrap().iter_mut() {
             v.m_refreshed = RefreshState::NotFound;
         }
     }
 
-    pub(crate) fn refresh_all_arpa_targets(&mut self) {
+    fn refresh_all_arpa_targets(&mut self) {
         if self.setup.pixels_per_meter == 0. {
             return;
         }
         log::debug!(
             "***refresh loop start m_targets.size={}",
-            self.targets.borrow().len()
+            self.targets.read().unwrap().len()
         );
         self.cleanup_lost_targets();
 
@@ -924,7 +934,7 @@ impl TargetBuffer {
                 Pass::Third => search_radius,
             };
 
-            for (_id, target) in self.targets.borrow_mut().iter_mut() {
+            for (_id, target) in self.targets.write().unwrap().iter_mut() {
                 if pass == Pass::First
                     && !((target.position.speed_kn >= 2.5
                         && target.age_rotations >= TODO_TARGET_AGE_TO_MIXER)
@@ -954,6 +964,10 @@ impl TargetBuffer {
                 }
             }
         }
+    }
+
+    pub fn delete_all_targets(&mut self) {
+        self.targets.write().unwrap().clear();
     }
 
     /**
@@ -1018,11 +1032,6 @@ impl TargetBuffer {
       return;
     }
     */
-
-    fn delete_all_targets(&mut self) {
-        self.targets.borrow_mut().clear();
-    }
-
     /*
 
     bool RadarArpa::AcquireNewARPATarget(Polar pol, int status, Doppler doppler) {
@@ -1199,6 +1208,66 @@ impl TargetBuffer {
         }
     }
 
+    fn acquire_new_arpa_target(
+        &mut self,
+        pol: Polar,
+        own_pos: GeoPosition,
+        time: u64,
+        status: TargetStatus,
+        doppler: &Doppler,
+    ) {
+        let epos = ExtendedPosition::new(own_pos, 0., 0., time, 0., 0.);
+        let epos = self.setup.polar2pos(&pol, &epos);
+        let uid = self.get_next_target_id();
+
+        let target = ArpaTarget::new(
+            epos,
+            own_pos,
+            uid,
+            self.setup.spokes as usize,
+            status,
+            *doppler == Doppler::ANY_DOPPLER,
+        );
+        //target->RefreshTarget(TARGET_SEARCH_RADIUS1, 1);
+
+        self.targets.write().unwrap().insert(uid, target);
+    }
+
+    ///
+    /// Work on the targets when spoke `angle` has just been processed.
+    /// We look for targets on the opposite side, so one half rotation ago.
+    fn work(&mut self, angle: usize) {
+        let opposite_angle = self.setup.mod_spokes(angle as i32 + self.setup.spokes / 2);
+
+        if self.scanned_angle == -1 {
+            self.scanned_angle = angle as i32 + 1;
+        }
+
+        let mut angle = self.scanned_angle;
+        loop {
+            angle = self.setup.mod_spokes(angle + 2);
+            if angle >= opposite_angle {
+                break;
+            }
+
+            for r in 20..self.setup.spoke_len - 20 {
+                if self.history.multi_pix(&Doppler::ANY_DOPPLER, angle, r) {
+                    let time = self.history.spokes[angle as usize].time.clone();
+                    let pol = Polar::new(angle, r, time);
+                    let own_pos = self.history.spokes[angle as usize].pos.clone();
+
+                    self.acquire_new_arpa_target(
+                        pol,
+                        own_pos,
+                        time,
+                        TargetStatus::Acquire0,
+                        &Doppler::ANY_DOPPLER,
+                    );
+                }
+            }
+        }
+    }
+
     pub(crate) fn process_spoke(&mut self, spoke: &mut Spoke, legend: &Legend) {
         let time = spoke.time.unwrap();
 
@@ -1206,11 +1275,9 @@ impl TargetBuffer {
         // TODO self.m_previous_angle = self.mod_spokes(spoke.angle);
         self.sample_course(&spoke.bearing); // Calculate course as the moving average of m_hdt over one revolution
 
-        let pos = match crate::signalk::get_radar_position() {
-            Some(p) => p,
-            None => {
-                return;
-            }
+        let pos = GeoPosition {
+            lat: spoke.lat.unwrap() as f64 * 1e-16,
+            lon: spoke.lon.unwrap() as f64 * 1e-16,
         };
 
         // TODO main bang size erase
@@ -1253,7 +1320,7 @@ impl TargetBuffer {
         for radius in 0..spoke.data.len() {
             if spoke.data[radius] >= weakest_normal_blob {
                 // and add 1 if above threshold and set the left 0 and 1 bits, used for ARPA
-                self.history.spokes[angle].sweep[radius] = 0xC0; // 1100 0000
+                self.history.spokes[angle].sweep[radius] = HistoryPixel::INITIAL; // 1100 0000
                 if background_on {
                     if let Some(layer) = self.history.stationary_layer.as_deref_mut() {
                         if layer[[angle, radius]] < u8::MAX {
@@ -1267,14 +1334,22 @@ impl TargetBuffer {
             if spoke.data[radius] == legend.doppler_approaching {
                 //  approaching doppler target (255)
                 // and add 1 if above threshold and set bit 2, used for ARPA
-                self.history.spokes[angle].sweep[radius] = 0xE0; // this is  1110 0000, bit 2 indicates this is a doppler approaching target
+                self.history.spokes[angle].sweep[radius].insert(HistoryPixel::APPROACHING);
             }
+
             if spoke.data[radius] == legend.doppler_receding {
                 //  receding doppler target (254)
                 // and add 1 if above threshold and set bit 3, used for ARPA
-                self.history.spokes[angle].sweep[radius] = 0xD0; // this is  1101 0000, bit 3 indicates this is a doppler receding target
+                self.history.spokes[angle].sweep[radius].insert(HistoryPixel::RECEDING);
+            }
+
+            // Draw the contour
+            if self.history.spokes[angle].sweep[radius].contains(HistoryPixel::CONTOUR) {
+                spoke.data[radius] = legend.border;
             }
         }
+
+        self.work(angle);
 
         // TODO GUARD ZONES
         #[cfg(GuardZones)]
@@ -1301,8 +1376,9 @@ impl Contour {
 }
 
 impl ArpaTarget {
-    pub fn new(
+    fn new(
         position: ExtendedPosition,
+        radar_pos: GeoPosition,
         uid: usize,
         spokes: usize,
         m_status: TargetStatus,
@@ -1317,8 +1393,7 @@ impl ArpaTarget {
             m_lost_count: 0,
             m_refresh_time: 0,
             m_automatic: false,
-            m_polar_pos: Polar::new(0, 0, 0),
-            m_radar_pos: GeoPosition::new(0., 0.),
+            m_radar_pos: radar_pos,
             m_course: 0.,
             m_stationary: 0,
             m_doppler_target: Doppler::ANY,
@@ -1414,7 +1489,7 @@ impl ArpaTarget {
         return Ok(target);
     }
 
-    pub fn refresh_target(
+    fn refresh_target(
         mut target: ArpaTarget,
         setup: &TargetSetup,
         history: &mut HistorySpokes,
@@ -1442,8 +1517,7 @@ impl ArpaTarget {
         let angle_time = history.spokes[setup.mod_spokes(pol.angle + scan_margin) as usize].time;
         // angle_time is the time of a spoke SCAN_MARGIN spokes forward of the target, if that spoke is refreshed we assume that the target has been refreshed
 
-        // let now = wxGetUTCTimeMillis();  // millis
-        let mut rotation_period = 2500; // TODO!
+        let mut rotation_period = setup.rotation_speed_ms as u64;
         if rotation_period == 0 {
             rotation_period = 2500; // default value
         }
@@ -1710,8 +1784,8 @@ impl ArpaTarget {
                     }
 
                     log::debug!("FOUND {:?} CYCLE id={}, status={:?}, age={}, angle={}.{}, r={}.{}, contour={}, speed={}, sd_speed_kn={}, doppler={:?}",
-              pass, target.m_target_id, target.m_status, target.age_rotations, alfa0, pol.angle, r0, pol.r, target.contour.length, target.position.speed_kn,
-              target.position.sd_speed_kn, target.m_doppler_target);
+                        pass, target.m_target_id, target.m_status, target.age_rotations, alfa0, pol.angle, r0, pol.r, target.contour.length, target.position.speed_kn,
+                        target.position.sd_speed_kn, target.m_doppler_target);
 
                     target.m_previous_contour_length = target.contour.length;
                     // send target data to OCPN and other radar
@@ -1761,18 +1835,17 @@ impl ArpaTarget {
         self.m_receding_pix = 0;
         for i in 0..self.contour.contour.len() {
             for radius in 0..history.spokes[0].sweep.len() {
-                let byte =
+                let pixel =
                     history.spokes[history.mod_spokes(self.contour.contour[i].angle)].sweep[radius];
-                let bit0 = (byte & 0x80) != 0; // above threshold bit
-                if !bit0 {
+                let target = pixel.contains(HistoryPixel::TARGET); // above threshold bit
+                if !target {
                     break;
                 }
-                // bit1 = (byte & 0x40) >> 6;  // backup bit does not get cleared when target is refreshed
-                let bit2 = (byte & 0x20) != 0; // this is Doppler approaching bit
-                let bit3 = (byte & 0x10) != 0; // this is Doppler receding bit
-                self.m_total_pix += bit0 as u32;
-                self.m_approaching_pix += bit2 as u32;
-                self.m_receding_pix += bit3 as u32;
+                let approaching = pixel.contains(HistoryPixel::APPROACHING); // this is Doppler approaching bit
+                let receding = pixel.contains(HistoryPixel::RECEDING); // this is Doppler receding bit
+                self.m_total_pix += target as u32;
+                self.m_approaching_pix += approaching as u32;
+                self.m_receding_pix += receding as u32;
             }
         }
     }

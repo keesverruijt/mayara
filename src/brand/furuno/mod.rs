@@ -327,6 +327,7 @@ impl FurunoLocatorState {
                         report_addr,
                         send_command_addr,
                         settings::new(),
+                        true,
                     );
                     let key = location_info.key();
                     if found(location_info, radars, subsys) {

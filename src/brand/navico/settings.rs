@@ -254,6 +254,11 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
             Control::new_list(ControlType::Doppler, &["Off", "Normal", "Approaching"]),
         );
         controls.insert(
+            ControlType::DopplerAutoTrack,
+            Control::new_list(ControlType::DopplerAutoTrack, &["Off", "On"])
+                .set_destination(ControlDestination::Data),
+        );
+        controls.insert(
             ControlType::DopplerSpeedThreshold,
             Control::new_numeric(ControlType::DopplerSpeedThreshold, 0., 99.)
                 .wire_scale_factor(99. * 16., true)

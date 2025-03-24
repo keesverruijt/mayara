@@ -196,6 +196,7 @@ impl RaymarineLocatorState {
                         radar_addr.into(),
                         radar_send.into(),
                         settings::new(info.model_name.as_deref()),
+                        true, // TODO: Only for Quantum2
                     );
 
                     return Ok(Some(location_info));

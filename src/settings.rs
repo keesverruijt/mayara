@@ -114,6 +114,12 @@ impl Controls {
             Control::new_button(ControlType::ClearTrails).set_destination(ControlDestination::Data),
         );
 
+        controls.insert(
+            ControlType::ClearTargets,
+            Control::new_button(ControlType::ClearTargets)
+                .set_destination(ControlDestination::Data),
+        );
+
         let (all_clients_tx, _) = tokio::sync::broadcast::channel(32);
         let (control_update_tx, _) = tokio::sync::broadcast::channel(32);
         let (data_update_tx, _) = tokio::sync::broadcast::channel(10);
@@ -1135,7 +1141,7 @@ pub enum ControlType {
     Rain,
     // Scaling,
     Doppler,
-    // DopplerAutoTrack,
+    DopplerAutoTrack,
     DopplerSpeedThreshold,
     // Client Only, not here: ColorPalette,
     // Client Only, not here: Orientation,
@@ -1145,6 +1151,7 @@ pub enum ControlType {
     TrailsMotion,
     DopplerTrailsOnly,
     ClearTrails,
+    ClearTargets,
     // TimedIdle,
     // TimedRun,
     NoiseRejection,
@@ -1194,10 +1201,11 @@ impl Display for ControlType {
             // ControlType::AntennaStarboard => "Antenna starboard of GPS",
             ControlType::BearingAlignment => "Bearing alignment",
             // ControlType::ColorGain => "Color gain",
+            ControlType::ClearTargets => "Clear targets",
             ControlType::ClearTrails => "Clear trails",
             // ControlType::DisplayTiming => "Display timing",
             ControlType::Doppler => "Doppler",
-            // ControlType::DopplerAutoTrack => "Doppler Auto Track",
+            ControlType::DopplerAutoTrack => "Doppler Auto Track",
             ControlType::DopplerSpeedThreshold => "Doppler speed threshold",
             ControlType::DopplerTrailsOnly => "Doppler trails only",
             ControlType::FirmwareVersion => "Firmware version",

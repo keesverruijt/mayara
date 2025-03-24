@@ -306,6 +306,7 @@ fn process_beacon_report(
                         radar_report.into(),
                         radar_send.into(),
                         settings::new(None),
+                        true,
                     );
                     found(location_info, radars, subsys);
 
@@ -326,6 +327,7 @@ fn process_beacon_report(
                         radar_report.into(),
                         radar_send.into(),
                         settings::new(None),
+                        true,
                     );
                     found(location_info, radars, subsys);
                 }
@@ -360,6 +362,7 @@ fn process_beacon_report(
                         radar_report.into(),
                         radar_send.into(),
                         settings::new(None),
+                        false,
                     );
                     found(location_info, radars, subsys);
                 }
@@ -394,6 +397,7 @@ fn process_beacon_report(
                         radar_report.into(),
                         radar_send.into(),
                         settings::new(Some(BR24_MODEL_NAME)),
+                        false,
                     );
                     found(location_info, radars, subsys);
                 }
