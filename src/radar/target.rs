@@ -225,8 +225,16 @@ pub struct TargetBuffer {
     course_weight: u16,
     course_samples: u16,
 
+    // If we have just received angle <n>
+    // then we look for refreshed targets in <n + spokes/4> .. <n + spokes / 2>
     scanned_angle: i32,
+    // and we scan for new targets at <n + 3/4 * spokes> (SCAN_FOR_NEW_PERCENTAGE)
+    refreshed_angle: i32,
 }
+
+const REFRESH_START_PERCENTAGE: i32 = 25;
+const REFRESH_END_PERCENTAGE: i32 = 50;
+const SCAN_FOR_NEW_PERCENTAGE: i32 = 75;
 
 #[derive(Debug, Clone)]
 pub(self) struct TargetSetup {
@@ -265,6 +273,21 @@ enum Error {
     Lost,
     WeightedContourLengthTooHigh,
     WaitForRefresh,
+}
+
+#[derive(Debug, Clone)]
+struct Sector {
+    start_angle: i32,
+    end_angle: i32,
+}
+
+impl Sector {
+    fn new(start_angle: i32, end_angle: i32) -> Self {
+        Sector {
+            start_angle,
+            end_angle,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -459,7 +482,7 @@ impl HistorySpokes {
     fn find_contour_from_inside(&mut self, doppler: &Doppler, pol: &mut Polar) -> bool {
         let mut ang = pol.angle;
         let rad = pol.r;
-        let mut limit = self.spokes.len();
+        let mut limit = self.spokes.len() as i32 / 8;
 
         if !self.pix(doppler, ang, rad) {
             return false;
@@ -792,6 +815,7 @@ impl TargetBuffer {
             course_samples: 0,
 
             scanned_angle: -1,
+            refreshed_angle: -1,
         }
     }
 
@@ -903,14 +927,14 @@ impl TargetBuffer {
         }
     }
 
-    fn refresh_all_arpa_targets(&mut self) {
+    ///
+    /// Refresh all targets between two angles
+    ///
+    fn refresh_all_arpa_targets(&mut self, start_angle: i32, end_angle: i32) {
         if self.setup.pixels_per_meter == 0. {
             return;
         }
-        log::debug!(
-            "***refresh loop start m_targets.size={}",
-            self.targets.read().unwrap().len()
-        );
+        log::debug!("refresh_all_arpa_targets({}, {})", start_angle, end_angle);
         self.cleanup_lost_targets();
 
         // main target refresh loop
@@ -935,6 +959,13 @@ impl TargetBuffer {
             };
 
             for (_id, target) in self.targets.write().unwrap().iter_mut() {
+                if !target
+                    .contour
+                    .position
+                    .angle_is_between(start_angle, end_angle)
+                {
+                    continue;
+                }
                 if pass == Pass::First
                     && !((target.position.speed_kn >= 2.5
                         && target.age_rotations >= TODO_TARGET_AGE_TO_MIXER)
@@ -1233,20 +1264,23 @@ impl TargetBuffer {
         self.targets.write().unwrap().insert(uid, target);
     }
 
-    ///
     /// Work on the targets when spoke `angle` has just been processed.
-    /// We look for targets on the opposite side, so one half rotation ago.
-    fn work(&mut self, angle: usize) {
-        let opposite_angle = self.setup.mod_spokes(angle as i32 + self.setup.spokes / 2);
+    /// We look for targets a while back, so one quarter rotation ago.
+    fn detect_doppler_arpa(&mut self, angle: usize) {
+        let end_angle = self
+            .setup
+            .mod_spokes(angle as i32 + SCAN_FOR_NEW_PERCENTAGE * self.setup.spokes / 100);
 
         if self.scanned_angle == -1 {
-            self.scanned_angle = angle as i32 + 1;
+            self.scanned_angle = self
+                .setup
+                .mod_spokes(angle as i32 + REFRESH_END_PERCENTAGE * self.setup.spokes / 100);
         }
 
         let mut angle = self.scanned_angle;
         loop {
             angle = self.setup.mod_spokes(angle + 2);
-            if angle >= opposite_angle {
+            if angle >= end_angle {
                 break;
             }
 
@@ -1266,31 +1300,50 @@ impl TargetBuffer {
                 }
             }
         }
+        self.scanned_angle = angle;
+    }
+
+    /// Work on the targets when spoke `angle` has just been processed.
+    /// Refresh older targets from 3 quarters to 2 quarters before what is just received.
+    fn refresh_targets(&mut self, angle: usize) {
+        let end_angle = self
+            .setup
+            .mod_spokes(angle as i32 + REFRESH_END_PERCENTAGE * self.setup.spokes / 100);
+
+        if self.refreshed_angle == -1 {
+            self.refreshed_angle = self
+                .setup
+                .mod_spokes(angle as i32 + REFRESH_START_PERCENTAGE * self.setup.spokes / 100);
+        }
+
+        self.refresh_all_arpa_targets(self.refreshed_angle, end_angle);
+        self.refreshed_angle = end_angle;
     }
 
     pub(crate) fn process_spoke(&mut self, spoke: &mut Spoke, legend: &Legend) {
-        let time = spoke.time.unwrap();
-
-        // TODO self.m_last_received_spoke = self.mod_spokes(spoke.bearing);
-        // TODO self.m_previous_angle = self.mod_spokes(spoke.angle);
-        self.sample_course(&spoke.bearing); // Calculate course as the moving average of m_hdt over one revolution
-
-        let pos = GeoPosition {
-            lat: spoke.lat.unwrap() as f64 * 1e-16,
-            lon: spoke.lon.unwrap() as f64 * 1e-16,
-        };
-
-        // TODO main bang size erase
-
-        // Recompute 'pixels_per_meter' based on the actual spoke length and range in meters.
         if spoke.range == 0 {
             return;
         }
 
+        let pos = if let (Some(lat), Some(lon)) = (spoke.lat, spoke.lon) {
+            GeoPosition {
+                lat: lat as f64 * 1e-16,
+                lon: lon as f64 * 1e-16,
+            }
+        } else {
+            log::trace!("No radar pos, no (M)ARPA possible");
+            return;
+        };
+
+        let time = spoke.time.unwrap();
+        self.sample_course(&spoke.bearing); // Calculate course as the moving average of m_hdt over one revolution
+
+        // TODO main bang size erase
         // TODO: Range Adjustment compensation
+
         let pixels_per_meter = spoke.data.len() as f64 / spoke.range as f64;
 
-        if (self.setup.pixels_per_meter != pixels_per_meter) {
+        if self.setup.pixels_per_meter != pixels_per_meter {
             log::debug!(
                 " detected spoke range change from {} to {} pixels/m, {} meters",
                 self.setup.pixels_per_meter,
@@ -1349,7 +1402,8 @@ impl TargetBuffer {
             }
         }
 
-        self.work(angle);
+        self.detect_doppler_arpa(angle);
+        self.refresh_targets(angle);
 
         // TODO GUARD ZONES
         #[cfg(GuardZones)]

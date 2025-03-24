@@ -34,6 +34,18 @@ impl Polar {
     pub fn angle_in_rad(&self, spokes: f64) -> f64 {
         self.angle as f64 * PI / 180. / spokes
     }
+
+    // Is the polar angle between start and end, where
+    // start and end are normalized on some polar angle [0..n>.
+    pub fn angle_is_between(&self, start: i32, end: i32) -> bool {
+        if self.angle >= start && self.angle < end {
+            return true;
+        }
+        if end < start && (self.angle >= end || self.angle < start) {
+            return true;
+        }
+        false
+    }
 }
 
 impl Add for Polar {
