@@ -368,7 +368,7 @@ impl FurunoDataReceiver {
         let heading: Option<u32> = if metadata.have_heading > 0 {
             Some(heading as u32)
         } else {
-            let heading = crate::signalk::get_heading_true();
+            let heading = crate::navdata::get_heading_true();
             heading.map(|h| h as u32)
         };
 
@@ -378,7 +378,7 @@ impl FurunoDataReceiver {
         spoke.angle = angle as u32;
         spoke.bearing = heading;
 
-        (spoke.lat, spoke.lon) = crate::signalk::get_position_i64();
+        (spoke.lat, spoke.lon) = crate::navdata::get_position_i64();
         spoke.time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)

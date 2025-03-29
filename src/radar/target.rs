@@ -13,9 +13,10 @@ use kalman::{KalmanFilter, LocalPosition, Polar};
 use ndarray::Array2;
 
 use crate::{
+    navdata,
     protos::RadarMessage::radar_message::Spoke,
     settings::{ControlError, ControlType},
-    signalk, GLOBAL_ARGS,
+    GLOBAL_ARGS,
 };
 
 use super::{GeoPosition, Legend, RadarInfo, SpokeBearing};
@@ -1219,7 +1220,7 @@ impl TargetBuffer {
     fn sample_course(&mut self, bearing: &Option<u32>) {
         let hdt = bearing
             .map(|x| x as f64 / self.setup.spokes_f64)
-            .or_else(|| signalk::get_heading_true());
+            .or_else(|| navdata::get_heading_true());
 
         if let Some(mut hdt) = hdt {
             self.course_samples += 1;
@@ -1551,7 +1552,7 @@ impl ArpaTarget {
         pass: Pass,
     ) -> Result<Self, Error> {
         // refresh may be called from guard directly, better check
-        let own_pos = crate::signalk::get_radar_position();
+        let own_pos = crate::navdata::get_radar_position();
         if target.m_status == TargetStatus::LOST
             || target.m_refreshed == RefreshState::OutOfScope
             || own_pos.is_none()

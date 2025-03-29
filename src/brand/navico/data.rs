@@ -496,7 +496,7 @@ impl NavicoDataReceiver {
         let heading = if heading.is_some() {
             heading.map(|h| (((h / 2) + angle) % (NAVICO_SPOKES as u16)) as u32)
         } else {
-            let heading = crate::signalk::get_heading_true();
+            let heading = crate::navdata::get_heading_true();
             heading.map(|h| {
                 (((h * NAVICO_SPOKES as f64 / (2. * PI)) as u16 + angle) % (NAVICO_SPOKES as u16))
                     as u32
@@ -512,7 +512,7 @@ impl NavicoDataReceiver {
         spoke.angle = angle as u32;
         spoke.bearing = heading;
 
-        (spoke.lat, spoke.lon) = crate::signalk::get_position_i64();
+        (spoke.lat, spoke.lon) = crate::navdata::get_position_i64();
         spoke.time = time;
         spoke.data = generic_spoke;
 

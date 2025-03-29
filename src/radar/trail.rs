@@ -144,7 +144,7 @@ impl TrailBuffer {
             if !self.have_heading {
                 return Err(ControlError::NoHeading(ControlType::TrailsMotion, "True"));
             }
-            if crate::signalk::get_radar_position().is_none() {
+            if crate::navdata::get_radar_position().is_none() {
                 return Err(ControlError::NoPosition(ControlType::TrailsMotion, "True"));
             }
         }
@@ -312,7 +312,7 @@ impl TrailBuffer {
             self.zoom_true_trails(zoom_factor);
         }
 
-        if let Some(position) = crate::signalk::get_radar_position() {
+        if let Some(position) = crate::navdata::get_radar_position() {
             // Did the ship move? No, return.
             if self.position == position {
                 return;

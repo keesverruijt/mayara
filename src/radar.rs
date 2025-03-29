@@ -49,6 +49,8 @@ pub enum RadarError {
     NoSuchRadar(String),
     #[error("Cannot parse JSON '{0}'")]
     ParseJson(String),
+    #[error("Cannot parse NMEA0183 '{0}'")]
+    ParseNmea0183(String),
     #[error("IP address changed")]
     IPAddressChanged,
     #[cfg(windows)]

@@ -20,11 +20,11 @@ use web::Web;
 mod brand;
 mod config;
 mod locator;
+mod navdata;
 mod network;
 mod protos;
 mod radar;
 mod settings;
-mod signalk;
 mod util;
 mod web;
 
@@ -47,16 +47,23 @@ pub struct Cli {
     #[arg(short, long)]
     brand: Option<Brand>,
 
-    /// Limit Signal K location to a single interface
+    /// Set navigation service address, either
+    /// - Nothing: all interfaces will search via MDNS
+    /// - An interface name: only that interface will seach for via MDNS
+    /// - `udp-listen:ipv4-address:port` = listen on (broadcast) address at given port
     #[arg(short, long)]
-    signalk_interface: Option<String>,
+    navigation_address: Option<String>,
+
+    /// Use NMEA 0183 for navigation service instead of Signal K
+    #[arg(long)]
+    nmea0183: bool,
 
     /// Write RadarMessage data to stdout
     #[arg(long, default_value_t = false)]
     output: bool,
 
     /// Replay mode, see below
-    #[arg(long, default_value_t = false)]
+    #[arg(short, long, default_value_t = false)]
     replay: bool,
 
     /// Fake error mode, see below
@@ -206,9 +213,18 @@ async fn main() -> Result<()> {
     if GLOBAL_ARGS.output {
         warn!("Output mode activated; 'protobuf' formatted RadarMessage sent to stdout");
     }
+    if GLOBAL_ARGS.nmea0183 {
+        warn!(
+            "NMEA0183 mode activated; will load GPS position, heading and date/time from {}",
+            GLOBAL_ARGS
+                .navigation_address
+                .as_ref()
+                .unwrap_or(&"MDNS".to_string())
+        );
+    }
 
     Toplevel::new(|s| async move {
-        let signal_k = signalk::NavigationData::new();
+        let mut navdata = navdata::NavigationData::new();
 
         let (tx_interface_request, _) = broadcast::channel(10);
 
@@ -220,8 +236,8 @@ async fn main() -> Result<()> {
 
         let (tx_ip_change, rx_ip_change) = mpsc::channel(1);
 
-        s.start(SubsystemBuilder::new("SignalK", |a| async move {
-            signal_k.run(a, rx_ip_change).await
+        s.start(SubsystemBuilder::new("NavData", |a| async move {
+            navdata.run(a, rx_ip_change).await
         }));
         s.start(SubsystemBuilder::new("Locator", |a| {
             locator.run(a, tx_ip_change, tx_interface_request)
