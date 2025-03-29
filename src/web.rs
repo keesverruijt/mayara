@@ -1,9 +1,6 @@
 use axum::{
     debug_handler,
-    extract::{
-        ws::{Message, WebSocket},
-        ConnectInfo, Path, State, WebSocketUpgrade,
-    },
+    extract::{ConnectInfo, Path, State},
     http::Uri,
     response::{IntoResponse, Response},
     routing::get,
@@ -24,6 +21,11 @@ use std::{
 use thiserror::Error;
 use tokio::{net::TcpListener, sync::broadcast, sync::mpsc};
 use tokio_graceful_shutdown::SubsystemHandle;
+use tungstenite::extensions::DeflateConfig;
+
+mod axum_fix;
+
+use axum_fix::{Message, WebSocket, WebSocketUpgrade};
 
 use crate::{
     radar::{Legend, RadarInfo, SharedRadars},
@@ -234,6 +236,8 @@ async fn spokes_handler(
 ) -> Response {
     debug!("stream request from {} for {}", addr, params.key);
 
+    let ws = ws.accept_compression(true);
+
     match state.radars.find_radar_info(&params.key) {
         Ok(radar) => {
             let shutdown_rx = state.shutdown_tx.subscribe();
@@ -288,6 +292,8 @@ async fn control_handler(
     ws: WebSocketUpgrade,
 ) -> Response {
     debug!("control request from {} for {}", addr, params.key);
+
+    let ws = ws.accept_compression(true);
 
     match state.radars.find_radar_info(&params.key) {
         Ok(radar) => {
