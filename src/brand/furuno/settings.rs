@@ -45,7 +45,7 @@ pub fn new() -> SharedControls {
 
     controls.insert(
         ControlType::OperatingHours,
-        Control::new_numeric(ControlType::OperatingHours, 0., f32::MAX)
+        Control::new_numeric(ControlType::OperatingHours, 0., 999999.)
             .read_only(true)
             .unit("h"),
     );

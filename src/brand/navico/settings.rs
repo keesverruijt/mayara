@@ -62,7 +62,7 @@ pub fn new(model: Option<&str>) -> SharedControls {
 
     controls.insert(
         ControlType::OperatingHours,
-        Control::new_numeric(ControlType::OperatingHours, 0., f32::MAX)
+        Control::new_numeric(ControlType::OperatingHours, 0., 999999.)
             .read_only(true)
             .unit("h"),
     );
@@ -106,7 +106,7 @@ pub fn new(model: Option<&str>) -> SharedControls {
 pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_info: &RadarInfo) {
     controls.set_model_name(model.to_string());
 
-    let mut control = Control::new_string(ControlType::SerialNumber);
+    let mut control = Control::new_string(ControlType::SerialNumber).read_only(true);
     if let Some(serial_number) = radar_info.serial_no.as_ref() {
         control.set_string(serial_number.to_string());
     }
@@ -138,7 +138,7 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
     }) * 1852.;
     let mut range_control = Control::new_numeric(ControlType::Range, 50., max_value)
         .unit("m")
-        .wire_scale_factor(10. * max_value, true); // Radar sends and receives in decimeters
+        .wire_scale_factor(10. * max_value, false); // Radar sends and receives in decimeters
     if let Some(range_detection) = &radar_info.range_detection {
         if range_detection.complete {
             range_control.set_valid_values(range_detection.ranges.clone());

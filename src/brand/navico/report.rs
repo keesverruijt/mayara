@@ -573,6 +573,8 @@ impl NavicoReportReceiver {
                     .controls
                     .set_valid_values(&ControlType::Range, range_detection.ranges.clone())
                     .unwrap();
+
+                self.radars.update(&self.info);
             }
         }
 

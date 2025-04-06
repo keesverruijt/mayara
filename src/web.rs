@@ -96,6 +96,8 @@ impl Web {
             .with_state(self)
             .into_make_service_with_connect_info::<SocketAddr>();
 
+        log::info!("Starting HTTP web server on port {}", GLOBAL_ARGS.port);
+
         tokio::select! { biased;
             _ = subsys.on_shutdown_requested() => {
                 let _ = shutdown_tx.send(());
