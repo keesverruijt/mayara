@@ -76,8 +76,9 @@ function interfacesLoaded(d) {
         } else {
           d.brands.forEach((b) => {
             let status = interfaces[v].listeners[b];
-            van.add(row, td({ class: "myr" }, status));
-            console.log("v", v, "b", b, "status", status);
+            let className =
+              status == "Listening" || status == "Active" ? "myr" : "myr_error";
+            van.add(row, td({ class: className }, status));
           });
         }
       });
