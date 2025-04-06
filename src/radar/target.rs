@@ -1,10 +1,8 @@
 use bitflags::bitflags;
 use std::{
-    cell::RefCell,
     cmp::{max, min},
     collections::HashMap,
     f64::consts::PI,
-    rc::Rc,
     sync::{Arc, RwLock},
 };
 use strum::{EnumIter, IntoEnumIterator};
@@ -19,7 +17,7 @@ use crate::{
     GLOBAL_ARGS,
 };
 
-use super::{GeoPosition, Legend, RadarInfo, SpokeBearing};
+use super::{GeoPosition, Legend, RadarInfo};
 
 mod arpa;
 mod kalman;
@@ -137,14 +135,14 @@ ANY_DOPPLER -> APPROACHING or RECEDING
 */
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Doppler {
-    ANY,        // any target above threshold
-    NO_DOPPLER, // a target without a Doppler bit
-    APPROACHING,
-    RECEDING,
-    ANY_DOPPLER,     // APPROACHING or RECEDING
-    NOT_RECEDING,    // that is NO_DOPPLER or APPROACHING
-    NOT_APPROACHING, // that is NO_DOPPLER or RECEDING
-    ANY_PLUS,        // will also check bits that have been cleared
+    Any,            // any target above threshold
+    NoDoppler,      // a target without a Doppler bit
+    Approaching,    // Doppler approaching
+    Receding,       // Doppler receding
+    AnyDoppler,     // Approaching or Receding
+    NotReceding,    // that is NoDoppler or Approaching
+    NotApproaching, // that is NoDoppler or Receding
+    AnyPlus,        // will also check bits that have been cleared
 }
 
 const FOUR_DIRECTIONS: [Polar; 4] = [
@@ -370,14 +368,14 @@ impl HistorySpokes {
         let receding = history.contains(HistoryPixel::RECEDING); // this is Doppler receding bit
 
         match doppler {
-            Doppler::ANY => target,
-            Doppler::NO_DOPPLER => target && !approaching && !receding,
-            Doppler::APPROACHING => approaching,
-            Doppler::RECEDING => receding,
-            Doppler::ANY_DOPPLER => approaching || receding,
-            Doppler::NOT_RECEDING => target && !receding,
-            Doppler::NOT_APPROACHING => target && !approaching,
-            Doppler::ANY_PLUS => backup,
+            Doppler::Any => target,
+            Doppler::NoDoppler => target && !approaching && !receding,
+            Doppler::Approaching => approaching,
+            Doppler::Receding => receding,
+            Doppler::AnyDoppler => approaching || receding,
+            Doppler::NotReceding => target && !receding,
+            Doppler::NotApproaching => target && !approaching,
+            Doppler::AnyPlus => backup,
         }
     }
 
@@ -1258,7 +1256,7 @@ impl TargetBuffer {
             uid,
             self.setup.spokes as usize,
             status,
-            *doppler == Doppler::ANY_DOPPLER,
+            *doppler == Doppler::AnyDoppler,
         );
         //target->RefreshTarget(TARGET_SEARCH_RADIUS1, 1);
 
@@ -1286,7 +1284,7 @@ impl TargetBuffer {
             }
 
             for r in 20..self.setup.spoke_len - 20 {
-                if self.history.multi_pix(&Doppler::ANY_DOPPLER, angle, r) {
+                if self.history.multi_pix(&Doppler::AnyDoppler, angle, r) {
                     let time = self.history.spokes[angle as usize].time.clone();
                     let pol = Polar::new(angle, r, time);
                     let own_pos = self.history.spokes[angle as usize].pos.clone();
@@ -1296,7 +1294,7 @@ impl TargetBuffer {
                         own_pos,
                         time,
                         TargetStatus::Acquire0,
-                        &Doppler::ANY_DOPPLER,
+                        &Doppler::AnyDoppler,
                     );
                 }
             }
@@ -1451,7 +1449,7 @@ impl ArpaTarget {
             m_radar_pos: radar_pos,
             m_course: 0.,
             m_stationary: 0,
-            m_doppler_target: Doppler::ANY,
+            m_doppler_target: Doppler::Any,
             m_refreshed: RefreshState::NotFound,
             m_target_id: uid,
             m_transferred_target: false,
@@ -1666,7 +1664,7 @@ impl ArpaTarget {
 
         // here we really search for the target
         if pass == Pass::Third {
-            target.m_doppler_target = Doppler::ANY; // in the last pass we are not critical
+            target.m_doppler_target = Doppler::Any; // in the last pass we are not critical
         }
         let found = history.get_target(&target.m_doppler_target, pol.clone(), dist1); // main target search
 
@@ -1682,9 +1680,9 @@ impl ArpaTarget {
         target.m_target_id,
                  dist_angle, dist_radial, dist_total, pol.angle, starting_position.angle, target.m_doppler_target);
 
-                if target.m_doppler_target != Doppler::ANY {
+                if target.m_doppler_target != Doppler::Any {
                     let backup = target.m_doppler_target;
-                    target.m_doppler_target = Doppler::ANY;
+                    target.m_doppler_target = Doppler::Any;
                     let _ = history.get_target(&target.m_doppler_target, pol.clone(), dist1); // get the contour for the target ins ANY state
                     target.pixel_counter(history);
                     target.m_doppler_target = backup;
@@ -1907,7 +1905,7 @@ impl ArpaTarget {
 
     /// Check doppler state of targets if Doppler is on
     fn state_transition(&mut self) {
-        if !self.have_doppler || self.m_doppler_target == Doppler::ANY_PLUS {
+        if !self.have_doppler || self.m_doppler_target == Doppler::AnyPlus {
             return;
         }
 
@@ -1917,34 +1915,34 @@ impl ArpaTarget {
         let check_not_receding = ((self.m_total_pix - self.m_receding_pix) as f64 * 0.80) as u32;
 
         let new = match self.m_doppler_target {
-            Doppler::ANY_DOPPLER | Doppler::ANY => {
+            Doppler::AnyDoppler | Doppler::Any => {
                 // convert to APPROACHING or RECEDING
                 if self.m_approaching_pix > self.m_receding_pix
                     && self.m_approaching_pix > check_to_doppler
                 {
-                    &Doppler::APPROACHING
+                    &Doppler::Approaching
                 } else if self.m_receding_pix > self.m_approaching_pix
                     && self.m_receding_pix > check_to_doppler
                 {
-                    &Doppler::RECEDING
-                } else if self.m_doppler_target == Doppler::ANY_DOPPLER {
-                    &Doppler::ANY
+                    &Doppler::Receding
+                } else if self.m_doppler_target == Doppler::AnyDoppler {
+                    &Doppler::Any
                 } else {
                     &self.m_doppler_target
                 }
             }
 
-            Doppler::RECEDING => {
+            Doppler::Receding => {
                 if self.m_receding_pix < check_not_approaching {
-                    &Doppler::ANY
+                    &Doppler::Any
                 } else {
                     &self.m_doppler_target
                 }
             }
 
-            Doppler::APPROACHING => {
+            Doppler::Approaching => {
                 if self.m_approaching_pix < check_not_receding {
-                    &Doppler::ANY
+                    &Doppler::Any
                 } else {
                     &self.m_doppler_target
                 }

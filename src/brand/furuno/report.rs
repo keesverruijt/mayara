@@ -1,5 +1,5 @@
 use anyhow::{bail, Error};
-use log::{debug, error, info, trace};
+use log::{debug, error, info};
 use num_traits::FromPrimitive;
 
 use std::io;

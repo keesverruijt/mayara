@@ -21,7 +21,6 @@ use std::{
 use thiserror::Error;
 use tokio::{net::TcpListener, sync::broadcast, sync::mpsc};
 use tokio_graceful_shutdown::SubsystemHandle;
-use tungstenite::extensions::DeflateConfig;
 
 mod axum_fix;
 

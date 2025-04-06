@@ -1,12 +1,11 @@
 use cartesian::PolarToCartesianLookup;
 use ndarray::{s, Array2};
-use tokio::sync::mpsc::Sender;
 
 mod cartesian;
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::radar::trail::cartesian::PointInt;
 use crate::radar::{GeoPosition, Legend, SpokeBearing, BLOB_HISTORY_COLORS};
-use crate::settings::{ControlError, ControlType, ControlValue, Controls, SharedControls};
+use crate::settings::{ControlError, ControlType, ControlValue, SharedControls};
 
 use super::target::TargetBuffer;
 use super::{RadarError, RadarInfo};

@@ -16,7 +16,7 @@ use tokio::time::sleep;
 use tokio_graceful_shutdown::SubsystemHandle;
 use trail::TrailBuffer;
 
-use super::{FURUNO_SPOKES, FURUNO_SPOKE_LEN};
+use super::FURUNO_SPOKE_LEN;
 
 pub struct FurunoDataReceiver {
     key: String,
