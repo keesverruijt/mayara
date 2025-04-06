@@ -44,7 +44,7 @@ nalgebra = { version = "0.33.2", features = ["std", "macros", "convert-mint", "r
 ndarray = "0.16.1"
 network-interface = "2.0.0"
 nix = { version = "0.29.0", features = ["net", "socket"] }
-nmea-parser = { path = "../nmea-parser" }
+nmea-parser = { git = "https://github.com/keesverruijt/nmea-parser", "branch" = "position_precision" }
 num-derive = "0.4.2"
 num-traits = "0.2.19"
 once_cell = "1.21.1"
