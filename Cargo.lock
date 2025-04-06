@@ -1810,6 +1810,7 @@ dependencies = [
 [[package]]
 name = "nmea-parser"
 version = "0.12.0-dev"
+source = "git+https://github.com/keesverruijt/nmea-parser?branch=position_precision#d78937da490e197a343e36873ed58e11ad47d9d6"
 dependencies = [
  "bitvec",
  "chrono",
