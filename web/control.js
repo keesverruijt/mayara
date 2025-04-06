@@ -8,6 +8,8 @@ const prefix = "myr_";
 const auto_postfix = "_auto";
 const enabled_postfix = "_enabled";
 
+const RANGE_UNIT_SELECT_ID = 999;
+
 var myr_radar;
 var myr_controls;
 var myr_range_control_id;
@@ -298,8 +300,10 @@ function setControl(v) {
         let unit = control.descriptions[r].split(/(\s+)/);
         // Filter either on 'nm' or 'm'
         if (unit.length == 3) {
-          let units = get_element_by_server_id(999);
-          units.value = unit[2] == "nm" ? 1 : 0;
+          let units = get_element_by_server_id(RANGE_UNIT_SELECT_ID);
+          if (units) {
+            units.value = unit[2] == "nm" ? 1 : 0;
+          }
           myr_range_control_id = v.id;
         }
       }
@@ -333,12 +337,9 @@ function buildControls() {
     } else if (v["dataType"] == "string") {
       van.add(c, StringValue(k, v.name));
       van.add(get_element_by_server_id(k).parentNode, SetButton());
-    } else if ("validValues" in v) {
+    } else if ("validValues" in v && "descriptions" in v) {
       if (v.name == "Range") {
-        van.add(
-          c,
-          SelectValue(999, "Range units", [0, 1], { 0: "Metric", 1: "Nautic" })
-        );
+        add_range_unit_select(c, v["descriptions"]);
       }
       van.add(c, SelectValue(k, v.name, v["validValues"], v["descriptions"]));
     } else if ("maxValue" in v && v.maxValue <= 100) {
@@ -358,11 +359,32 @@ function buildControls() {
   }
 }
 
+function add_range_unit_select(c, descriptions) {
+  let found_metric = false;
+  let found_nautical = false;
+  for (const [k, v] of Object.entries(descriptions)) {
+    if (v.match(/ nm$/)) {
+      found_nautical = true;
+    } else {
+      found_metric = true;
+    }
+  }
+  if (found_metric && found_nautical) {
+    van.add(
+      c,
+      SelectValue(RANGE_UNIT_SELECT_ID, "Range units", [0, 1], {
+        0: "Metric",
+        1: "Nautic",
+      })
+    );
+  }
+}
+
 function do_change(e) {
   let v = e.target;
   let id = html_to_server_id(v.id);
   console.log("change " + e + " " + id + "=" + v.value);
-  if (id == 999) {
+  if (id == RANGE_UNIT_SELECT_ID) {
     handle_range_unit_change(v.value);
     return;
   }
