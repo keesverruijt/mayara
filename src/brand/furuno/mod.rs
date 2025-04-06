@@ -185,8 +185,8 @@ struct FurunoRadarReport {
 struct FurunoRadarModelReport {
     _filler1: [u8; 24],
     model: [u8; 32],
-    firmware_versions: [u8; 32],
-    firmware_version: [u8; 32],
+    _firmware_versions: [u8; 32],
+    _firmware_version: [u8; 32],
     serial_no: [u8; 32],
     _filler2: [u8; 18],
 }

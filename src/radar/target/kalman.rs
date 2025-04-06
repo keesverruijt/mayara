@@ -12,7 +12,7 @@ const NOISE: f64 = 1.0;
 // lower value makes target go straight
 // higher values allow target to make curves
 
-const CONVERT: f64 = (((1. / 1852.) / 1852.) / 60.) / 60.; // converts meters ^ 2 to degrees ^ 2
+// const CONVERT: f64 = (((1. / 1852.) / 1852.) / 60.) / 60.; // converts meters ^ 2 to degrees ^ 2
 
 type Matrix2x2 = SMatrix<f64, 2, 2>;
 type Matrix4x4 = SMatrix<f64, 4, 4>;

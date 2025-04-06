@@ -4,7 +4,7 @@ use log::{debug, trace};
 use tokio::net::UdpSocket;
 
 use crate::network::create_multicast_send;
-use crate::radar::{RadarError, RadarInfo, SharedRadars};
+use crate::radar::{RadarError, RadarInfo};
 use crate::settings::{ControlType, ControlValue, SharedControls};
 use crate::GLOBAL_ARGS;
 
@@ -25,7 +25,7 @@ pub struct Command {
 }
 
 impl Command {
-    pub fn new(info: RadarInfo, model: Model, radars: SharedRadars) -> Self {
+    pub fn new(info: RadarInfo, model: Model) -> Self {
         Command {
             key: info.key(),
             info,

@@ -326,6 +326,12 @@ impl HistorySpoke {
 impl HistorySpokes {
     fn new(spokes: i32, spoke_len: i32) -> Self {
         let stationary = GLOBAL_ARGS.stationary;
+        log::debug!(
+            "creating HistorySpokes ({} x {}) stationary: {}",
+            spokes,
+            spoke_len,
+            stationary
+        );
         Self {
             spokes: Box::new(vec![
                 HistorySpoke::new(
