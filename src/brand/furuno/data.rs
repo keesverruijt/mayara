@@ -363,6 +363,12 @@ impl FurunoDataReceiver {
         heading: SpokeBearing,
         sweep: &[u8],
     ) -> Spoke {
+        if GLOBAL_ARGS.replay {
+            let _ = self
+                .info
+                .controls
+                .set(&ControlType::Range, metadata.range as f32, None);
+        }
         // Convert the spoke data to bytes
 
         let heading: Option<u32> = if metadata.have_heading > 0 {
@@ -457,6 +463,7 @@ impl FurunoDataReceiver {
             have_heading,
             range
         );
+
         metadata
     }
 }

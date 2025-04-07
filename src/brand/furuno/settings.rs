@@ -21,29 +21,6 @@ pub fn new() -> SharedControls {
     controls.insert(ControlType::Range, range_control);
 
     controls.insert(
-        ControlType::AntennaHeight,
-        Control::new_numeric(ControlType::AntennaHeight, 0., 9900.).unit("cm"),
-    );
-    controls.insert(
-        ControlType::BearingAlignment,
-        Control::new_numeric(ControlType::BearingAlignment, -180., 180.)
-            .unit("Deg")
-            .wire_offset(180.),
-    );
-    controls.insert(
-        ControlType::Gain,
-        Control::new_auto(ControlType::Gain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE),
-    );
-    controls.insert(
-        ControlType::Sea,
-        Control::new_auto(ControlType::Sea, 0., 100., HAS_AUTO_NOT_ADJUSTABLE),
-    );
-    controls.insert(
-        ControlType::Rain,
-        Control::new_auto(ControlType::Rain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE),
-    );
-
-    controls.insert(
         ControlType::OperatingHours,
         Control::new_numeric(ControlType::OperatingHours, 0., 999999.)
             .read_only(true)
@@ -57,11 +34,6 @@ pub fn new() -> SharedControls {
             .unit("dRPM"),
     );
 
-    controls.insert(
-        ControlType::FirmwareVersion,
-        Control::new_string(ControlType::FirmwareVersion),
-    );
-
     let mut control = Control::new_list(
         ControlType::Status,
         &["WarmingUp", "Standby", "Transmit", "NoConnection"],
@@ -69,17 +41,6 @@ pub fn new() -> SharedControls {
     .send_always();
     control.set_valid_values([1, 2].to_vec());
     controls.insert(ControlType::Status, control);
-
-    controls.insert(
-        ControlType::SideLobeSuppression,
-        Control::new_auto(
-            ControlType::SideLobeSuppression,
-            0.,
-            100.,
-            HAS_AUTO_NOT_ADJUSTABLE,
-        )
-        .wire_scale_factor(255., false),
-    );
 
     SharedControls::new(controls)
 }

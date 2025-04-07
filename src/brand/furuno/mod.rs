@@ -156,10 +156,12 @@ fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) -> bo
             move |s: SubsystemHandle| data_receiver.run(s),
         ));
 
-        let report_receiver = report::FurunoReportReceiver::new(info);
-        subsys.start(SubsystemBuilder::new(report_name, |s| {
-            report_receiver.run(s)
-        }));
+        if !GLOBAL_ARGS.replay {
+            let report_receiver = report::FurunoReportReceiver::new(info);
+            subsys.start(SubsystemBuilder::new(report_name, |s| {
+                report_receiver.run(s)
+            }));
+        }
 
         return true;
     }
@@ -194,6 +196,14 @@ struct FurunoRadarModelReport {
 const LOGIN_TIMEOUT: Duration = Duration::from_millis(500);
 
 fn login_to_radar(radar_addr: SocketAddrV4) -> Result<u16, io::Error> {
+    if GLOBAL_ARGS.replay {
+        log::warn!(
+            "Replay mode, not logging in to radar and assuming data port {}",
+            FURUNO_DATA_PORT
+        );
+        return Ok(FURUNO_DATA_PORT);
+    }
+
     let mut stream =
         std::net::TcpStream::connect_timeout(&std::net::SocketAddr::V4(radar_addr), LOGIN_TIMEOUT)?;
 

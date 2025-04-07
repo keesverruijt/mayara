@@ -158,9 +158,28 @@ impl FurunoReportReceiver {
                 self.stream = None;
             } else {
                 sleep(Duration::from_millis(1000)).await;
+                self.login_to_radar()?;
                 self.start_stream().await?;
             }
         }
+    }
+
+    fn login_to_radar(&mut self) -> Result<(), RadarError> {
+        // Furuno radars use a single TCP/IP connection to send commands and
+        // receive status reports, so report_addr and send_command_addr are identical.
+        // Only one of these would be enough for Furuno.
+        let port: u16 = match super::login_to_radar(self.info.addr) {
+            Err(e) => {
+                log::error!("{}: Unable to connect for login: {}", self.info.key(), e);
+                return Err(RadarError::LoginFailed);
+            }
+            Ok(p) => p,
+        };
+        if port != self.info.send_command_addr.port() {
+            self.info.send_command_addr.set_port(port);
+            self.info.report_addr.set_port(port);
+        }
+        Ok(())
     }
 
     fn set(&mut self, control_type: &ControlType, value: f32, auto: Option<bool>) {

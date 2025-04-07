@@ -335,7 +335,7 @@ impl HistorySpokes {
         Self {
             spokes: Box::new(vec![
                 HistorySpoke::new(
-                    vec![HistoryPixel::new(); spoke_len as usize],
+                    vec![HistoryPixel::new(); 0],
                     0,
                     GeoPosition::new(0., 0.)
                 );
@@ -710,7 +710,8 @@ impl HistorySpokes {
                     self.spokes[0].sweep.len() as i32 - 1,
                 )
             {
-                self.spokes[a].sweep[r as usize].intersection(HistoryPixel::BACKUP);
+                self.spokes[a].sweep[r as usize] =
+                    self.spokes[a].sweep[r as usize].intersection(HistoryPixel::BACKUP);
                 // also clear both Doppler bits
             }
         }
@@ -727,7 +728,8 @@ impl HistorySpokes {
                 for r in
                     contour.max_r as usize..=min(4 * contour.max_r as usize, self.spokes.len() - 1)
                 {
-                    self.spokes[a].sweep[r].intersection(HistoryPixel::BACKUP);
+                    self.spokes[a].sweep[r] =
+                        self.spokes[a].sweep[r].intersection(HistoryPixel::BACKUP);
                     // also clear both Doppler bits
                 }
             }
@@ -781,11 +783,6 @@ impl TargetSetup {
     /// Number of sweeps that a next scan of the target may have moved, 1/10th of circle
     pub fn scan_margin(&self) -> i32 {
         self.spokes / 10
-    }
-
-    /// Number of sweeps that indicate we're on the next rotation
-    pub fn scan_next_rotation(&self) -> i32 {
-        self.spokes / 2
     }
 }
 
@@ -1374,6 +1371,9 @@ impl TargetBuffer {
         self.history.spokes[angle].time = time;
         self.history.spokes[angle].sweep.clear();
         self.history.spokes[angle].pos = pos;
+        self.history.spokes[angle]
+            .sweep
+            .resize(spoke.data.len(), HistoryPixel::INITIAL);
 
         for radius in 0..spoke.data.len() {
             if spoke.data[radius] >= weakest_normal_blob {

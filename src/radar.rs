@@ -53,6 +53,8 @@ pub enum RadarError {
     ParseNmea0183(String),
     #[error("IP address changed")]
     IPAddressChanged,
+    #[error("Cannot login to radar")]
+    LoginFailed,
     #[cfg(windows)]
     #[error("OS error: {0}")]
     OSError(String),
