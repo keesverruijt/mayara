@@ -440,7 +440,7 @@ impl RadarLocator for NavicoLocator {
                 LocatorId::Gen3Plus,
                 &NAVICO_BEACON_ADDRESS,
                 Brand::Navico,
-                Some(&NAVICO_ADDRESS_REQUEST_PACKET),
+                vec![&NAVICO_ADDRESS_REQUEST_PACKET],
                 Box::new(NavicoLocatorState {}),
             ));
         }
@@ -461,7 +461,7 @@ impl RadarLocator for NavicoBR24Locator {
                 LocatorId::GenBR24,
                 &NAVICO_BR24_BEACON_ADDRESS,
                 Brand::Navico,
-                Some(&NAVICO_ADDRESS_REQUEST_PACKET),
+                vec![&NAVICO_ADDRESS_REQUEST_PACKET],
                 Box::new(NavicoLocatorState {}),
             ));
         }

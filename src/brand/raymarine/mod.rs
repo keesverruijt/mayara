@@ -306,7 +306,7 @@ impl RadarLocator for RaymarineLocator {
                 LocatorId::Raymarine,
                 &RAYMARINE_BEACON_ADDRESS,
                 Brand::Raymarine,
-                None, // The Raymarine radars send the beacon reports by themselves, no polling needed
+                vec![], // The Raymarine radars send the beacon reports by themselves, no polling needed
                 Box::new(RaymarineLocatorState::new()),
             ));
         }

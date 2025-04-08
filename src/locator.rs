@@ -12,7 +12,6 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
 
-use log::{debug, error, info, trace, warn};
 use miette::Result;
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use serde::Serialize;
@@ -56,7 +55,7 @@ pub struct LocatorAddress {
     pub id: LocatorId,
     pub address: SocketAddr,
     pub brand: Brand,
-    pub adress_request_packet: Option<&'static [u8]>, // Optional message to send to ask radar for address
+    pub beacon_request_packets: Vec<&'static [u8]>, // Optional messages to send to ask radar for address
     pub locator: Box<dyn RadarLocatorState>,
 }
 
@@ -69,14 +68,14 @@ impl LocatorAddress {
         id: LocatorId,
         address: &SocketAddr,
         brand: Brand,
-        adress_request_packet: Option<&'static [u8]>,
+        adress_request_packets: Vec<&'static [u8]>,
         locator: Box<dyn RadarLocatorState>,
     ) -> LocatorAddress {
         LocatorAddress {
             id,
             address: address.clone(),
             brand,
-            adress_request_packet,
+            beacon_request_packets: adress_request_packets,
             locator,
         }
     }
@@ -135,7 +134,7 @@ impl Locator {
     ) -> Result<(), RadarError> {
         let radars = &self.radars;
 
-        debug!("Entering loop, listening for radars");
+        log::debug!("Entering loop, listening for radars");
         let mut interface_state = InterfaceState {
             active_nic_addresses: Vec::new(),
             inactive_nic_names: HashSet::new(),
@@ -149,6 +148,14 @@ impl Locator {
 
         let listen_addresses = Self::compute_listen_addresses(&mut interface_state);
 
+        // Make a copy of the beacon request packets to send them later, as LocatorAddress is not 'Send'.
+        let beacon_messages = listen_addresses
+            .iter()
+            .filter(|x| !x.beacon_request_packets.is_empty())
+            .map(|x| (x.address, x.beacon_request_packets.clone()))
+            .collect::<Vec<(SocketAddr, Vec<&[u8]>)>>();
+        log::debug!("beacon_messages = {:?}", beacon_messages);
+
         loop {
             let cancellation_token = subsys.create_cancellation_token();
             let child_token = cancellation_token.child_token();
@@ -160,8 +167,9 @@ impl Locator {
                 if GLOBAL_ARGS.interface.is_some() {
                     return Err(sockets.err().unwrap());
                 }
-                debug!("No NIC addresses found");
+                log::debug!("No NIC addresses found");
                 sleep(Duration::from_millis(5000)).await;
+                continue;
             }
             let sockets: Vec<LocatorSocket> = sockets.unwrap();
 
@@ -180,32 +188,32 @@ impl Locator {
                             return Err(RadarError::Shutdown);
                         }
                         _ => {
-                            log::error!("Failed to wait for IP change: {e}");
+                            log::error!("FailRed to wait for IP change: {e}");
                             sleep(Duration::from_secs(30)).await;
                         }
                     }
                 }
                 let _ = tx_ip_change.send(()).await;
 
+                Err(RadarError::IPAddressChanged)
+            });
+
+            // Add a timeout to the task set to handle cases where no packets are received,
+            // and we need to send a wakeup packet
+            set.spawn(async move {
+                sleep(Duration::from_secs(2)).await;
                 Err(RadarError::Timeout)
             });
-            spawn_interface_request(&mut set, &tx_interface_request);
 
-            // Now that we're listening to the radars, send any address request (wake) packets
-            if !GLOBAL_ARGS.replay {
-                for x in &listen_addresses {
-                    if let Some(address_request) = x.adress_request_packet {
-                        send_address_request(&x.address, address_request);
-                    }
-                }
-            };
+            // Spawn a task to listen for interface list requests from the clients
+            spawn_interface_request(&mut set, &tx_interface_request);
 
             while let Some(join_result) = set.join_next().await {
                 match join_result {
                     Ok(join_result) => {
                         match join_result {
                             Ok(ResultType::Locator(mut locator_socket, addr, buf)) => {
-                                trace!(
+                                log::trace!(
                                     "{} via {} -> {:02X?}",
                                     &addr,
                                     &locator_socket.nic_addr,
@@ -223,7 +231,7 @@ impl Locator {
                                 spawn_receive(&mut set, locator_socket);
                             }
                             Ok(ResultType::InterfaceRequest(reply_channel)) => {
-                                // Respawn this task
+                                // Send an answer to the request
                                 self.reply_with_interface_state(&interface_state, reply_channel)
                                     .await;
 
@@ -231,23 +239,36 @@ impl Locator {
                                 spawn_interface_request(&mut set, &tx_interface_request);
                             }
                             Err(e) => {
+                                log::debug!("JoinResult error: {:?}", e);
                                 match e {
                                     RadarError::Shutdown => {
-                                        debug!("Locator shutdown");
+                                        log::debug!("Locator shutdown");
                                         return Ok(());
                                     }
-                                    RadarError::Timeout => {
+                                    RadarError::IPAddressChanged => {
                                         // Loop, reread everything
                                         break;
                                     }
-                                    _ => {}
+                                    RadarError::Timeout => {
+                                        let _ = send_beacon_requests(
+                                            &beacon_messages,
+                                            &interface_state.active_nic_addresses,
+                                        )
+                                        .await;
+                                        set.spawn(async move {
+                                            sleep(Duration::from_secs(20)).await;
+                                            Err(RadarError::Timeout)
+                                        });
+                                    }
+                                    _ => {
+                                        log::warn!("receive error: {}", e);
+                                    }
                                 }
-                                debug!("receive error: {}", e);
                             }
                         }
                     }
                     Err(e) => {
-                        debug!("JoinError: {}", e);
+                        log::debug!("JoinError: {}", e);
                     }
                 };
             }
@@ -319,7 +340,7 @@ impl Locator {
 
         match NetworkInterface::show() {
             Ok(interfaces) => {
-                trace!("getifaddrs() dump {:#?}", interfaces);
+                log::trace!("getifaddrs() dump {:#?}", interfaces);
                 let mut sockets = Vec::new();
                 for itf in interfaces {
                     let mut active: bool = false;
@@ -330,7 +351,7 @@ impl Locator {
                                 (nic_addr.ip(), nic_addr.netmask())
                             {
                                 if avoid_wifi && network::is_wireless_interface(&itf.name) {
-                                    trace!("Ignoring wireless interface '{}'", itf.name);
+                                    log::trace!("Ignoring wireless interface '{}'", itf.name);
                                     if_api.insert(
                                         InterfaceId::new(&itf.name, Some(&nic_addr.ip())),
                                         RadarInterfaceApi::new(
@@ -348,15 +369,16 @@ impl Locator {
                                         || !interface_state.active_nic_addresses.contains(&nic_ip)
                                     {
                                         if interface_state.inactive_nic_names.remove(&itf.name) {
-                                            info!(
+                                            log::info!(
                                             "Searching for radars on interface '{}' address {} (added/modified)",
                                             itf.name,
                                             &nic_ip,
                                         );
                                         } else {
-                                            info!(
+                                            log::info!(
                                                 "Searching for radars on interface '{}' address {}",
-                                                itf.name, &nic_ip,
+                                                itf.name,
+                                                &nic_ip,
                                             );
                                         }
                                         interface_state.active_nic_addresses.push(nic_ip.clone());
@@ -394,14 +416,14 @@ impl Locator {
                                                         nic_addr: nic_ip.clone(),
                                                         state: radar_listen_address.locator.clone(),
                                                     });
-                                                    debug!(
+                                                    log::debug!(
                                                         "Listening on '{}' address {} for address {}",
                                                         itf.name, nic_ip, listen_addr,
                                                     );
                                                     "Listening".to_owned()
                                                 }
                                                 Err(e) => {
-                                                    warn!(
+                                                    log::warn!(
                                                     "Cannot listen on '{}' address {} for address {}: {}",
                                                     itf.name, nic_ip, listen_addr, e
                                                 );
@@ -411,7 +433,7 @@ impl Locator {
                                             listeners
                                                 .insert(radar_listen_address.brand.clone(), status);
                                         } else {
-                                            trace!(
+                                            log::trace!(
                                                 "Ignoring IPv6 address {:?}",
                                                 &radar_listen_address.address
                                             );
@@ -440,9 +462,12 @@ impl Locator {
                             .insert(itf.name.to_owned())
                         {
                             if interface_state.first_loop {
-                                trace!("Interface '{}' does not have an IPv4 address", itf.name);
+                                log::trace!(
+                                    "Interface '{}' does not have an IPv4 address",
+                                    itf.name
+                                );
                             } else {
-                                warn!(
+                                log::warn!(
                                     "Interface '{}' became inactive or lost its IPv4 address",
                                     itf.name
                                 );
@@ -505,29 +530,74 @@ fn spawn_receive(set: &mut JoinSet<Result<ResultType, RadarError>>, socket: Loca
     });
 }
 
-fn send_address_request(addr: &SocketAddr, msg: &[u8]) {
-    match NetworkInterface::show() {
-        Ok(interfaces) => {
-            for itf in interfaces {
-                for nic_addr in itf.addr {
-                    if let IpAddr::V4(nic_addr) = nic_addr.ip() {
-                        if !nic_addr.is_loopback() {
-                            // Send message via this IF
-                            if let Ok(socket) = std::net::UdpSocket::bind(SocketAddr::new(
-                                IpAddr::V4(nic_addr),
-                                addr.port(),
-                            )) {
-                                if let Ok(_) = socket.send_to(msg, addr) {
-                                    trace!("{} via {} <- {:02X?}", addr, nic_addr, msg);
-                                }
-                            }
-                        }
-                    }
+async fn send_beacon_requests(
+    beacon_messages: &Vec<(SocketAddr, Vec<&[u8]>)>,
+    interface_addresses: &Vec<Ipv4Addr>,
+) -> io::Result<()> {
+    if !GLOBAL_ARGS.replay {
+        for x in beacon_messages {
+            for beacon_request in &x.1 {
+                if let Err(e) = send_beacon_request(interface_addresses, &x.0, beacon_request).await
+                {
+                    log::warn!("Failed to send beacon request to {}: {}", x.0, e);
                 }
             }
         }
-        Err(e) => {
-            error!("Unable to list Ethernet interfaces on this platform: {}", e);
+    };
+    Ok(())
+}
+
+async fn send_beacon_request(
+    interface_addresses: &Vec<Ipv4Addr>,
+    addr: &SocketAddr,
+    msg: &[u8],
+) -> io::Result<()> {
+    if let SocketAddr::V4(addr) = addr {
+        if addr.ip().is_multicast() {
+            // Broadcast on all interfaces
+
+            log::debug!("Sending beacon request to {} via all interfaces", addr);
+
+            for nic_addr in interface_addresses {
+                match network::create_multicast_send(addr, nic_addr) {
+                    Ok(sock) => {
+                        sock.set_broadcast(true)?;
+                        match sock.send(msg).await {
+                            Ok(_) => {
+                                log::debug!(
+                                    "{} via {}: beacon request sent {:02X?}",
+                                    addr,
+                                    nic_addr,
+                                    msg
+                                );
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "{} via {}: Failed to send beacon request: {}",
+                                    addr,
+                                    nic_addr,
+                                    e
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "{} via {}: Failed to create multicast socket: {}",
+                            addr,
+                            nic_addr,
+                            e
+                        );
+                    }
+                }
+            }
+        } else {
+            let sock =
+                std::net::UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0))?;
+            sock.set_broadcast(true)?;
+            sock.send_to(msg, addr)?;
+            log::debug!("{}: beacon request sent {:02X?}", addr, msg);
         }
     }
+    Ok(())
 }
