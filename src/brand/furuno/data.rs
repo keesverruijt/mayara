@@ -193,7 +193,8 @@ impl FurunoDataReceiver {
                             log::error!("Furuno data socket: {}", e);
                             return Err(RadarError::Io(e));
                         }
-                    }
+                    };
+                    buf.clear();
                 },
                 Some(r) = Self::conditional_receive(&broadcast_socket, &mut buf2)  => {
                     log::trace!("Furuno data broadcast recv {:?}", r);
@@ -209,10 +210,10 @@ impl FurunoDataReceiver {
                             log::error!("Furuno data socket: {}", e);
                             return Err(RadarError::Io(e));
                         }
-                    }
+                    };
+                    buf2.clear();
                 },
             }
-            buf.clear();
         }
     }
 
