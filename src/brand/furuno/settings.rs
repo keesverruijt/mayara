@@ -29,9 +29,10 @@ pub fn new() -> SharedControls {
 
     controls.insert(
         ControlType::RotationSpeed,
-        Control::new_numeric(ControlType::RotationSpeed, 0., 990.)
+        Control::new_numeric(ControlType::RotationSpeed, 0., 99.)
+            .wire_scale_factor(990., true)
             .read_only(true)
-            .unit("dRPM"),
+            .unit("RPM"),
     );
 
     let mut control = Control::new_list(

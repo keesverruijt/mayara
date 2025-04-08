@@ -21,7 +21,7 @@
                 }
             },
             "args": [ 
-                    "-v",
+                    "-v", "--targets", "trails"
                ],
             "cwd": "${workspaceFolder}"
         },
