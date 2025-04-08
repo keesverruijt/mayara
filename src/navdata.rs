@@ -346,7 +346,7 @@ impl NavigationData {
     // Loop until we get an error, then just return the error
     // or Ok if we are to shutdown.
     async fn receive_loop(
-        &self,
+        &mut self,
         mut stream: TcpStream,
         subsys: &SubsystemHandle,
     ) -> Result<(), RadarError> {
@@ -363,14 +363,25 @@ impl NavigationData {
                     match r {
                         Ok(Some(line)) => {
                             log::trace!("{} <- {}", self.what, line);
-                            if !self.nmea0183_mode && line.starts_with("{\"name\":") {
-                                self.send_subscription(&mut write_half).await?;
-                                log::trace!("{} -> {}", self.what, SUBSCRIBE);
-                            }
-                            else {
-                                match parse_signalk(&line) {
+                            if self.nmea0183_mode {
+                                // We are in NMEA0183 mode, so we need to parse
+                                // the data we get.
+                                match self.parse_nmea0183(&line) {
                                     Err(e) => { log::warn!("{}", e)}
                                     Ok(_) => { }
+                                }
+                            } else {
+                                // We are in SignalK mode, so we need to subscribe
+                                // to the data we want.
+                                if line.starts_with("{\"name\":") {
+                                    self.send_subscription(&mut write_half).await?;
+                                    log::trace!("{} -> {}", self.what, SUBSCRIBE);
+                                }
+                                else {
+                                    match parse_signalk(&line) {
+                                        Err(e) => { log::warn!("{}", e)}
+                                        Ok(_) => { }
+                                    }
                                 }
                             }
                         }

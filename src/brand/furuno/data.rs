@@ -1,5 +1,5 @@
 use crate::brand::furuno::FURUNO_RADAR_RANGES;
-use crate::network::create_udp_multicast_listen;
+use crate::network::{self, create_udp_multicast_listen};
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
 use crate::settings::{ControlType, DataUpdate};
@@ -7,21 +7,31 @@ use crate::util::PrintableSpoke;
 use crate::{radar::*, GLOBAL_ARGS};
 
 use core::panic;
-use log::{debug, trace};
 use protobuf::Message;
+use std::net::SocketAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{io, time::Duration};
 use tokio::net::UdpSocket;
+use tokio::sync::broadcast;
 use tokio::time::sleep;
 use tokio_graceful_shutdown::SubsystemHandle;
 use trail::TrailBuffer;
 
-use super::FURUNO_SPOKE_LEN;
+use super::{FURUNO_DATA_BROADCAST_ADDRESS, FURUNO_SPOKE_LEN};
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ReceiveAddressType {
+    Both,
+    Multicast,
+    Broadcast,
+}
 
 pub struct FurunoDataReceiver {
     key: String,
     info: RadarInfo,
-    sock: Option<UdpSocket>,
+    receive_type: ReceiveAddressType,
+    multicast_socket: Option<UdpSocket>,
+    broadcast_socket: Option<UdpSocket>,
     data_update_rx: tokio::sync::broadcast::Receiver<DataUpdate>,
 
     // pixel_to_blob: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH],
@@ -58,7 +68,9 @@ impl FurunoDataReceiver {
         FurunoDataReceiver {
             key,
             info,
-            sock: None,
+            receive_type: ReceiveAddressType::Both,
+            multicast_socket: None,
+            broadcast_socket: None,
             data_update_rx,
             trails,
             prev_spoke: Vec::new(),
@@ -67,31 +79,89 @@ impl FurunoDataReceiver {
         }
     }
 
-    async fn start_socket(&mut self) -> io::Result<()> {
+    async fn start_multicast_socket(&mut self) -> io::Result<()> {
         match create_udp_multicast_listen(&self.info.spoke_data_addr, &self.info.nic_addr) {
             Ok(sock) => {
-                self.sock = Some(sock);
-                debug!(
+                self.multicast_socket = Some(sock);
+                log::debug!(
                     "{} via {}: listening for spoke data",
-                    &self.info.spoke_data_addr, &self.info.nic_addr
+                    &self.info.spoke_data_addr,
+                    &self.info.nic_addr
                 );
-                Ok(())
             }
             Err(e) => {
                 sleep(Duration::from_millis(1000)).await;
-                debug!(
-                    "{} via {}: create multicast failed: {}",
-                    &self.info.spoke_data_addr, &self.info.nic_addr, e
+                log::debug!(
+                    "{} via {}: listen multicast failed: {}",
+                    &self.info.spoke_data_addr,
+                    &self.info.nic_addr,
+                    e
                 );
-                Ok(())
             }
+        };
+        Ok(())
+    }
+
+    async fn start_broadcast_socket(&mut self) -> io::Result<()> {
+        match network::create_udp_listen(&FURUNO_DATA_BROADCAST_ADDRESS, &self.info.nic_addr, true)
+        {
+            Ok(sock) => {
+                self.broadcast_socket = Some(sock);
+                log::debug!(
+                    "{} via {}: listening for spoke data",
+                    &FURUNO_DATA_BROADCAST_ADDRESS,
+                    &self.info.nic_addr
+                );
+            }
+            Err(e) => {
+                sleep(Duration::from_millis(1000)).await;
+                log::debug!(
+                    "{} via {}: listen broadcast failed: {}",
+                    &FURUNO_DATA_BROADCAST_ADDRESS,
+                    &self.info.nic_addr,
+                    e
+                );
+            }
+        };
+        Ok(())
+    }
+
+    async fn start_socket(&mut self) -> io::Result<()> {
+        if self.receive_type != ReceiveAddressType::Broadcast && self.multicast_socket.is_none() {
+            self.start_multicast_socket().await?;
+        }
+        if self.receive_type != ReceiveAddressType::Multicast && self.broadcast_socket.is_none() {
+            self.start_broadcast_socket().await?;
+        }
+
+        Ok(())
+    }
+
+    async fn conditional_receive(
+        socket: &Option<UdpSocket>,
+        buf: &mut Vec<u8>,
+    ) -> Option<io::Result<(usize, SocketAddr)>> {
+        match socket {
+            Some(s) => Some(s.recv_buf_from(buf).await),
+            None => None,
         }
     }
 
-    async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
-        let mut buf = Vec::with_capacity(1500);
+    #[cfg(target_os = "macos")]
+    fn verify_source_address(&self, addr: &SocketAddr) -> bool {
+        addr.ip() == std::net::SocketAddr::V4(self.info.addr).ip() || GLOBAL_ARGS.replay
+    }
+    #[cfg(not(target_os = "macos"))]
+    fn verify_source_address(&self, addr: &SocketAddr) -> bool {
+        addr.ip() == std::net::SocketAddr::V4(self.info.addr).ip()
+    }
 
-        let sock = self.sock.take().unwrap();
+    async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
+        let mut buf = Vec::with_capacity(9000);
+        let mut buf2 = Vec::with_capacity(9000);
+
+        let mut multicast_socket = self.multicast_socket.take();
+        let mut broadcast_socket = self.broadcast_socket.take();
 
         log::debug!("Starting Furuno socket loop");
         loop {
@@ -109,11 +179,31 @@ impl FurunoDataReceiver {
                         }
                     }
                 },
-                r = sock.recv_buf_from(&mut buf)  => {
-                    log::trace!("Furuno data recv {:?}", r);
+                Some(r) = Self::conditional_receive(&multicast_socket, &mut buf)  => {
+                    log::trace!("Furuno data multicast recv {:?}", r);
                     match r {
-                        Ok((len, _)) => {
-                            self.process_frame(&buf[..len]);
+                        Ok((len, addr)) => {
+                            if self.verify_source_address(&addr) {
+                                self.process_frame(&buf[..len]);
+                                self.receive_type = ReceiveAddressType::Multicast;
+                                broadcast_socket = None;
+                            }
+                        },
+                        Err(e) => {
+                            log::error!("Furuno data socket: {}", e);
+                            return Err(RadarError::Io(e));
+                        }
+                    }
+                },
+                Some(r) = Self::conditional_receive(&broadcast_socket, &mut buf2)  => {
+                    log::trace!("Furuno data broadcast recv {:?}", r);
+                    match r {
+                        Ok((len, addr)) => {
+                            if self.verify_source_address(&addr) {
+                                self.process_frame(&buf2[..len]);
+                                self.receive_type = ReceiveAddressType::Broadcast;
+                                multicast_socket = None;
+                            }
                         },
                         Err(e) => {
                             log::error!("Furuno data socket: {}", e);
@@ -127,9 +217,11 @@ impl FurunoDataReceiver {
     }
 
     pub async fn run(mut self, subsys: SubsystemHandle) -> Result<(), RadarError> {
+        log::debug!("{}: data receiver starting", &self.key);
+
         self.start_socket().await.unwrap();
         loop {
-            if self.sock.is_some() {
+            if self.multicast_socket.is_some() {
                 match self.socket_loop(&subsys).await {
                     Err(RadarError::Shutdown) => {
                         return Ok(());
@@ -144,7 +236,7 @@ impl FurunoDataReceiver {
     }
 
     async fn handle_data_update(&mut self, r: DataUpdate) -> Result<(), RadarError> {
-        log::info!("Received data update: {:?}", r);
+        log::debug!("Received data update: {:?}", r);
         match r {
             DataUpdate::Doppler(_doppler) => {
                 // self.doppler = doppler;
@@ -184,7 +276,7 @@ impl FurunoDataReceiver {
 
         let sweep_count = metadata.sweep_count;
         let sweep_len = metadata.sweep_len as usize;
-        trace!("Received UDP frame with {} spokes", &sweep_count);
+        log::trace!("Received UDP frame with {} spokes", &sweep_count);
 
         let mut message = RadarMessage::new();
         message.radar = self.info.id as u32;
@@ -238,10 +330,10 @@ impl FurunoDataReceiver {
 
         match self.info.message_tx.send(bytes) {
             Err(e) => {
-                trace!("{}: Dropping received spoke: {}", self.key, e);
+                log::trace!("{}: Dropping received spoke: {}", self.key, e);
             }
             Ok(count) => {
-                trace!("{}: sent to {} receivers", self.key, count);
+                log::trace!("{}: sent to {} receivers", self.key, count);
             }
         }
     }
@@ -404,9 +496,10 @@ impl FurunoDataReceiver {
             spoke.data[FURUNO_SPOKE_LEN - 2] = 64;
         }
 
-        trace!(
-            "Received {:04} spoke {}",
+        log::trace!(
+            "Received {:04}/{:04} spoke {}",
             angle,
+            heading.unwrap_or(99999),
             PrintableSpoke::new(&spoke.data)
         );
 
@@ -440,6 +533,10 @@ impl FurunoDataReceiver {
     //  multi byte data: sweep_len = 0b011 << 8 | 0x74 => 0x374 = 884
 
     //  -> sweep_count=8 sweep_len=884 encoding=3 have_heading=0 range=496
+
+    // Some more headers from FAR-2127:
+    // [2, 250, 0, 1, 0, 0, 0, 0, 36, 49, 116, 59, 0, 0, 240, 9]
+
     fn parse_metadata_header(data: &[u8]) -> FurunoSpokeMetadata {
         let sweep_count = (data[9] >> 1) as u32;
         let sweep_len = ((data[11] & 0x07) as u32) << 8 | data[10] as u32;

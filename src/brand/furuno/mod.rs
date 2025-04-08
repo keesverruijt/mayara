@@ -26,12 +26,13 @@ const FURUNO_SPOKE_LEN: usize = 1024;
 const FURUNO_BASE_PORT: u16 = 10000;
 const FURUNO_BEACON_PORT: u16 = FURUNO_BASE_PORT + 10;
 const FURUNO_DATA_PORT: u16 = FURUNO_BASE_PORT + 24;
-const FURUNO_COMMAND_PORT: u16 = FURUNO_BASE_PORT + 100;
 
 const FURUNO_BEACON_ADDRESS: SocketAddr = SocketAddr::new(
     IpAddr::V4(Ipv4Addr::new(172, 31, 255, 255)),
     FURUNO_BEACON_PORT,
 );
+const FURUNO_DATA_BROADCAST_ADDRESS: SocketAddrV4 =
+    SocketAddrV4::new(Ipv4Addr::new(172, 31, 255, 255), FURUNO_DATA_PORT);
 
 const FURUNO_ANNOUNCE_MAYARA_PACKET: [u8; 32] = [
     0x1, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x18, 0x1, 0x0, 0x0, 0x0, b'M', b'A',
@@ -168,22 +169,34 @@ fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) -> bo
     return false;
 }
 
+// DRS-4D NXT
 // [01, 00, 00, 01, 00, 00, 00, 00, 00, 01, 00, 18, 01, 00, 00, 00, 52, 44, 30, 30, 33, 32, 31, 32, 01, 01, 00, 02, 00, 01, 00, 12] len 32
 // [ .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   R   D   0   0   3   2   1   2   .   .   .   .   .   .   .   .]
-//                                               ^_type?             ^_name, always 8 long?
-
+//                                               ^__length           ^_name, always 8 long?
+// FAR 2127
+// [01, 00, 00, 01, 00, 00, 00, 00, 00, 01, 00, 1A, 01, 00, 00, 00, 52, 41, 44, 41, 52, 00, 00, 00, 01, 00, 00, 03, 00, 01, 00, 04, 00, 05] len 34
+// [ .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   R   A   D   A   R   .   .   .   .   .   .   .   .   .   .   .   .   .]
+//
+// TimeZero
+// [01, 00, 00, 01, 00, 00, 00, 00, 00, 01, 00, 1C, 01, 00, 00, 00, 4D, 46, 30, 30, 33, 31, 35, 30, 01, 01, 00, 04, 00, 0B, 00, 15, 00, 14, 00, 16] len 36
+// [ .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   M   F   0   0   3   1   5   0   .   .   .   .   .   .   .   .   .   .   .   .]
 #[derive(Deserialize, Debug, Copy, Clone)]
 #[repr(packed)]
 struct FurunoRadarReport {
-    _filler1: [u8; 11],
-    device_type: u8,
+    _header: [u8; 11],
+    length: u8,
     _filler2: [u8; 4],
     name: [u8; 8],
-    _filler3: [u8; 8],
+    // ... followed by unknown stuff, looks like two bytes a piece. No idea what they are...
 }
+
+const FURUNO_RADAR_REPORT_HEADER: [u8; 11] =
+    [0x1, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0];
+const FURUNO_RADAR_REPORT_LENGTH_MIN: usize = std::mem::size_of::<FurunoRadarReport>();
 
 #[derive(Deserialize, Debug, Copy, Clone)]
 #[repr(packed)]
+// Length 170 bytes
 struct FurunoRadarModelReport {
     _filler1: [u8; 24],
     model: [u8; 32],
@@ -197,11 +210,8 @@ const LOGIN_TIMEOUT: Duration = Duration::from_millis(500);
 
 fn login_to_radar(radar_addr: SocketAddrV4) -> Result<u16, io::Error> {
     if GLOBAL_ARGS.replay {
-        log::warn!(
-            "Replay mode, not logging in to radar and assuming data port {}",
-            FURUNO_DATA_PORT
-        );
-        return Ok(FURUNO_DATA_PORT);
+        log::warn!("Replay mode, not logging in to radar",);
+        return Ok(0);
     }
 
     let mut stream =
@@ -288,7 +298,10 @@ impl FurunoLocatorState {
             log::debug!("{}: printable:     {}", from, PrintableSlice::new(report));
         }
 
-        if report.len() == 32 && report[16] == b'R' && report[17] == b'D' {
+        if report.len() >= FURUNO_RADAR_REPORT_LENGTH_MIN
+            && report[16] == b'R'
+            && report[0..11] == FURUNO_RADAR_REPORT_HEADER
+        {
             self.process_beacon_report(report, from, via, radars, subsys)
         } else if report.len() == 170 {
             self.process_beacon_model_report(report, from, via, radars)
@@ -308,20 +321,13 @@ impl FurunoLocatorState {
         match deserialize::<FurunoRadarReport>(report) {
             Ok(data) => {
                 if let Some(name) = c_string(&data.name) {
-                    if data.device_type != 0x18 {
-                        log::warn!(
-                            "Radar info packet uses device type {} instead of 24",
-                            data.device_type
-                        );
-                    }
                     let radar_addr: SocketAddrV4 = from.clone();
 
                     // DRS: spoke data all on a well-known address
                     let spoke_data_addr: SocketAddrV4 =
                         SocketAddrV4::new(Ipv4Addr::new(239, 255, 0, 2), FURUNO_DATA_PORT);
 
-                    let report_addr: SocketAddrV4 =
-                        SocketAddrV4::new(*from.ip(), FURUNO_COMMAND_PORT);
+                    let report_addr: SocketAddrV4 = SocketAddrV4::new(*from.ip(), 0); // Port is set in login_to_radar
                     let send_command_addr: SocketAddrV4 = report_addr.clone();
                     let location_info: RadarInfo = RadarInfo::new(
                         LocatorId::Furuno,

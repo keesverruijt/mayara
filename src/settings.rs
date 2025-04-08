@@ -12,7 +12,7 @@ use thiserror::Error;
 
 use crate::{
     radar::{DopplerMode, Legend, RadarError},
-    GLOBAL_ARGS,
+    TargetMode, GLOBAL_ARGS,
 };
 
 ///
@@ -82,43 +82,49 @@ impl Controls {
                 v.item.is_read_only = true;
             });
         }
-        // Add controls that are not radar dependent
-        controls.insert(
-            ControlType::TargetTrails,
-            Control::new_map(
+
+        if GLOBAL_ARGS.targets != TargetMode::None {
+            // Add controls that are not radar dependent
+            controls.insert(
                 ControlType::TargetTrails,
-                HashMap::from([
-                    (0, "Off".to_string()),
-                    (1, "15s".to_string()),
-                    (2, "30s".to_string()),
-                    (3, "1 min".to_string()),
-                    (4, "3 min".to_string()),
-                    (5, "5 min".to_string()),
-                    (6, "10 min".to_string()),
-                ]),
-            )
-            .set_destination(ControlDestination::Data),
-        );
-
-        controls.insert(
-            ControlType::TrailsMotion,
-            Control::new_map(
-                ControlType::TrailsMotion,
-                HashMap::from([(0, "Relative".to_string()), (1, "True".to_string())]),
-            )
-            .set_destination(ControlDestination::Data),
-        );
-
-        controls.insert(
-            ControlType::ClearTrails,
-            Control::new_button(ControlType::ClearTrails).set_destination(ControlDestination::Data),
-        );
-
-        controls.insert(
-            ControlType::ClearTargets,
-            Control::new_button(ControlType::ClearTargets)
+                Control::new_map(
+                    ControlType::TargetTrails,
+                    HashMap::from([
+                        (0, "Off".to_string()),
+                        (1, "15s".to_string()),
+                        (2, "30s".to_string()),
+                        (3, "1 min".to_string()),
+                        (4, "3 min".to_string()),
+                        (5, "5 min".to_string()),
+                        (6, "10 min".to_string()),
+                    ]),
+                )
                 .set_destination(ControlDestination::Data),
-        );
+            );
+
+            controls.insert(
+                ControlType::TrailsMotion,
+                Control::new_map(
+                    ControlType::TrailsMotion,
+                    HashMap::from([(0, "Relative".to_string()), (1, "True".to_string())]),
+                )
+                .set_destination(ControlDestination::Data),
+            );
+
+            controls.insert(
+                ControlType::ClearTrails,
+                Control::new_button(ControlType::ClearTrails)
+                    .set_destination(ControlDestination::Data),
+            );
+
+            if GLOBAL_ARGS.targets == TargetMode::Arpa {
+                controls.insert(
+                    ControlType::ClearTargets,
+                    Control::new_button(ControlType::ClearTargets)
+                        .set_destination(ControlDestination::Data),
+                );
+            }
+        }
 
         let (all_clients_tx, _) = tokio::sync::broadcast::channel(32);
         let (control_update_tx, _) = tokio::sync::broadcast::channel(32);
@@ -975,23 +981,22 @@ impl Control {
             }
         }
 
-        if let Some(step) = self.item.step_value {
-            match step {
-                0.1 => {
-                    value = (value * 10.) as i32 as f32 / 10.;
-                    auto_value = auto_value.map(|value| (value * 10.) as i32 as f32 / 10.);
-                }
-                1.0 => {
-                    value = value as i32 as f32;
-                    auto_value = auto_value.map(|value| value as i32 as f32);
-                }
-                _ => {
-                    value = (value / step).round() * step;
-                    auto_value = auto_value.map(|value| (value / step).round() * step);
-                }
+        let step = self.item.step_value.unwrap_or(1.0);
+        match step {
+            0.1 => {
+                value = (value * 10.) as i32 as f32 / 10.;
+                auto_value = auto_value.map(|value| (value * 10.) as i32 as f32 / 10.);
             }
-            log::trace!("{} map value to rounded {}", self.item.control_type, value);
+            1.0 => {
+                value = value as i32 as f32;
+                auto_value = auto_value.map(|value| value as i32 as f32);
+            }
+            _ => {
+                value = (value / step).round() * step;
+                auto_value = auto_value.map(|value| (value / step).round() * step);
+            }
         }
+        log::trace!("{} map value to rounded {}", self.item.control_type, value);
 
         if auto.is_some() && self.item.automatic.is_none() {
             Err(ControlError::NoAuto(self.item.control_type))

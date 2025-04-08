@@ -20,7 +20,7 @@ pub(crate) mod trail;
 use crate::config::Persistence;
 use crate::locator::LocatorId;
 use crate::settings::{ControlError, ControlType, ControlUpdate, ControlValue, SharedControls};
-use crate::{Brand, GLOBAL_ARGS};
+use crate::{Brand, TargetMode, GLOBAL_ARGS};
 
 // A "native to radar" bearing, usually [0..2048] or [0..4096] or [0..8192]
 pub(crate) type SpokeBearing = u16;
@@ -55,6 +55,8 @@ pub enum RadarError {
     IPAddressChanged,
     #[error("Cannot login to radar")]
     LoginFailed,
+    #[error("Invalid port number")]
+    InvalidPort,
     #[cfg(windows)]
     #[error("OS error: {0}")]
     OSError(String),
@@ -556,11 +558,11 @@ const OPAQUE: u8 = 255;
 fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
     let mut legend = Legend {
         pixels: Vec::new(),
-        history_start: 0,
-        border: 0,
-        doppler_approaching: 0,
-        doppler_receding: 0,
-        strong_return: 0,
+        history_start: 255,
+        border: 255,
+        doppler_approaching: 255,
+        doppler_receding: 255,
+        strong_return: 255,
     };
 
     let mut pixel_values = pixel_values;
@@ -606,16 +608,28 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
         });
     }
 
-    legend.border = legend.pixels.len() as u8;
     legend.pixels.push(Lookup {
-        r#type: PixelType::TargetBorder,
+        r#type: PixelType::Normal,
         color: Color {
-            r: 200,
-            g: 200,
-            b: 200,
+            r: 0,
+            g: 0,
+            b: 0,
             a: OPAQUE,
         },
     });
+
+    if GLOBAL_ARGS.targets == TargetMode::Arpa {
+        legend.border = legend.pixels.len() as u8;
+        legend.pixels.push(Lookup {
+            r#type: PixelType::TargetBorder,
+            color: Color {
+                r: 200,
+                g: 200,
+                b: 200,
+                a: OPAQUE,
+            },
+        });
+    }
 
     if doppler {
         legend.doppler_approaching = legend.pixels.len() as u8;
@@ -640,23 +654,25 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
         });
     }
 
-    legend.history_start = legend.pixels.len() as u8;
-    const START_DENSITY: u8 = 255; // Target trail starts as white
-    const END_DENSITY: u8 = 63; // Ends as gray
-    const DELTA_INTENSITY: u8 = (START_DENSITY - END_DENSITY) / BLOB_HISTORY_COLORS;
-    let mut density = START_DENSITY;
-    for _history in 0..BLOB_HISTORY_COLORS {
-        let color = Color {
-            r: density,
-            g: density,
-            b: density,
-            a: OPAQUE,
-        };
-        density -= DELTA_INTENSITY;
-        legend.pixels.push(Lookup {
-            r#type: PixelType::History,
-            color,
-        });
+    if GLOBAL_ARGS.targets != TargetMode::None {
+        legend.history_start = legend.pixels.len() as u8;
+        const START_DENSITY: u8 = 255; // Target trail starts as white
+        const END_DENSITY: u8 = 63; // Ends as gray
+        const DELTA_INTENSITY: u8 = (START_DENSITY - END_DENSITY) / BLOB_HISTORY_COLORS;
+        let mut density = START_DENSITY;
+        for _history in 0..BLOB_HISTORY_COLORS {
+            let color = Color {
+                r: density,
+                g: density,
+                b: density,
+                a: OPAQUE,
+            };
+            density -= DELTA_INTENSITY;
+            legend.pixels.push(Lookup {
+                r#type: PixelType::History,
+                color,
+            });
+        }
     }
 
     legend

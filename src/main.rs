@@ -30,6 +30,15 @@ mod web;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+#[derive(clap::ValueEnum, Clone, Default, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum TargetMode {
+    #[default]
+    Arpa,
+    Trails,
+    None,
+}
+
 #[derive(Parser, Clone, Debug)]
 pub struct Cli {
     #[clap(flatten)]
@@ -46,6 +55,10 @@ pub struct Cli {
     /// Limit radar location to a single brand
     #[arg(short, long)]
     brand: Option<Brand>,
+
+    /// Target analysis mode
+    #[arg(short, long, default_value_t, value_enum)]
+    targets: TargetMode,
 
     /// Set navigation service address, either
     /// - Nothing: all interfaces will search via MDNS

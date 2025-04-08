@@ -1,3 +1,5 @@
+#![allow(dead_code, unused_variables)]
+
 //! Handle WebSocket connections.
 //!
 //! # Example

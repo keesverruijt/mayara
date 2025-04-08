@@ -367,7 +367,10 @@ impl HistorySpokes {
                 return false;
             }
         }
-        let history = self.spokes[angle].sweep[rad];
+        let history = self.spokes[angle]
+            .sweep
+            .get(rad)
+            .unwrap_or(&HistoryPixel::INITIAL);
         let target = history.contains(HistoryPixel::TARGET); // above threshold bit
         let backup = history.contains(HistoryPixel::BACKUP); // backup bit does not get cleared when target is refreshed
         let approaching = history.contains(HistoryPixel::APPROACHING); // this is Doppler approaching bit

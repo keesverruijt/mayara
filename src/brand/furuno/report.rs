@@ -47,6 +47,10 @@ impl FurunoReportReceiver {
     }
 
     async fn start_stream(&mut self) -> Result<(), RadarError> {
+        if self.info.send_command_addr.port() == 0 {
+            // Port not set yet, we need to login to the radar first.
+            return Err(RadarError::InvalidPort);
+        }
         let sock = TcpSocket::new_v4().map_err(|e| RadarError::Io(e))?;
         self.stream = Some(
             sock.connect(std::net::SocketAddr::V4(self.info.send_command_addr))

@@ -6,6 +6,7 @@ use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::radar::trail::cartesian::PointInt;
 use crate::radar::{GeoPosition, Legend, SpokeBearing, BLOB_HISTORY_COLORS};
 use crate::settings::{ControlError, ControlType, ControlValue, SharedControls};
+use crate::{TargetMode, GLOBAL_ARGS};
 
 use super::target::TargetBuffer;
 use super::{RadarError, RadarInfo};
@@ -31,7 +32,7 @@ pub struct TrailBuffer {
     true_trails: Box<Array2<u8>>,
     true_trails_offset: PointInt,
     relative_trails: Box<Vec<u16>>,
-    targets: TargetBuffer,
+    targets: Option<TargetBuffer>,
     trail_length_ms: u32,
     rotation_speed_ms: u32,
     minimal_legend_value: u8,
@@ -50,7 +51,10 @@ impl TrailBuffer {
         let cartesian_lookup =
             PolarToCartesianLookup::new(info.spokes as usize, info.max_spoke_len as usize);
 
-        let targets = TargetBuffer::new(info);
+        let targets = match GLOBAL_ARGS.targets {
+            TargetMode::Arpa => Some(TargetBuffer::new(info)),
+            _ => None,
+        };
 
         TrailBuffer {
             legend,
@@ -111,7 +115,7 @@ impl TrailBuffer {
                     .map_err(|e| RadarError::ControlError(e))
             }
             ControlType::ClearTargets => {
-                self.targets.delete_all_targets();
+                self.targets.as_mut().map(|t| t.delete_all_targets());
                 Ok(())
             }
             ControlType::DopplerAutoTrack => {
@@ -120,8 +124,12 @@ impl TrailBuffer {
                     "1" => true,
                     _ => return Err(RadarError::CannotSetControlType(cv.id)),
                 };
-                if let Err(e) = self.targets.set_arpa_via_doppler(arpa) {
-                    return Err(RadarError::ControlError(e));
+                if let Some(ref mut targets) = self.targets {
+                    if let Err(e) = targets.set_arpa_via_doppler(arpa) {
+                        return Err(RadarError::ControlError(e));
+                    } else {
+                        Ok(())
+                    }
                 } else {
                     Ok(())
                 }
@@ -177,10 +185,13 @@ impl TrailBuffer {
 
     pub fn set_rotation_speed(&mut self, ms: u32) {
         self.rotation_speed_ms = ms;
-        self.targets.set_rotation_speed(ms);
+        self.targets.as_mut().map(|t| t.set_rotation_speed(ms));
     }
 
     pub fn update_trails(&mut self, spoke: &mut Spoke, legend: &Legend) {
+        if GLOBAL_ARGS.targets == TargetMode::None {
+            return;
+        }
         if spoke.range != self.previous_range && spoke.range != 0 {
             if self.previous_range != 0 {
                 let zoom_factor = self.previous_range as f64 / spoke.range as f64;
@@ -198,7 +209,9 @@ impl TrailBuffer {
 
         self.update_relative_trails(spoke.angle as u16, &mut spoke.data);
 
-        self.targets.process_spoke(spoke, legend);
+        self.targets
+            .as_mut()
+            .map(|t| t.process_spoke(spoke, legend));
     }
 
     fn update_true_trails(&mut self, range: u32, bearing: SpokeBearing, data: &mut Vec<u8>) {

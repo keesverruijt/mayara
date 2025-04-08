@@ -96,6 +96,7 @@ fn bind_to_multicast(
     addr: &SocketAddrV4,
     nic_addr: &Ipv4Addr,
 ) -> io::Result<()> {
+    #[cfg(target_os = "macos")]
     let nic_addr = if G_REPLAY.load(std::sync::atomic::Ordering::Relaxed) {
         &Ipv4Addr::UNSPECIFIED
     } else {
@@ -123,10 +124,11 @@ fn bind_to_multicast(
         }
     }
 
-    socket.join_multicast_v4(addr.ip(), nic_addr)?;
-
     let socketaddr = SocketAddr::new(IpAddr::V4(*addr.ip()), addr.port());
     socket.bind(&socket2::SockAddr::from(socketaddr))?;
+
+    socket.join_multicast_v4(addr.ip(), nic_addr)?;
+
     log::trace!(
         "Binding multicast socket to {} nic {}",
         socketaddr,

@@ -195,7 +195,7 @@ impl Locator {
             if !GLOBAL_ARGS.replay {
                 for x in &listen_addresses {
                     if let Some(address_request) = x.adress_request_packet {
-                        send_multicast_packet(&x.address, address_request);
+                        send_address_request(&x.address, address_request);
                     }
                 }
             };
@@ -372,27 +372,18 @@ impl Locator {
                                                     &nic_ip,
                                                     listen_addr.ip(),
                                                     &nic_netmask,
-                                                ) {
-                                                if only_interface.is_none() {
-                                                    Err(std::io::Error::new(
-                                                        std::io::ErrorKind::AddrNotAvailable,
-                                                        format!(
-                                                            "No match for {}",
-                                                            listen_addr.ip()
-                                                        ),
-                                                    ))
-                                                } else {
-                                                    network::create_udp_listen(
-                                                        &listen_addr,
-                                                        &nic_ip,
-                                                        true,
-                                                    )
-                                                }
+                                                )
+                                                && only_interface.is_none()
+                                            {
+                                                Err(std::io::Error::new(
+                                                    std::io::ErrorKind::AddrNotAvailable,
+                                                    format!("No match for {}", listen_addr.ip()),
+                                                ))
                                             } else {
                                                 network::create_udp_listen(
                                                     &listen_addr,
                                                     &nic_ip,
-                                                    false,
+                                                    true, // we don't write to this socket ever, so no SO_BROADCAST needed
                                                 )
                                             };
 
@@ -514,7 +505,7 @@ fn spawn_receive(set: &mut JoinSet<Result<ResultType, RadarError>>, socket: Loca
     });
 }
 
-fn send_multicast_packet(addr: &SocketAddr, msg: &[u8]) {
+fn send_address_request(addr: &SocketAddr, msg: &[u8]) {
     match NetworkInterface::show() {
         Ok(interfaces) => {
             for itf in interfaces {
