@@ -9,7 +9,7 @@ use std::time::Duration;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
 use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState};
-use crate::radar::{RadarInfo, SharedRadars};
+use crate::radar::{self, RadarInfo, SharedRadars};
 use crate::util::{c_string, PrintableSlice};
 use crate::{Brand, GLOBAL_ARGS};
 
@@ -255,7 +255,8 @@ fn login_to_radar(radar_addr: SocketAddrV4) -> Result<u16, io::Error> {
 
 #[derive(Clone)]
 struct FurunoLocatorState {
-    radars: HashMap<SocketAddrV4, String>,
+    radar_keys: HashMap<SocketAddrV4, String>,
+    model_found: bool,
 }
 
 impl RadarLocatorState for FurunoLocatorState {
@@ -347,7 +348,7 @@ impl FurunoLocatorState {
                     );
                     let key = location_info.key();
                     if found(location_info, radars, subsys) {
-                        self.radars.insert(from.clone(), key);
+                        self.radar_keys.insert(from.clone(), key);
                     }
                 }
             }
@@ -371,20 +372,33 @@ impl FurunoLocatorState {
         nic_addr: &Ipv4Addr,
         radars: &SharedRadars,
     ) -> Result<(), io::Error> {
+        if self.model_found {
+            return Ok(());
+        }
         let radar_addr: SocketAddrV4 = from.clone();
         // Is this known as a Furuno radar?
-        if let Some(key) = self.radars.get(&radar_addr) {
+        if let Some(key) = self.radar_keys.get(&radar_addr) {
             match deserialize::<FurunoRadarModelReport>(report) {
                 Ok(data) => {
                     let model = c_string(&data.model);
                     let serial_no = c_string(&data.serial_no);
+                    log::debug!(
+                        "{}: Furuno model report: {}",
+                        from,
+                        PrintableSlice::new(report)
+                    );
+                    log::debug!("{}: model: {:?}", from, model);
+                    log::debug!("{}: serial_no: {:?}", from, serial_no);
 
-                    if let (Some(model), Some(serial_no)) = (model, serial_no) {
+                    if let Some(serial_no) = serial_no {
                         radars.update_serial_no(key, serial_no.to_string());
-                        if let Ok(radar_info) = radars.find_radar_info(key) {
-                            let mut controls = radar_info.controls.clone();
-                            settings::update_when_model_known(&mut controls, &radar_info, model);
-                        }
+                    }
+
+                    if let Some(model) = model {
+                        let mut info = radars.get_by_key(key).unwrap(); // Should always be there
+                        settings::update_when_model_known(&mut info, model);
+                        radars.update(&info);
+                        self.model_found = true;
                     }
                 }
                 Err(e) => {
@@ -414,7 +428,8 @@ impl RadarLocator for FurunoLocator {
                 Brand::Furuno,
                 Some(&FURUNO_ANNOUNCE_MAYARA_PACKET),
                 Box::new(FurunoLocatorState {
-                    radars: HashMap::new(),
+                    radar_keys: HashMap::new(),
+                    model_found: false,
                 }),
             ));
         }

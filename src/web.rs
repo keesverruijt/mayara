@@ -27,7 +27,7 @@ mod axum_fix;
 use axum_fix::{Message, WebSocket, WebSocketUpgrade};
 
 use crate::{
-    radar::{Legend, RadarInfo, SharedRadars},
+    radar::{Legend, RadarError, RadarInfo, SharedRadars},
     settings::SharedControls,
     InterfaceApi, GLOBAL_ARGS,
 };
@@ -239,15 +239,15 @@ async fn spokes_handler(
 
     let ws = ws.accept_compression(true);
 
-    match state.radars.find_radar_info(&params.key) {
-        Ok(radar) => {
+    match state.radars.get_by_id(&params.key) {
+        Some(radar) => {
             let shutdown_rx = state.shutdown_tx.subscribe();
             let radar_message_rx = radar.message_tx.subscribe();
             // finalize the upgrade process by returning upgrade callback.
             // we can customize the callback by sending additional info such as address.
             ws.on_upgrade(move |socket| spokes_stream(socket, radar_message_rx, shutdown_rx))
         }
-        Err(e) => e.into_response(),
+        None => RadarError::NoSuchRadar(params.key.to_string()).into_response(),
     }
 }
 
@@ -296,15 +296,15 @@ async fn control_handler(
 
     let ws = ws.accept_compression(true);
 
-    match state.radars.find_radar_info(&params.key) {
-        Ok(radar) => {
+    match state.radars.get_by_id(&params.key) {
+        Some(radar) => {
             let shutdown_rx = state.shutdown_tx.subscribe();
 
             // finalize the upgrade process by returning upgrade callback.
             // we can customize the callback by sending additional info such as address.
             ws.on_upgrade(move |socket| control_stream(socket, radar, shutdown_rx))
         }
-        Err(e) => e.into_response(),
+        None => RadarError::NoSuchRadar(params.key.to_string()).into_response(),
     }
 }
 

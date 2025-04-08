@@ -61,18 +61,12 @@ impl Controls {
     }
 
     pub(self) fn new_base(mut controls: HashMap<ControlType, Control>) -> Self {
-        controls.insert(
-            ControlType::UserName,
-            Control::new_string(ControlType::UserName)
-                .read_only(false)
-                .set_destination(ControlDestination::Internal),
-        );
-
         // Add _mandatory_ controls
         if !controls.contains_key(&ControlType::ModelName) {
             controls.insert(
                 ControlType::ModelName,
                 Control::new_string(ControlType::ModelName)
+                    .read_only(true)
                     .set_destination(ControlDestination::Internal),
             );
         }
@@ -83,8 +77,16 @@ impl Controls {
             });
         }
 
+        // Add controls that are not radar dependent
+
+        controls.insert(
+            ControlType::UserName,
+            Control::new_string(ControlType::UserName)
+                .read_only(false)
+                .set_destination(ControlDestination::Internal),
+        );
+
         if GLOBAL_ARGS.targets != TargetMode::None {
-            // Add controls that are not radar dependent
             controls.insert(
                 ControlType::TargetTrails,
                 Control::new_map(

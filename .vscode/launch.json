@@ -21,7 +21,7 @@
                 }
             },
             "args": [ 
-                    "-v", "--targets", "trails"
+                    "-v", "--targets", "trails", "--replay"
                ],
             "cwd": "${workspaceFolder}"
         },

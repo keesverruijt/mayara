@@ -143,9 +143,6 @@ function radarLoaded(r) {
           // fill out the spokes between prev_angle and spoke.angle by repeating the spoke X times.
           if (prev_angle > -1) {
             let new_angle = spoke.angle;
-            console.log(
-              "filling spokes from " + prev_angle + " to " + new_angle
-            );
             if (prev_angle > new_angle) {
               for (let angle = prev_angle + 1; angle < spokes; angle++) {
                 spoke.angle = angle;

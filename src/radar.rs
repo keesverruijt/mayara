@@ -469,15 +469,20 @@ impl SharedRadars {
             .collect()
     }
 
-    pub fn find_radar_info(&self, key: &str) -> Result<RadarInfo, RadarError> {
+    pub fn get_by_key(&self, key: &str) -> Option<RadarInfo> {
+        let radars = self.radars.read().unwrap();
+        radars.info.get(key).cloned()
+    }
+
+    pub fn get_by_id(&self, key: &str) -> Option<RadarInfo> {
         let radars = self.radars.read().unwrap();
         for info in radars.info.iter() {
             let id = format!("radar-{}", info.1.id);
             if id == key {
-                return Ok(info.1.clone());
+                return Some(info.1.clone());
             }
         }
-        Err(RadarError::NoSuchRadar(key.to_string()))
+        None
     }
 
     pub fn remove(&self, key: &str) {

@@ -30,8 +30,7 @@ function registerControlCallback(callback) {
 const ReadOnlyValue = (id, name) =>
   div(
     { class: "myr_control myr_readonly" },
-    div({ class: "myr_description" }),
-    label({ for: prefix + id }, name),
+    div(name),
     div({ class: "myr_numeric", id: prefix + id })
   );
 
