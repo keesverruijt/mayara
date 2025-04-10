@@ -1,3 +1,5 @@
+#![allow(dead_code, unused_variables)]
+
 use bitflags::bitflags;
 use std::{
     cmp::{max, min},
@@ -477,7 +479,8 @@ impl HistorySpokes {
         for a in min_angle.angle..=max_angle.angle {
             let a_normalized = self.mod_spokes(a);
             for r in min_r.r..=max_r.r {
-                self.spokes[a_normalized].sweep[r as usize]
+                self.spokes[a_normalized].sweep[r as usize] = self.spokes[a_normalized].sweep
+                    [r as usize]
                     .intersection(HistoryPixel::NO_TARGET | HistoryPixel::CONTOUR);
             }
         }
@@ -1414,12 +1417,11 @@ impl TargetBuffer {
         self.refresh_targets(angle);
 
         // TODO GUARD ZONES
-        #[cfg(GuardZones)]
-        for zone in 0..GUARD_ZONES {
-            //if (m_guard_zone[z]->m_alarm_on) {
-            //  m_guard_zone[z]->ProcessSpoke(angle, data, m_history[bearing].line, len);
-            //}
-        }
+        // for zone in 0..GUARD_ZONES {
+        //if (m_guard_zone[z]->m_alarm_on) {
+        //  m_guard_zone[z]->ProcessSpoke(angle, data, m_history[bearing].line, len);
+        //}
+        //}
     }
 }
 

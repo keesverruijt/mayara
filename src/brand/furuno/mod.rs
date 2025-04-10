@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 use async_trait::async_trait;
 use bincode::deserialize;
 use log::log_enabled;
@@ -9,7 +10,7 @@ use std::time::Duration;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
 use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState};
-use crate::radar::{self, RadarInfo, SharedRadars};
+use crate::radar::{RadarInfo, SharedRadars};
 use crate::util::{c_string, PrintableSlice};
 use crate::{Brand, GLOBAL_ARGS};
 
@@ -78,6 +79,40 @@ impl From<u8> for CommandMode {
             b'E' => CommandMode::E,
             b'O' => CommandMode::O,
             _ => CommandMode::New,
+        }
+    }
+}
+
+#[allow(dead_code)]
+enum RadarModel {
+    FAR21x7,
+    DRS,
+    FAR14x7,
+    DRS4DL,
+    FAR3000,
+    DRS4DNXT,
+    DRS6ANXT,
+    DRS6AXCLASS,
+    FAR15x3,
+    FAR14x6,
+    DRS12ANXT,
+    DRS25ANXT,
+}
+impl RadarModel {
+    fn to_str(&self) -> &str {
+        match self {
+            RadarModel::FAR21x7 => "FAR21x7",
+            RadarModel::DRS => "DRS",
+            RadarModel::FAR14x7 => "FAR14x7",
+            RadarModel::DRS4DL => "DRS4DL",
+            RadarModel::FAR3000 => "FAR3000",
+            RadarModel::DRS4DNXT => "DRS4DNXT",
+            RadarModel::DRS6ANXT => "DRS6ANXT",
+            RadarModel::DRS6AXCLASS => "DRS6AXCLASS",
+            RadarModel::FAR15x3 => "FAR15x3",
+            RadarModel::FAR14x6 => "FAR14x6",
+            RadarModel::DRS12ANXT => "DRS12ANXT",
+            RadarModel::DRS25ANXT => "DRS25ANXT",
         }
     }
 }
@@ -327,6 +362,15 @@ impl FurunoLocatorState {
     ) -> Result<(), io::Error> {
         match deserialize::<FurunoRadarReport>(report) {
             Ok(data) => {
+                if data.length as usize + 8 != report.len() {
+                    log::error!(
+                        "{}: Furuno report length mismatch: {} != {}",
+                        from,
+                        data.length,
+                        report.len() - 8
+                    );
+                    return Ok(());
+                }
                 if let Some(name) = c_string(&data.name) {
                     let radar_addr: SocketAddrV4 = from.clone();
 
@@ -400,10 +444,7 @@ impl FurunoLocatorState {
                         radars.update_serial_no(key, serial_no.to_string());
                     }
 
-                    if let Some(model) = model {
-                        let mut info = radars.get_by_key(key).unwrap(); // Should always be there
-                        settings::update_when_model_known(&mut info, model);
-                        radars.update(&info);
+                    if let Some(_model) = model {
                         self.model_found = true;
                     }
                 }

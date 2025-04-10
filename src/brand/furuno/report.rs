@@ -1,17 +1,18 @@
 use anyhow::{bail, Error};
-use log::{debug, error, info};
 use num_traits::FromPrimitive;
+use tokio::io::AsyncBufReadExt;
+use tokio::io::BufReader;
 
 use std::io;
 use std::time::Duration;
-use tokio::io::AsyncReadExt;
 use tokio::io::WriteHalf;
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::time::{sleep, sleep_until, Instant};
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use super::command::CommandId;
-use super::CommandMode;
+use super::settings;
+use super::RadarModel;
 use super::FURUNO_RADAR_RANGES;
 use crate::radar::{RadarError, RadarInfo};
 use crate::settings::{ControlType, ControlUpdate};
@@ -22,9 +23,7 @@ pub struct FurunoReportReceiver {
     info: RadarInfo,
     key: String,
     command_sender: Command,
-    buf: Vec<u8>,
     stream: Option<TcpStream>,
-    report_request_timeout: Instant,
     report_request_interval: Duration,
 }
 
@@ -38,10 +37,7 @@ impl FurunoReportReceiver {
             info,
             key,
             command_sender,
-            buf: Vec::with_capacity(1000),
             stream: None,
-
-            report_request_timeout: Instant::now(),
             report_request_interval: Duration::from_millis(5000),
         }
     }
@@ -65,43 +61,45 @@ impl FurunoReportReceiver {
     // controller (= user) on self.info.command_tx.
     //
     async fn data_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
-        debug!("{}: listening for reports", self.key);
+        log::debug!("{}: listening for reports", self.key);
         let mut command_rx = self.info.control_update_subscribe();
 
         let stream = self.stream.take().unwrap();
-        let (mut read, mut write) = tokio::io::split(stream);
-        self.command_sender.init(&mut write).await?;
+        let (reader, mut writer) = tokio::io::split(stream);
+        // self.command_sender.init(&mut writer).await?;
+
+        let mut reader = BufReader::new(reader);
+        let mut line = String::new();
+        let mut deadline = Instant::now() + self.report_request_interval;
+        let mut first_report_received = false;
 
         loop {
-            self.report_request_timeout += self.report_request_interval;
-            let timeout = self.report_request_timeout;
-
             tokio::select! {
                 _ = subsys.on_shutdown_requested() => {
-                    info!("{}: shutdown", self.key);
+                    log::info!("{}: shutdown", self.key);
                     return Err(RadarError::Shutdown);
                 },
 
-                _ = sleep_until(timeout) => {
-                    self.command_sender.send(&mut write, CommandMode::New, CommandId::AliveCheck, &[]).await?;
+                _ = sleep_until(deadline) => {
+                    self.command_sender.send_report_requests(&mut writer).await?;
+                    deadline = Instant::now() + self.report_request_interval;
                 },
 
-                r = read.read_buf(&mut self.buf)  => {
+                r = reader.read_line(&mut line) => {
                     match r {
                         Ok(len) => {
-                            if len > 4 {
-                                if self.buf[len - 2] == 13 && self.buf[len - 1] == 10 {
-                                    self.buf.truncate(len - 2);
-                                    if let Err(e) = self.process_report().await {
-                                        error!("{}: {}", self.key, e);
-                                    }
+                            if len > 2 {
+                                if let Err(e) = self.process_report(&line).await {
+                                    log::error!("{}: {}", self.key, e);
+                                } else if !first_report_received {
+                                    self.command_sender.init(&mut writer).await?;
+                                    first_report_received = true;
                                 }
                             }
-
-                            self.buf.clear();
+                            line.clear();
                         }
                         Err(e) => {
-                            error!("{}: receive error: {}", self.key, e);
+                            log::error!("{}: receive error: {}", self.key, e);
                             return Err(RadarError::Io(e));
                         }
                     }
@@ -111,7 +109,7 @@ impl FurunoReportReceiver {
                     match r {
                         Err(_) => {},
                         Ok(cv) => {
-                            if let Err(e) = self.process_control_update(&mut write, cv).await {
+                            if let Err(e) = self.process_control_update(&mut writer, cv).await {
                                 return Err(e);
                             }
                         },
@@ -189,7 +187,7 @@ impl FurunoReportReceiver {
     fn set(&mut self, control_type: &ControlType, value: f32, auto: Option<bool>) {
         match self.info.controls.set(control_type, value, auto) {
             Err(e) => {
-                error!("{}: {}", self.key, e.to_string());
+                log::error!("{}: {}", self.key, e.to_string());
             }
             Ok(Some(())) => {
                 if log::log_enabled!(log::Level::Debug) {
@@ -218,12 +216,12 @@ impl FurunoReportReceiver {
             .set_value_auto(control_type, auto > 0, value)
         {
             Err(e) => {
-                error!("{}: {}", self.key, e.to_string());
+                log::error!("{}: {}", self.key, e.to_string());
             }
             Ok(Some(())) => {
                 if log::log_enabled!(log::Level::Debug) {
                     let control = self.info.controls.get(control_type).unwrap();
-                    debug!(
+                    log::debug!(
                         "{}: Control '{}' new value {} auto {}",
                         self.key,
                         control_type,
@@ -236,6 +234,7 @@ impl FurunoReportReceiver {
         };
     }
 
+    #[allow(dead_code)]
     fn set_value_with_many_auto(
         &mut self,
         control_type: &ControlType,
@@ -248,12 +247,12 @@ impl FurunoReportReceiver {
             .set_value_with_many_auto(control_type, value, auto_value)
         {
             Err(e) => {
-                error!("{}: {}", self.key, e.to_string());
+                log::error!("{}: {}", self.key, e.to_string());
             }
             Ok(Some(())) => {
                 if log::log_enabled!(log::Level::Debug) {
                     let control = self.info.controls.get(control_type).unwrap();
-                    debug!(
+                    log::debug!(
                         "{}: Control '{}' new value {} auto_value {:?} auto {:?}",
                         self.key,
                         control_type,
@@ -267,41 +266,49 @@ impl FurunoReportReceiver {
         };
     }
 
+    #[allow(dead_code)]
     fn set_string(&mut self, control: &ControlType, value: String) {
         match self.info.controls.set_string(control, value) {
             Err(e) => {
-                error!("{}: {}", self.key, e.to_string());
+                log::error!("{}: {}", self.key, e.to_string());
             }
             Ok(Some(v)) => {
-                debug!("{}: Control '{}' new value '{}'", self.key, control, v);
+                log::debug!("{}: Control '{}' new value '{}'", self.key, control, v);
             }
             Ok(None) => {}
         };
     }
 
-    async fn process_report(&mut self) -> Result<(), Error> {
-        let data = &self.buf;
-
-        if data.len() < 4 || data[0] != '$' as u8 {
-            bail!("TCP report {:?} dropped", data);
-        }
-
-        log::trace!("{}: processing {}", self.key, std::str::from_utf8(data)?);
-
-        let args = &data[2..];
-        let mut values_str = match std::str::from_utf8(args) {
-            Ok(v) => v,
-            Err(_) => {
-                bail!(
-                    "{}: Ignoring non-ASCII string from radar: {:?}",
-                    self.key,
-                    args
-                );
+    async fn process_report(&mut self, line: &str) -> Result<(), Error> {
+        let line = match line.find('$') {
+            Some(pos) => {
+                if pos > 0 {
+                    log::warn!("{}: Ignoring first {} bytes of TCP report", self.key, pos);
+                    &line[pos..]
+                } else {
+                    line
+                }
             }
-        }
-        .split(',');
+            None => {
+                log::warn!("{}: TCP report dropped, no $", self.key);
+                return Ok(());
+            }
+        };
 
-        let cmd_str = values_str
+        if line.len() < 2 {
+            bail!("TCP report {:?} dropped", line);
+        }
+        let (prefix, mut line) = line.split_at(2);
+        if prefix != "$N" {
+            bail!("TCP report {:?} dropped", line);
+        }
+        line = line.trim_end_matches("\r\n");
+
+        log::trace!("{}: processing $N{}", self.key, line);
+
+        let mut values_iter = line.split(',');
+
+        let cmd_str = values_iter
             .next()
             .ok_or(io::Error::new(io::ErrorKind::Other, "No command ID"))?;
         let cmd = u8::from_str_radix(cmd_str, 16)?;
@@ -314,59 +321,118 @@ impl FurunoReportReceiver {
             }
         };
 
-        let mut values = Vec::new();
+        // Match commands that do not have just numbers as arguments first
 
-        while let Some(value) = values_str.next() {
-            let parsed_value = value.trim().parse::<f32>()?;
-            values.push(parsed_value);
+        let strings: Vec<&str> = values_iter.collect();
+        log::debug!("{}: command {:02X} strings {:?}", self.key, cmd, strings);
+        let numbers = strings
+            .iter()
+            .map(|s| s.trim().parse::<f32>().unwrap_or(0.0))
+            .collect::<Vec<f32>>();
+
+        if numbers.len() != strings.len() {
+            log::trace!("Parsed strings: $N{:02X},{:?}", cmd, strings);
+        } else {
+            log::trace!("Parsed numbers: $N{:02X},{:?}", cmd, numbers);
         }
-        log::trace!("Parsed: ${:02X},{:?}", cmd, values);
 
         match command_id {
+            CommandId::Modules => {
+                self.parse_modules(&strings);
+                return Ok(());
+            }
+
             CommandId::Status => {
-                if values.len() < 1 {
+                if numbers.len() < 1 {
                     bail!("No arguments for Status command");
                 }
-                self.set_value(&ControlType::Status, values[0]);
+                self.set_value(&ControlType::Status, numbers[0]);
             }
             CommandId::Gain => {
-                if values.len() < 5 {
-                    bail!("Insufficient ({}) arguments for Gain command", values.len());
+                if numbers.len() < 5 {
+                    bail!(
+                        "Insufficient ({}) arguments for Gain command",
+                        numbers.len()
+                    );
                 }
-                let auto = values[2] as u8;
-                let gain = if auto > 0 { values[3] } else { values[1] };
+                let auto = numbers[2] as u8;
+                let gain = if auto > 0 { numbers[3] } else { numbers[1] };
                 log::trace!(
                     "Gain: {} auto {} values[1]={} values[3]={}",
                     gain,
                     auto,
-                    values[1],
-                    values[3]
+                    numbers[1],
+                    numbers[3]
                 );
                 self.set_value_auto(&ControlType::Gain, gain, auto);
             }
             CommandId::Range => {
-                if values.len() < 3 {
+                if numbers.len() < 3 {
                     bail!(
                         "Insufficient ({}) arguments for Range command",
-                        values.len()
+                        numbers.len()
                     );
                 }
-                if values[2] != 0. {
+                if numbers[2] != 0. {
                     bail!("Cannot handle radar not set to NM range");
                 }
-                let index = values[0] as usize;
+                let index = numbers[0] as usize;
                 let range = FURUNO_RADAR_RANGES.get(index).unwrap_or(&0);
                 self.set_value(&ControlType::Range, *range as f32);
             }
             CommandId::OnTime => {
-                let hours = values[0] / 3600.0;
+                let hours = numbers[0] / 3600.0;
                 self.set_value(&ControlType::OperatingHours, hours);
             }
             CommandId::AliveCheck => {}
             _ => {
-                bail!("TODO: Handle command {:?} values {:?}", command_id, values);
+                bail!("TODO: Handle command {:?} values {:?}", command_id, numbers);
             }
         }
         Ok(())
+    }
+
+    /// Parse the connect reply from the radar.
+    /// The DRS 4D-NXT radar sends a connect reply with the following format:
+    /// $N96,0359360-01.05,0359358-01.01,0359359-01.01,0359361-01.05,,,
+    /// The 4th, 5th and 6th values are for the FPGA and other parts, we don't store
+    /// that (yet).
+    fn parse_modules(&mut self, values: &Vec<&str>) {
+        let scanner_module = values[0];
+
+        if scanner_module.len() != "0359358-01.01".len() {
+            log::error!("{}: Invalid modules string {}", self.key, scanner_module);
+        }
+        if let Some((model, version)) = scanner_module.split_once('-') {
+            if let Some(model) = Self::parse_model(model) {
+                settings::update_when_model_known(&mut self.info, model, version);
+            }
+        } else {
+            log::error!("{}: Invalid modules string {}", self.key, scanner_module);
+        }
+    }
+
+    // See TZ Fec.Wrapper.SensorProperty.GetRadarSensorType
+    fn parse_model(model: &str) -> Option<RadarModel> {
+        Some(match model {
+            "0359235" => RadarModel::DRS,
+            "0359255" => RadarModel::FAR14x7,
+            "0359204" => RadarModel::FAR21x7,
+            "0359321" => RadarModel::FAR14x7,
+            "0359338" => RadarModel::DRS4DL,
+            "0359367" => RadarModel::DRS4DL,
+            "0359281" => RadarModel::FAR3000,
+            "0359286" => RadarModel::FAR3000,
+            "0359477" => RadarModel::FAR3000,
+            "0359360" => RadarModel::DRS4DNXT,
+            "0359421" => RadarModel::DRS6ANXT,
+            "0359355" => RadarModel::DRS6AXCLASS,
+            "0359344" => RadarModel::FAR15x3,
+            "0359397" => RadarModel::FAR14x6,
+
+            _ => {
+                return None;
+            } // Default case
+        })
     }
 }

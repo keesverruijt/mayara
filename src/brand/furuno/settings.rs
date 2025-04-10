@@ -2,10 +2,10 @@ use std::collections::HashMap;
 
 use crate::{
     radar::RadarInfo,
-    settings::{Control, ControlType, SharedControls, HAS_AUTO_NOT_ADJUSTABLE},
+    settings::{Control, ControlType, SharedControls},
 };
 
-use super::FURUNO_RADAR_RANGES;
+use super::{RadarModel, FURUNO_RADAR_RANGES};
 
 pub fn new() -> SharedControls {
     let mut controls = HashMap::new();
@@ -46,7 +46,9 @@ pub fn new() -> SharedControls {
     SharedControls::new(controls)
 }
 
-pub fn update_when_model_known(info: &mut RadarInfo, model_name: &str) {
+pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version: &str) {
+    let model_name = model.to_str();
+    log::debug!("update_when_model_known: {}", model_name);
     info.controls.set_model_name(model_name.to_string());
 
     let mut control = Control::new_string(ControlType::SerialNumber);
@@ -69,6 +71,14 @@ pub fn update_when_model_known(info: &mut RadarInfo, model_name: &str) {
     }
 
     // TODO: Add controls based on reverse engineered capability table
+
+    info.controls.insert(
+        ControlType::FirmwareVersion,
+        Control::new_string(ControlType::FirmwareVersion),
+    );
+    info.controls
+        .set_string(&ControlType::FirmwareVersion, version.to_string())
+        .expect("FirmwareVersion");
 
     info.controls.insert(
         ControlType::NoTransmitStart1,

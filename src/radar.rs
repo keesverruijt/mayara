@@ -469,6 +469,7 @@ impl SharedRadars {
             .collect()
     }
 
+    #[allow(dead_code)]
     pub fn get_by_key(&self, key: &str) -> Option<RadarInfo> {
         let radars = self.radars.read().unwrap();
         radars.info.get(key).cloned()
