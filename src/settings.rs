@@ -11,7 +11,7 @@ use std::{
 use thiserror::Error;
 
 use crate::{
-    radar::{DopplerMode, Legend, RadarError},
+    radar::{DopplerMode, Legend, RadarError, RangeDetection},
     TargetMode, GLOBAL_ARGS,
 };
 
@@ -574,6 +574,7 @@ pub struct ControlUpdate {
 pub enum DataUpdate {
     Doppler(DopplerMode),
     Legend(Legend),
+    RangeDetection(RangeDetection),
     ControlValue(tokio::sync::mpsc::Sender<ControlValue>, ControlValue),
 }
 

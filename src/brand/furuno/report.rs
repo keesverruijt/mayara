@@ -13,7 +13,6 @@ use tokio_graceful_shutdown::SubsystemHandle;
 use super::command::CommandId;
 use super::settings;
 use super::RadarModel;
-use super::FURUNO_RADAR_RANGES;
 use crate::radar::{RadarError, RadarInfo};
 use crate::settings::{ControlType, ControlUpdate};
 
@@ -25,6 +24,7 @@ pub struct FurunoReportReceiver {
     command_sender: Command,
     stream: Option<TcpStream>,
     report_request_interval: Duration,
+    model_known: bool,
 }
 
 impl FurunoReportReceiver {
@@ -39,6 +39,7 @@ impl FurunoReportReceiver {
             command_sender,
             stream: None,
             report_request_interval: Duration::from_millis(5000),
+            model_known: false,
         }
     }
 
@@ -377,8 +378,15 @@ impl FurunoReportReceiver {
                     bail!("Cannot handle radar not set to NM range");
                 }
                 let index = numbers[0] as usize;
-                let range = FURUNO_RADAR_RANGES.get(index).unwrap_or(&0);
-                self.set_value(&ControlType::Range, *range as f32);
+                if let Some(range_detection) = &self.info.range_detection {
+                    if index >= range_detection.ranges.len() {
+                        bail!("Range index {} out of bounds", index);
+                    }
+                    let range = range_detection.ranges.get(index).unwrap_or(&0);
+                    self.set_value(&ControlType::Range, *range as f32);
+                } else {
+                    log::warn!("{}: Range detection not set", self.key);
+                }
             }
             CommandId::OnTime => {
                 let hours = numbers[0] / 3600.0;
@@ -398,6 +406,9 @@ impl FurunoReportReceiver {
     /// The 4th, 5th and 6th values are for the FPGA and other parts, we don't store
     /// that (yet).
     fn parse_modules(&mut self, values: &Vec<&str>) {
+        if self.model_known {
+            return;
+        }
         let scanner_module = values[0];
 
         if scanner_module.len() != "0359358-01.01".len() {
@@ -406,6 +417,9 @@ impl FurunoReportReceiver {
         if let Some((model, version)) = scanner_module.split_once('-') {
             if let Some(model) = Self::parse_model(model) {
                 settings::update_when_model_known(&mut self.info, model, version);
+                self.command_sender
+                    .set_ranges(self.info.range_detection.as_ref().unwrap().clone());
+                self.model_known = true;
             }
         } else {
             log::error!("{}: Invalid modules string {}", self.key, scanner_module);

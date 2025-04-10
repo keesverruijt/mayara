@@ -1,4 +1,3 @@
-use crate::brand::furuno::FURUNO_RADAR_RANGES;
 use crate::network::{self, create_udp_multicast_listen};
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
@@ -245,6 +244,9 @@ impl FurunoDataReceiver {
                 // self.pixel_to_blob = Self::pixel_to_blob(&legend);
                 self.info.legend = legend;
             }
+            DataUpdate::RangeDetection(range_detection) => {
+                self.info.range_detection = Some(range_detection);
+            }
             DataUpdate::ControlValue(reply_tx, cv) => {
                 match self.trails.set_control_value(&self.info.controls, &cv) {
                     Ok(()) => {
@@ -272,7 +274,7 @@ impl FurunoDataReceiver {
         let mut message = RadarMessage::new();
         message.radar = self.info.id as u32;
 
-        let metadata: FurunoSpokeMetadata = Self::parse_metadata_header(&data);
+        let metadata: FurunoSpokeMetadata = self.parse_metadata_header(&data);
 
         let sweep_count = metadata.sweep_count;
         let sweep_len = metadata.sweep_len as usize;
@@ -537,12 +539,17 @@ impl FurunoDataReceiver {
     // Some more headers from FAR-2127:
     // [2, 250, 0, 1, 0, 0, 0, 0, 36, 49, 116, 59, 0, 0, 240, 9]
 
-    fn parse_metadata_header(data: &[u8]) -> FurunoSpokeMetadata {
+    fn parse_metadata_header(&self, data: &[u8]) -> FurunoSpokeMetadata {
+        let ranges = self
+            .info
+            .range_detection
+            .as_ref()
+            .expect("No range detection");
         let sweep_count = (data[9] >> 1) as u32;
         let sweep_len = ((data[11] & 0x07) as u32) << 8 | data[10] as u32;
         let encoding = ((data[11] & 0x18) >> 3) as u8;
         let have_heading = ((data[15] & 0x30) >> 3) as u8;
-        let range = FURUNO_RADAR_RANGES.get(data[12] as usize).unwrap_or(&0);
+        let range = ranges.ranges.get(data[12] as usize).unwrap_or(&0);
         let range = *range as u32;
         let metadata = FurunoSpokeMetadata {
             sweep_count,

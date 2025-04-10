@@ -22,7 +22,7 @@ mod settings;
 const FURUNO_SPOKES: usize = 8192;
 
 // Maximum supported Length of a spoke in pixels.
-const FURUNO_SPOKE_LEN: usize = 1024;
+const FURUNO_SPOKE_LEN: usize = 884;
 
 const FURUNO_BASE_PORT: u16 = 10000;
 const FURUNO_BEACON_PORT: u16 = FURUNO_BASE_PORT + 10;
@@ -116,32 +116,6 @@ impl RadarModel {
         }
     }
 }
-
-// From MaxSea.Radar.BusinessObjects.RadarRanges
-static FURUNO_RADAR_RANGES: [i32; 22] = [
-    115,  // 1/16nm
-    231,  // 1/8nm
-    463,  // 1/4nm
-    926,  // 1/2nm
-    1389, // 3/4nm
-    1852,
-    2778, // 1,5nm
-    1852 * 2,
-    1852 * 3,
-    1852 * 4,
-    1852 * 6,
-    1852 * 8,
-    1852 * 12,
-    1852 * 16,
-    1852 * 24,
-    1852 * 32,
-    1852 * 36,
-    1852 * 48,
-    1852 * 64,
-    1852 * 72,
-    1852 * 96,
-    1852 * 120,
-];
 
 fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) -> bool {
     info.controls

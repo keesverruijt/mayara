@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use crate::{
-    radar::RadarInfo,
-    settings::{Control, ControlType, SharedControls},
+    radar::{RadarInfo, RangeDetection},
+    settings::{Control, ControlType, DataUpdate, SharedControls},
 };
 
-use super::{RadarModel, FURUNO_RADAR_RANGES};
+use super::RadarModel;
 
 pub fn new() -> SharedControls {
     let mut controls = HashMap::new();
@@ -70,6 +70,18 @@ pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version:
         info.controls.set_user_name(user_name);
     }
 
+    let ranges = get_ranges_by_model(&model);
+    let mut range_detection = RangeDetection::new(ranges[0], ranges[ranges.len() - 1]);
+    range_detection.ranges = ranges.clone();
+    info.range_detection = Some(range_detection.clone());
+    info.controls
+        .set_valid_values(&ControlType::Range, ranges.clone())
+        .expect("Set valid values");
+    info.controls
+        .get_data_update_tx()
+        .send(DataUpdate::RangeDetection(range_detection))
+        .expect("RangeDetection");
+
     // TODO: Add controls based on reverse engineered capability table
 
     info.controls.insert(
@@ -105,4 +117,110 @@ pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version:
             .unit("Deg")
             .wire_offset(-1.),
     );
+}
+
+fn get_ranges_by_model(model: &RadarModel) -> Vec<i32> {
+    let mut ranges = Vec::new();
+
+    let allowed = get_ranges_nm_by_model(model);
+    for i in 0..allowed.len() {
+        if allowed[i] {
+            ranges.push(FURUNO_RADAR_RANGES[i]);
+        }
+    }
+    log::debug!("Model {} supports ranges {:?}", model.to_str(), ranges);
+    return ranges;
+}
+
+// From MaxSea.Radar.BusinessObjects.RadarRanges
+static FURUNO_RADAR_RANGES: [i32; 22] = [
+    115,  // 1/16nm
+    231,  // 1/8nm
+    463,  // 1/4nm
+    926,  // 1/2nm
+    1389, // 3/4nm
+    1852,
+    2778, // 1,5nm
+    1852 * 2,
+    1852 * 3,
+    1852 * 4,
+    1852 * 6,
+    1852 * 8,
+    1852 * 12,
+    1852 * 16,
+    1852 * 24,
+    1852 * 32,
+    1852 * 36,
+    1852 * 48,
+    1852 * 64,
+    1852 * 72,
+    1852 * 96,
+    1852 * 120,
+];
+
+// See Far.Wrapper.SensorProperty._availableRangeCodeListsForNm etc.
+fn get_ranges_nm_by_model(model: &RadarModel) -> &'static [bool; 22] {
+    static RANGES_NM_FAR21X7: [bool; 22] = [
+        false, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+        true, false, true, false, false, true, false,
+    ];
+    static RANGES_NM_DRS: [bool; 22] = [
+        true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+        true, true, true, true, true, true, false,
+    ];
+    static RANGES_NM_FAR14X7: [bool; 22] = [
+        true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+        true, true, true, true, true, true, false,
+    ];
+    static RANGES_NM_DRS4_DL: [bool; 22] = [
+        true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+        true, true, true, true, true, true, false,
+    ];
+    static RANGES_NM_FAR3000: [bool; 22] = [
+        false, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+        true, false, true, false, false, true, false,
+    ];
+    static RANGES_NM_DRS4_DNXT: [bool; 22] = [
+        true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+        true, true, false, false, false, false, false,
+    ];
+    static RANGES_NM_DRS6_ANXT: [bool; 22] = [
+        true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+        true, true, true, true, true, false, false,
+    ];
+    static RANGES_NM_DRS6_AXCLASS: [bool; 22] = [
+        true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+        true, true, true, true, true, true, false,
+    ];
+    static RANGES_NM_FAR15X3: [bool; 22] = [
+        false, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+        true, false, true, false, false, true, false,
+    ];
+    static RANGES_NM_FAR14X6: [bool; 22] = [
+        false, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+        true, false, true, false, false, true, false,
+    ];
+    static RANGES_NM_DRS12_ANXT: [bool; 22] = [
+        true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+        true, true, true, true, true, false, false,
+    ];
+    static RANGES_NM_DRS25_ANXT: [bool; 22] = [
+        true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+        true, true, true, true, true, false, false,
+    ];
+
+    match model {
+        RadarModel::FAR21x7 => &RANGES_NM_FAR21X7,
+        RadarModel::DRS => &RANGES_NM_DRS,
+        RadarModel::FAR14x7 => &RANGES_NM_FAR14X7,
+        RadarModel::DRS4DL => &RANGES_NM_DRS4_DL,
+        RadarModel::FAR3000 => &RANGES_NM_FAR3000,
+        RadarModel::DRS4DNXT => &RANGES_NM_DRS4_DNXT,
+        RadarModel::DRS6ANXT => &RANGES_NM_DRS6_ANXT,
+        RadarModel::DRS6AXCLASS => &RANGES_NM_DRS6_AXCLASS,
+        RadarModel::FAR15x3 => &RANGES_NM_FAR15X3,
+        RadarModel::FAR14x6 => &RANGES_NM_FAR14X6,
+        RadarModel::DRS12ANXT => &RANGES_NM_DRS12_ANXT,
+        RadarModel::DRS25ANXT => &RANGES_NM_DRS25_ANXT,
+    }
 }
