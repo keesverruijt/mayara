@@ -2,7 +2,7 @@
 
 Welcome to **Ma**rine **Ya**cht **Ra**dar server.
 
-This project will play as intermediary between marine yacht radars such as Navico's HALO series, Garmin, Raymarine, etc, and modern client side tools acting as chartplotter or MFD. 
+This project will play as intermediary between marine yacht radars such as Navico's HALO series, Furuno, Garmin, Raymarine, etc, and modern client side tools acting as chartplotter or MFD. 
 Intended use is for applications such as [Freeboard SK](https://github.com/SignalK/freeboard-sk), [OpenCPN](https://opencpn.org), [AvNav](https://wellenvogel.net/software/avnav/docs/beschreibung.html?lang=en).
 __Note: no implication that this software will actually be available in any of the mentioned software packages is made!__
 
@@ -26,12 +26,15 @@ The code shall:
 
 ## Radar support
 
-At the moment I intend to support the following radars:
+The following radars are fully supported right now:
 
-* First level (functionally complete including all settings) support for Navico 3G, 4G and HALO radars.
-* Best effort support for Navico BR24 (we no longer have access to one.)
-* Second level (operational support, maybe not all features) for Garmin xHD and hopefully something modern.
-* Second level (operational support, maybe not all features) for Raymarine E series and Quantum series.
+* Navico: all digital models e.g. BR24, 3G, 4G, HALO20, HALO24, HALO3/4/6, HALO3000+. 
+
+Full support is planned for:
+
+* Furuno, many models, but certainly and primarily DRS4D-NXT.
+* Raymarine Quantum 2 and older digital radars.
+* Garmin (x)HD.
 
 ## Status
 
