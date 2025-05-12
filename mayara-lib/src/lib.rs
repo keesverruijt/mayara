@@ -27,8 +27,13 @@ pub mod radar;
 pub mod settings;
 pub mod util;
 use std::ops::Deref;
+use rust_embed::RustEmbed;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+#[derive(RustEmbed, Clone)]
+#[folder = "$OUT_DIR/web/"]
+pub struct ProtoAssets;
 
 #[derive(clap::ValueEnum, Clone, Default, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]

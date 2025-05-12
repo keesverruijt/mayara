@@ -30,6 +30,7 @@ use mayara::{
     radar::{Legend, RadarError, RadarInfo, SharedRadars},
     settings::SharedControls,
     InterfaceApi, GLOBAL_ARGS,
+    ProtoAssets
 };
 
 const RADAR_URI: &str = "/v1/api/radars";
@@ -43,7 +44,7 @@ struct Assets;
 
 #[derive(RustEmbed, Clone)]
 #[folder = "$OUT_DIR/web/"]
-struct ProtoAssets;
+struct ProtoWebAssets;
 
 #[derive(Error, Debug)]
 pub enum WebError {
@@ -81,6 +82,7 @@ impl Web {
         .map_err(|e| WebError::Io(e))?;
 
         let serve_assets = ServeEmbed::<Assets>::new();
+        let proto_web_assets = ServeEmbed::<ProtoWebAssets>::new();
         let proto_assets = ServeEmbed::<ProtoAssets>::new();
         let mut shutdown_rx = self.shutdown_tx.subscribe();
         let shutdown_tx = self.shutdown_tx.clone(); // Clone as self used in with_state() and with_graceful_shutdown() below
@@ -90,6 +92,7 @@ impl Web {
             .route(INTERFACE_URI, get(get_interfaces))
             .route(&format!("{}{}", SPOKES_URI, "{key}"), get(spokes_handler))
             .route(&format!("{}{}", CONTROL_URI, "{key}"), get(control_handler))
+            .nest_service("/protobuf", proto_web_assets)
             .nest_service("/proto", proto_assets)
             .fallback_service(serve_assets)
             .with_state(self)
