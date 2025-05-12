@@ -17,6 +17,7 @@ raymarine = []
 default = ["navico", "furuno", "raymarine"]
 
 [dependencies]
+ctor = "0.1"
 anyhow = "1.0.86"
 async-trait = "0.1.81"
 atomic_float = "1.1.0"

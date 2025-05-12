@@ -248,3 +248,16 @@ pub async fn init(s: &SubsystemHandle) -> Result<(SharedRadars, broadcast::Sende
     
     Ok((radars_clone, tx_interface_request_clone))
 }
+
+
+#[cfg(test)]
+mod init {
+    use ctor::ctor;
+    use crate::{Cli, set_global_args};
+    use clap::Parser;
+
+    #[ctor]
+    fn setup() {
+        let _ = set_global_args(Cli::parse_from(["my_program"]));
+    }
+}
