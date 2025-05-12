@@ -2,22 +2,21 @@ extern crate tokio;
 
 use clap::Parser;
 use env_logger::Env;
-use locator::Locator;
+//use locator::Locator;
 use log::{info, warn};
 use miette::Result;
-use once_cell::sync::Lazy;
-use radar::SharedRadars;
-use serde::{Serialize, Serializer};
+//use once_cell::sync::Lazy;
+//use radar::SharedRadars;
+//use serde::{Serialize, Serializer};
 use std::{
-    collections::{HashMap, HashSet},
-    net::{IpAddr, Ipv4Addr},
     time::Duration,
 };
-use tokio::sync::{broadcast, mpsc};
+//use tokio::sync::{broadcast, mpsc};
 use tokio_graceful_shutdown::{SubsystemBuilder, Toplevel};
 use web::Web;
 
-mod brand;
+/*
+use brand;
 mod config;
 mod locator;
 mod navdata;
@@ -26,9 +25,13 @@ mod protos;
 mod radar;
 mod settings;
 mod util;
+*/
 mod web;
 
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+use mayara;
+use mayara::{network, Cli, set_global_args, GLOBAL_ARGS};
+
+/*
 
 #[derive(clap::ValueEnum, Clone, Default, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -194,9 +197,12 @@ impl Serialize for InterfaceId {
         serializer.serialize_str(self.name.as_str())
     }
 }
+*/
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    set_global_args(Cli::parse()).expect("Failed to set global args");
+
     let log_level = GLOBAL_ARGS.verbose.log_level_filter();
     env_logger::Builder::from_env(Env::default())
         .filter_level(log_level)
@@ -207,7 +213,7 @@ async fn main() -> Result<()> {
 
     network::set_replay(GLOBAL_ARGS.replay);
 
-    info!("Mayara {} loglevel {}", VERSION, log_level);
+    info!("Mayara {} loglevel {}", mayara::VERSION, log_level);
     if GLOBAL_ARGS.replay {
         warn!("Replay mode activated, this does the following:");
         warn!(" * A circle is drawn at the last two pixels in each spoke");
@@ -237,25 +243,9 @@ async fn main() -> Result<()> {
     }
 
     Toplevel::new(|s| async move {
-        let mut navdata = navdata::NavigationData::new();
-
-        let (tx_interface_request, _) = broadcast::channel(10);
-
-        let radars = SharedRadars::new();
-        let radars_clone1 = radars.clone();
-
-        let locator = Locator::new(radars);
-        let web = Web::new(radars_clone1, tx_interface_request.clone());
-
-        let (tx_ip_change, rx_ip_change) = mpsc::channel(1);
-
-        s.start(SubsystemBuilder::new("NavData", |a| async move {
-            navdata.run(a, rx_ip_change).await
-        }));
-        s.start(SubsystemBuilder::new("Locator", |a| {
-            locator.run(a, tx_ip_change, tx_interface_request)
-        }));
-        s.start(SubsystemBuilder::new("Webserver", |a| web.run(a)));
+        let (radars, tx_interface_request) = mayara::init(&s).await.expect("Unable to initialize mayara");
+        let web = Web::new(radars, tx_interface_request);
+        s.start(SubsystemBuilder::new("Webserver", move |a| web.run(a)));
     })
     .catch_signals()
     .handle_shutdown_requests(Duration::from_millis(5000))

@@ -18,7 +18,7 @@ pub(crate) mod windows;
 
 static G_REPLAY: AtomicBool = AtomicBool::new(false);
 
-pub(crate) fn set_replay(replay: bool) {
+pub fn set_replay(replay: bool) {
     G_REPLAY.store(replay, std::sync::atomic::Ordering::Relaxed);
 }
 // This is like a SocketAddrV4 but with known layout

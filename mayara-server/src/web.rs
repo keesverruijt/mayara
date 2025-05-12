@@ -26,7 +26,7 @@ mod axum_fix;
 
 use axum_fix::{Message, WebSocket, WebSocketUpgrade};
 
-use crate::{
+use mayara::{
     radar::{Legend, RadarError, RadarInfo, SharedRadars},
     settings::SharedControls,
     InterfaceApi, GLOBAL_ARGS,
