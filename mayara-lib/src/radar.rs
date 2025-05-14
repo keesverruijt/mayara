@@ -194,7 +194,7 @@ impl fmt::Display for GeoPosition {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct RadarInfo {
+pub struct RadarInfo {
     key: String,
     pub id: usize,
     pub locator_id: LocatorId,

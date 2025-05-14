@@ -142,7 +142,7 @@ impl Controls {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(crate) struct SharedControls {
+pub struct SharedControls {
     #[serde(flatten, with = "arc_rwlock_serde")]
     controls: Arc<RwLock<Controls>>,
 }
@@ -208,7 +208,7 @@ impl SharedControls {
     // Some controls are handled internally, some in the data handler for a radar and the
     // rest are settings that need to be sent to the radar.
     //
-    pub(crate) async fn process_client_request(
+    pub async fn process_client_request(
         &self,
         control_value: ControlValue,
         reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
@@ -617,7 +617,7 @@ impl ControlValue {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct Control {
+pub struct Control {
     #[serde(flatten)]
     item: ControlDefinition,
     #[serde(skip)]
@@ -1041,7 +1041,7 @@ impl Control {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct AutomaticValue {
+pub struct AutomaticValue {
     #[serde(skip_serializing_if = "is_false")]
     pub(crate) has_auto: bool,
     //#[serde(skip)]
@@ -1069,14 +1069,14 @@ pub enum ControlDataType {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum ControlDestination {
+pub enum ControlDestination {
     Internal,
     Data,
     Command,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ControlDefinition {
+pub struct ControlDefinition {
     #[serde(skip)]
     pub(crate) control_type: ControlType,
     name: String,
