@@ -22,7 +22,7 @@ mod settings;
 const FURUNO_SPOKES: usize = 8192;
 
 // Maximum supported Length of a spoke in pixels.
-const FURUNO_SPOKE_LEN: usize = 884;
+const FURUNO_SPOKE_LEN: usize = 883;
 
 const FURUNO_BASE_PORT: u16 = 10000;
 const FURUNO_BEACON_PORT: u16 = FURUNO_BASE_PORT + 10;
@@ -85,6 +85,7 @@ impl From<u8> for CommandMode {
 
 #[allow(dead_code)]
 enum RadarModel {
+    Unknown,
     FAR21x7,
     DRS,
     FAR14x7,
@@ -101,6 +102,7 @@ enum RadarModel {
 impl RadarModel {
     fn to_str(&self) -> &str {
         match self {
+            RadarModel::Unknown => "Unknown",
             RadarModel::FAR21x7 => "FAR21x7",
             RadarModel::DRS => "DRS",
             RadarModel::FAR14x7 => "FAR14x7",

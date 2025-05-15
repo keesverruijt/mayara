@@ -1196,6 +1196,7 @@ pub enum ControlType {
     ModelName,
     FirmwareVersion,
     SerialNumber,
+    Spokes,
     UserName,
 }
 
@@ -1257,6 +1258,7 @@ impl Display for ControlType {
             ControlType::TrailsMotion => "Target trails motion",
             // ControlType::TuneCoarse => "Coarse tune",
             // ControlType::TuneFine => "Fine tune",
+            ControlType::Spokes => "Spokes",
             ControlType::UserName => "Custom name",
         };
 

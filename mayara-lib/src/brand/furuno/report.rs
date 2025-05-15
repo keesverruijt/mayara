@@ -326,10 +326,10 @@ impl FurunoReportReceiver {
 
         let strings: Vec<&str> = values_iter.collect();
         log::debug!("{}: command {:02X} strings {:?}", self.key, cmd, strings);
-        let numbers = strings
+        let numbers: Vec<f32> = strings
             .iter()
             .map(|s| s.trim().parse::<f32>().unwrap_or(0.0))
-            .collect::<Vec<f32>>();
+            .collect();
 
         if numbers.len() != strings.len() {
             log::trace!("Parsed strings: $N{:02X},{:?}", cmd, strings);
@@ -409,26 +409,27 @@ impl FurunoReportReceiver {
         if self.model_known {
             return;
         }
-        let scanner_module = values[0];
+        self.model_known = true; // We set this even if we can't parse the model, there is no point in logging errors many times.
 
-        if scanner_module.len() != "0359358-01.01".len() {
-            log::error!("{}: Invalid modules string {}", self.key, scanner_module);
+        if let Some((model, version)) = values[0].split_once('-') {
+            let model = Self::parse_model(model);
+            log::info!(
+                "{}: Radar model {} version {}",
+                self.key,
+                model.to_str(),
+                version
+            );
+            settings::update_when_model_known(&mut self.info, model, version);
+            self.command_sender
+                .set_ranges(self.info.range_detection.as_ref().unwrap().clone());
+            return;
         }
-        if let Some((model, version)) = scanner_module.split_once('-') {
-            if let Some(model) = Self::parse_model(model) {
-                settings::update_when_model_known(&mut self.info, model, version);
-                self.command_sender
-                    .set_ranges(self.info.range_detection.as_ref().unwrap().clone());
-                self.model_known = true;
-            }
-        } else {
-            log::error!("{}: Invalid modules string {}", self.key, scanner_module);
-        }
+        log::error!("{}: Unknown radar type, modules {:?}", self.key, values);
     }
 
     // See TZ Fec.Wrapper.SensorProperty.GetRadarSensorType
-    fn parse_model(model: &str) -> Option<RadarModel> {
-        Some(match model {
+    fn parse_model(model: &str) -> RadarModel {
+        match model {
             "0359235" => RadarModel::DRS,
             "0359255" => RadarModel::FAR14x7,
             "0359204" => RadarModel::FAR21x7,
@@ -444,9 +445,7 @@ impl FurunoReportReceiver {
             "0359344" => RadarModel::FAR15x3,
             "0359397" => RadarModel::FAR14x6,
 
-            _ => {
-                return None;
-            } // Default case
-        })
+            _ => RadarModel::Unknown, // Default case
+        }
     }
 }

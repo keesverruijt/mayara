@@ -278,7 +278,11 @@ impl FurunoDataReceiver {
 
         let sweep_count = metadata.sweep_count;
         let sweep_len = metadata.sweep_len as usize;
-        log::trace!("Received UDP frame with {} spokes", &sweep_count);
+        log::debug!(
+            "Received UDP frame with {} spokes, total {}",
+            sweep_count,
+            self.sweep_count
+        );
 
         let mut message = RadarMessage::new();
         message.radar = self.info.id as u32;
@@ -318,7 +322,14 @@ impl FurunoDataReceiver {
             if angle < self.prev_angle {
                 let ms = self.info.full_rotation();
                 self.trails.set_rotation_speed(ms);
-                log::trace!("sweep_count = {}", self.sweep_count);
+
+                log::debug!("sweep_count = {}", self.sweep_count);
+                if log::log_enabled!(log::Level::Debug) {
+                    let _ = self
+                        .info
+                        .controls
+                        .set_string(&ControlType::Spokes, sweep_count.to_string());
+                }
                 self.sweep_count = 0;
             }
             self.prev_angle = angle;
@@ -330,12 +341,14 @@ impl FurunoDataReceiver {
             .write_to_vec(&mut bytes)
             .expect("Cannot write RadarMessage to vec");
 
-        match self.info.message_tx.send(bytes) {
-            Err(e) => {
-                log::trace!("{}: Dropping received spoke: {}", self.key, e);
-            }
-            Ok(count) => {
-                log::trace!("{}: sent to {} receivers", self.key, count);
+        if !log::log_enabled!(log::Level::Debug) {
+            match self.info.message_tx.send(bytes) {
+                Err(e) => {
+                    log::trace!("{}: Dropping received spoke: {}", self.key, e);
+                }
+                Ok(count) => {
+                    log::trace!("{}: sent to {} receivers", self.key, count);
+                }
             }
         }
     }
@@ -484,7 +497,7 @@ impl FurunoDataReceiver {
             .map(|d| d.as_millis() as u64)
             .ok();
 
-        spoke.data = vec![0; FURUNO_SPOKE_LEN];
+        spoke.data = vec![0; sweep.len()];
 
         let mut i = 0;
         for b in sweep {
@@ -493,9 +506,6 @@ impl FurunoDataReceiver {
         }
         if GLOBAL_ARGS.replay {
             spoke.data[sweep.len() - 1] = 64;
-            spoke.data[sweep.len() - 2] = 64;
-            spoke.data[FURUNO_SPOKE_LEN - 1] = 64;
-            spoke.data[FURUNO_SPOKE_LEN - 2] = 64;
         }
 
         log::trace!(
@@ -521,8 +531,8 @@ impl FurunoDataReceiver {
     //   0,
     //   1,
     //   0, 0, 0, 0,
-    //   48,   #  8: 0x30
-    //   17,   #  9: 0x11
+    //   48,   #  8: 0x30 - low byte of range? (= range * 4 + 4)
+    //   17,   #  9: 0x11 - bit 0 = high bit of range
     //   116,  # 10: 0x74 - low byte of sweep_len
     //   219,  # 11: 0xDB - bits 2..0 (011) = bits 10..8 of sweep_len
     //                    - bits 4..3 (11) = encoding 3
@@ -545,11 +555,19 @@ impl FurunoDataReceiver {
             .range_detection
             .as_ref()
             .expect("No range detection");
+
+        // Extract all the fields from the header
+        let v1 = (data[8] as u32 + (data[9] as u32 & 0x01) * 256) * 4 + 4;
         let sweep_count = (data[9] >> 1) as u32;
         let sweep_len = ((data[11] & 0x07) as u32) << 8 | data[10] as u32;
-        let encoding = ((data[11] & 0x18) >> 3) as u8;
+        let encoding = (data[11] & 0x18) >> 3;
+        let v2 = (data[11] & 0x20) >> 5;
+        let v3 = (data[11] & 0xc0) >> 6;
+        let range_index = data[12] as usize;
         let have_heading = ((data[15] & 0x30) >> 3) as u8;
-        let range = ranges.ranges.get(data[12] as usize).unwrap_or(&0);
+
+        // Now do stuff with the data
+        let range = ranges.ranges.get(range_index).unwrap_or(&0);
         let range = *range as u32;
         let metadata = FurunoSpokeMetadata {
             sweep_count,
@@ -558,15 +576,17 @@ impl FurunoDataReceiver {
             have_heading,
             range,
         };
-        log::trace!(
-            "header {:?} -> sweep_count={} sweep_len={} encoding={} have_heading={} range={}",
-            &data[0..20],
-            sweep_count,
-            sweep_len,
-            encoding,
-            have_heading,
-            range
-        );
+        if self.sweep_count < self.prev_angle {
+            log::debug!(
+                "header {:?} -> v1={v1}, v2={v2}, v3={v3}, sweep_count={} sweep_len={} encoding={} have_heading={} range={}",
+                &data[0..20],
+                sweep_count,
+                sweep_len,
+                encoding,
+                have_heading,
+                range
+            );
+        }
 
         metadata
     }

@@ -5,7 +5,7 @@ use crate::{
     settings::{Control, ControlType, DataUpdate, SharedControls},
 };
 
-use super::RadarModel;
+use super::{RadarModel, FURUNO_SPOKES};
 
 pub fn new() -> SharedControls {
     let mut controls = HashMap::new();
@@ -42,6 +42,15 @@ pub fn new() -> SharedControls {
     .send_always();
     control.set_valid_values([1, 2].to_vec());
     controls.insert(ControlType::Status, control);
+
+    if log::log_enabled!(log::Level::Debug) {
+        controls.insert(
+            ControlType::Spokes,
+            Control::new_numeric(ControlType::Spokes, 0., FURUNO_SPOKES as f32)
+                .read_only(true)
+                .unit("per rotation"),
+        );
+    }
 
     SharedControls::new(controls)
 }
@@ -160,21 +169,13 @@ static FURUNO_RADAR_RANGES: [i32; 22] = [
 
 // See Far.Wrapper.SensorProperty._availableRangeCodeListsForNm etc.
 fn get_ranges_nm_by_model(model: &RadarModel) -> &'static [bool; 22] {
+    static RANGES_NM_UNKNOWN: [bool; 22] = [
+        true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+        true, true, true, true, true, true, false,
+    ];
     static RANGES_NM_FAR21X7: [bool; 22] = [
         false, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
         true, false, true, false, false, true, false,
-    ];
-    static RANGES_NM_DRS: [bool; 22] = [
-        true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
-        true, true, true, true, true, true, false,
-    ];
-    static RANGES_NM_FAR14X7: [bool; 22] = [
-        true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
-        true, true, true, true, true, true, false,
-    ];
-    static RANGES_NM_DRS4_DL: [bool; 22] = [
-        true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
-        true, true, true, true, true, true, false,
     ];
     static RANGES_NM_FAR3000: [bool; 22] = [
         false, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
@@ -187,10 +188,6 @@ fn get_ranges_nm_by_model(model: &RadarModel) -> &'static [bool; 22] {
     static RANGES_NM_DRS6_ANXT: [bool; 22] = [
         true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
         true, true, true, true, true, false, false,
-    ];
-    static RANGES_NM_DRS6_AXCLASS: [bool; 22] = [
-        true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
-        true, true, true, true, true, true, false,
     ];
     static RANGES_NM_FAR15X3: [bool; 22] = [
         false, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
@@ -210,14 +207,15 @@ fn get_ranges_nm_by_model(model: &RadarModel) -> &'static [bool; 22] {
     ];
 
     match model {
+        RadarModel::Unknown
+        | RadarModel::DRS
+        | RadarModel::FAR14x7
+        | RadarModel::DRS4DL
+        | RadarModel::DRS6AXCLASS => &RANGES_NM_UNKNOWN,
         RadarModel::FAR21x7 => &RANGES_NM_FAR21X7,
-        RadarModel::DRS => &RANGES_NM_DRS,
-        RadarModel::FAR14x7 => &RANGES_NM_FAR14X7,
-        RadarModel::DRS4DL => &RANGES_NM_DRS4_DL,
         RadarModel::FAR3000 => &RANGES_NM_FAR3000,
         RadarModel::DRS4DNXT => &RANGES_NM_DRS4_DNXT,
         RadarModel::DRS6ANXT => &RANGES_NM_DRS6_ANXT,
-        RadarModel::DRS6AXCLASS => &RANGES_NM_DRS6_AXCLASS,
         RadarModel::FAR15x3 => &RANGES_NM_FAR15X3,
         RadarModel::FAR14x6 => &RANGES_NM_FAR14X6,
         RadarModel::DRS12ANXT => &RANGES_NM_DRS12_ANXT,

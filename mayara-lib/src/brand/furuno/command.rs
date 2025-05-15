@@ -7,6 +7,8 @@ use super::CommandMode;
 use crate::radar::{RadarError, RadarInfo, RangeDetection};
 use crate::settings::{ControlType, ControlValue, SharedControls};
 
+const RADAR_A: i32 = 0;
+
 #[derive(Primitive, PartialEq, Eq, Debug, Clone)]
 pub(crate) enum CommandId {
     Connect = 0x60,
@@ -205,6 +207,7 @@ impl Command {
                 CommandId::Sea
             }
             ControlType::Rain => {
+                cmd.push(RADAR_A);
                 cmd.push(value);
                 CommandId::Rain
             }
