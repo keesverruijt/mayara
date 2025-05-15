@@ -29,7 +29,7 @@ mod util;
 mod web;
 
 use mayara;
-use mayara::{network, Cli, set_global_args, GLOBAL_ARGS};
+use mayara::{network, Cli, set_global_args, get_global_args};
 
 /*
 
@@ -95,7 +95,7 @@ pub struct Cli {
     stationary: bool,
 }
 
-static GLOBAL_ARGS: Lazy<Cli> = Lazy::new(|| Cli::parse());
+static get_global_args(): Lazy<Cli> = Lazy::new(|| Cli::parse());
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Brand {
@@ -203,7 +203,7 @@ impl Serialize for InterfaceId {
 async fn main() -> Result<()> {
     set_global_args(Cli::parse()).expect("Failed to set global args");
 
-    let log_level = GLOBAL_ARGS.verbose.log_level_filter();
+    let log_level = get_global_args().verbose.log_level_filter();
     env_logger::Builder::from_env(Env::default())
         .filter_level(log_level)
         .filter_module("tungstenite::protocol", log::LevelFilter::Info)
@@ -211,31 +211,31 @@ async fn main() -> Result<()> {
         .filter_module("polling", log::LevelFilter::Info)
         .init();
 
-    network::set_replay(GLOBAL_ARGS.replay);
+    network::set_replay(get_global_args().replay);
 
     info!("Mayara {} loglevel {}", mayara::VERSION, log_level);
-    if GLOBAL_ARGS.replay {
+    if get_global_args().replay {
         warn!("Replay mode activated, this does the following:");
         warn!(" * A circle is drawn at the last two pixels in each spoke");
         warn!(" * Timestamp on each spoke is as if received now");
         warn!(" * Any 4G/HALO secondary radar B is ignored and not reported");
     }
-    if GLOBAL_ARGS.fake_errors {
+    if get_global_args().fake_errors {
         warn!("Fake error mode activated, this does the following:");
         warn!(" * Any control operation on Rain Clutter beyond values 0..10 will fail");
         warn!(" * Failure for value 11..13 are all different");
     }
-    if GLOBAL_ARGS.allow_wifi {
+    if get_global_args().allow_wifi {
         warn!("Allow WiFi mode activated, this does the following:");
         warn!(" * Radars will be detected even on WiFi interfaces");
     }
-    if GLOBAL_ARGS.output {
+    if get_global_args().output {
         warn!("Output mode activated; 'protobuf' formatted RadarMessage sent to stdout");
     }
-    if GLOBAL_ARGS.nmea0183 {
+    if get_global_args().nmea0183 {
         warn!(
             "NMEA0183 mode activated; will load GPS position, heading and date/time from {}",
-            GLOBAL_ARGS
+            get_global_args()
                 .navigation_address
                 .as_ref()
                 .unwrap_or(&"MDNS".to_string())

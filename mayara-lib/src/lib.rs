@@ -124,7 +124,7 @@ impl Deref for GlobalArgs {
     }
 }
 
-pub static GLOBAL_ARGS: GlobalArgs = GlobalArgs::new();
+static GLOBAL_ARGS: GlobalArgs = GlobalArgs::new();
 
 pub fn get_global_args() -> Cli {
     GLOBAL_ARGS.get().cloned().expect("get_global_args() not yet initialized")

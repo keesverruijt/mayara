@@ -29,7 +29,7 @@ use axum_fix::{Message, WebSocket, WebSocketUpgrade};
 use mayara::{
     radar::{Legend, RadarError, RadarInfo, SharedRadars},
     settings::SharedControls,
-    InterfaceApi, GLOBAL_ARGS,
+    InterfaceApi, get_global_args,
     ProtoAssets
 };
 
@@ -76,7 +76,7 @@ impl Web {
     pub async fn run(self, subsys: SubsystemHandle) -> Result<(), WebError> {
         let listener = TcpListener::bind(SocketAddr::new(
             IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-            GLOBAL_ARGS.port,
+            get_global_args().port,
         ))
         .await
         .map_err(|e| WebError::Io(e))?;
@@ -98,7 +98,7 @@ impl Web {
             .with_state(self)
             .into_make_service_with_connect_info::<SocketAddr>();
 
-        log::info!("Starting HTTP web server on port {}", GLOBAL_ARGS.port);
+        log::info!("Starting HTTP web server on port {}", get_global_args().port);
 
         tokio::select! { biased;
             _ = subsys.on_shutdown_requested() => {
@@ -177,7 +177,7 @@ async fn get_radars(
             Ok(uri) => uri.host().unwrap_or("localhost").to_string(),
             Err(_) => "localhost".to_string(),
         },
-        GLOBAL_ARGS.port
+        get_global_args().port
     );
 
     debug!("target host = '{}'", host);
