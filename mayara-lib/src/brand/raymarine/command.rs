@@ -30,7 +30,7 @@ impl Command {
             info,
             model,
             sock: None,
-            fake_errors: GLOBAL_ARGS.fake_errors,
+            fake_errors: get_global_args().fake_errors,
         }
     }
 

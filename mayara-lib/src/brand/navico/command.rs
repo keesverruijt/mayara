@@ -6,7 +6,7 @@ use tokio::net::UdpSocket;
 use crate::network::create_multicast_send;
 use crate::radar::{RadarError, RadarInfo};
 use crate::settings::{ControlType, ControlValue, SharedControls};
-use crate::GLOBAL_ARGS;
+use crate::get_global_args;
 
 use super::Model;
 
@@ -31,7 +31,7 @@ impl Command {
             info,
             model,
             sock: None,
-            fake_errors: GLOBAL_ARGS.fake_errors,
+            fake_errors: get_global_args().fake_errors,
         }
     }
 

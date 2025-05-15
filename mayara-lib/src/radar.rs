@@ -20,7 +20,7 @@ pub(crate) mod trail;
 use crate::config::Persistence;
 use crate::locator::LocatorId;
 use crate::settings::{ControlError, ControlType, ControlUpdate, ControlValue, SharedControls};
-use crate::{Brand, TargetMode, GLOBAL_ARGS};
+use crate::{Brand, TargetMode, get_global_args};
 
 // A "native to radar" bearing, usually [0..2048] or [0..4096] or [0..8192]
 pub(crate) type SpokeBearing = u16;
@@ -400,7 +400,7 @@ impl SharedRadars {
         let mut radars = self.radars.write().unwrap();
 
         // For now, drop second radar in replay Mode...
-        if GLOBAL_ARGS.replay && key.ends_with("-B") {
+        if get_global_args().replay && key.ends_with("-B") {
             return None;
         }
 
@@ -624,7 +624,7 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
         },
     });
 
-    if GLOBAL_ARGS.targets == TargetMode::Arpa {
+    if get_global_args().targets == TargetMode::Arpa {
         legend.border = legend.pixels.len() as u8;
         legend.pixels.push(Lookup {
             r#type: PixelType::TargetBorder,
@@ -660,7 +660,7 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
         });
     }
 
-    if GLOBAL_ARGS.targets != TargetMode::None {
+    if get_global_args().targets != TargetMode::None {
         legend.history_start = legend.pixels.len() as u8;
         const START_DENSITY: u8 = 255; // Target trail starts as white
         const END_DENSITY: u8 = 63; // Ends as gray

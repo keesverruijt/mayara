@@ -27,7 +27,7 @@ use crate::brand::navico;
 use crate::brand::raymarine;
 
 use crate::radar::{RadarError, SharedRadars};
-use crate::{network, Brand, InterfaceApi, InterfaceId, RadarInterfaceApi, GLOBAL_ARGS};
+use crate::{network, Brand, InterfaceApi, InterfaceId, RadarInterfaceApi, get_global_args};
 
 const LOCATOR_PACKET_BUFFER_LEN: usize = 300; // Long enough for any location packet
 
@@ -164,7 +164,7 @@ impl Locator {
             let sockets = self.create_listen_sockets(&listen_addresses, &mut interface_state);
             let mut set = JoinSet::new();
             if sockets.is_err() {
-                if GLOBAL_ARGS.interface.is_some() {
+                if get_global_args().interface.is_some() {
                     return Err(sockets.err().unwrap());
                 }
                 log::debug!("No NIC addresses found");
@@ -304,18 +304,18 @@ impl Locator {
         brands.clear();
 
         #[cfg(feature = "navico")]
-        if GLOBAL_ARGS.brand.unwrap_or(Brand::Navico) == Brand::Navico {
+        if get_global_args().brand.unwrap_or(Brand::Navico) == Brand::Navico {
             locators.push(navico::create_locator());
             locators.push(navico::create_br24_locator());
             brands.insert(Brand::Navico);
         }
         #[cfg(feature = "furuno")]
-        if GLOBAL_ARGS.brand.unwrap_or(Brand::Furuno) == Brand::Furuno {
+        if get_global_args().brand.unwrap_or(Brand::Furuno) == Brand::Furuno {
             locators.push(furuno::create_locator());
             brands.insert(Brand::Furuno);
         }
         #[cfg(feature = "raymarine")]
-        if GLOBAL_ARGS.brand.unwrap_or(Brand::Raymarine) == Brand::Raymarine {
+        if get_global_args().brand.unwrap_or(Brand::Raymarine) == Brand::Raymarine {
             locators.push(raymarine::create_locator());
             brands.insert(Brand::Raymarine);
         }
@@ -332,8 +332,8 @@ impl Locator {
         listen_addresses: &Vec<LocatorAddress>,
         interface_state: &mut InterfaceState,
     ) -> Result<Vec<LocatorSocket>, RadarError> {
-        let only_interface = &GLOBAL_ARGS.interface;
-        let avoid_wifi = !GLOBAL_ARGS.allow_wifi;
+        let only_interface = &get_global_args().interface;
+        let avoid_wifi = !get_global_args().allow_wifi;
 
         let if_api = &mut interface_state.interface_api.interfaces;
         if_api.clear();
@@ -448,11 +448,11 @@ impl Locator {
                                 );
                             }
                         }
-                        if GLOBAL_ARGS.interface.is_some()
+                        if get_global_args().interface.is_some()
                             && interface_state.active_nic_addresses.len() == 0
                         {
                             return Err(RadarError::InterfaceNoV4(
-                                GLOBAL_ARGS.interface.clone().unwrap(),
+                                get_global_args().interface.clone().unwrap(),
                             ));
                         }
                     }
@@ -482,11 +482,11 @@ impl Locator {
                 }
                 interface_state.first_loop = false;
 
-                if GLOBAL_ARGS.interface.is_some()
+                if get_global_args().interface.is_some()
                     && interface_state.active_nic_addresses.len() == 0
                 {
                     return Err(RadarError::InterfaceNotFound(
-                        GLOBAL_ARGS.interface.clone().unwrap(),
+                        get_global_args().interface.clone().unwrap(),
                     ));
                 }
 
@@ -534,7 +534,7 @@ async fn send_beacon_requests(
     beacon_messages: &Vec<(SocketAddr, Vec<&[u8]>)>,
     interface_addresses: &Vec<Ipv4Addr>,
 ) -> io::Result<()> {
-    if !GLOBAL_ARGS.replay {
+    if !get_global_args().replay {
         for x in beacon_messages {
             for beacon_request in &x.1 {
                 if let Err(e) = send_beacon_request(interface_addresses, &x.0, beacon_request).await

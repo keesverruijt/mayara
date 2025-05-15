@@ -14,7 +14,7 @@ use crate::network::create_udp_multicast_listen;
 use crate::radar::{DopplerMode, RadarError, RadarInfo, RangeDetection, SharedRadars};
 use crate::settings::{ControlType, ControlUpdate, ControlValue, DataUpdate};
 use crate::util::{c_string, c_wide_string};
-use crate::GLOBAL_ARGS;
+use crate::get_global_args;
 
 use super::command::Command;
 use super::Model;
@@ -503,7 +503,7 @@ impl NavicoReportReceiver {
     // If range detection is in progress, go to the next range
     async fn process_range(&mut self, range: i32) -> Result<(), RadarError> {
         let mut range = range / 10;
-        if self.info.range_detection.is_none() && !GLOBAL_ARGS.replay {
+        if self.info.range_detection.is_none() && !get_global_args().replay {
             if let Some(control) = self.info.controls.get(&ControlType::Range) {
                 self.info.range_detection = Some(RangeDetection::new(
                     0,

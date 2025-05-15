@@ -12,7 +12,7 @@ use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState};
 use crate::radar::{RadarInfo, SharedRadars};
 use crate::util::{c_string, PrintableSlice};
-use crate::{Brand, GLOBAL_ARGS};
+use crate::{Brand, get_global_args};
 
 mod command;
 mod data;
@@ -160,7 +160,7 @@ fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) -> bo
         let data_name = info.key() + " data";
         let report_name = info.key() + " reports";
 
-        if GLOBAL_ARGS.output {
+        if get_global_args().output {
             let info_clone2 = info.clone();
 
             subsys.start(SubsystemBuilder::new("stdout", move |s| {
@@ -174,7 +174,7 @@ fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) -> bo
             move |s: SubsystemHandle| data_receiver.run(s),
         ));
 
-        if !GLOBAL_ARGS.replay {
+        if !get_global_args().replay {
             let report_receiver = report::FurunoReportReceiver::new(info);
             subsys.start(SubsystemBuilder::new(report_name, |s| {
                 report_receiver.run(s)
@@ -226,7 +226,7 @@ struct FurunoRadarModelReport {
 const LOGIN_TIMEOUT: Duration = Duration::from_millis(500);
 
 fn login_to_radar(radar_addr: SocketAddrV4) -> Result<u16, io::Error> {
-    if GLOBAL_ARGS.replay {
+    if get_global_args().replay {
         log::warn!("Replay mode, not logging in to radar",);
         return Ok(0);
     }

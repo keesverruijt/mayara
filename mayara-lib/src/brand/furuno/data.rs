@@ -3,7 +3,7 @@ use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
 use crate::settings::{ControlType, DataUpdate};
 use crate::util::PrintableSpoke;
-use crate::{radar::*, GLOBAL_ARGS};
+use crate::{radar::*, get_global_args};
 
 use core::panic;
 use protobuf::Message;
@@ -147,7 +147,7 @@ impl FurunoDataReceiver {
 
     #[cfg(target_os = "macos")]
     fn verify_source_address(&self, addr: &SocketAddr) -> bool {
-        addr.ip() == std::net::SocketAddr::V4(self.info.addr).ip() || GLOBAL_ARGS.replay
+        addr.ip() == std::net::SocketAddr::V4(self.info.addr).ip() || get_global_args().replay
     }
     #[cfg(not(target_os = "macos"))]
     fn verify_source_address(&self, addr: &SocketAddr) -> bool {
@@ -470,7 +470,7 @@ impl FurunoDataReceiver {
         heading: SpokeBearing,
         sweep: &[u8],
     ) -> Spoke {
-        if GLOBAL_ARGS.replay {
+        if get_global_args().replay {
             let _ = self
                 .info
                 .controls
@@ -504,7 +504,7 @@ impl FurunoDataReceiver {
             spoke.data[i] = b >> 2;
             i += 1;
         }
-        if GLOBAL_ARGS.replay {
+        if get_global_args().replay {
             spoke.data[sweep.len() - 1] = 64;
         }
 

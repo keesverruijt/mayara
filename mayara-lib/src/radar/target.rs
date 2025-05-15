@@ -16,7 +16,7 @@ use crate::{
     navdata,
     protos::RadarMessage::radar_message::Spoke,
     settings::{ControlError, ControlType},
-    GLOBAL_ARGS,
+    get_global_args,
 };
 
 use super::{GeoPosition, Legend, RadarInfo};
@@ -327,7 +327,7 @@ impl HistorySpoke {
 
 impl HistorySpokes {
     fn new(spokes: i32, spoke_len: i32) -> Self {
-        let stationary = GLOBAL_ARGS.stationary;
+        let stationary = get_global_args().stationary;
         log::debug!(
             "creating HistorySpokes ({} x {}) stationary: {}",
             spokes,
@@ -794,7 +794,7 @@ impl TargetSetup {
 
 impl TargetBuffer {
     pub fn new(info: &RadarInfo) -> Self {
-        let stationary = GLOBAL_ARGS.stationary;
+        let stationary = get_global_args().stationary;
         let spokes = info.spokes as i32;
         let spoke_len = info.max_spoke_len as i32;
 

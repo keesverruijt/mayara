@@ -19,7 +19,7 @@ use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::{
     radar::{GeoPosition, RadarError},
-    GLOBAL_ARGS,
+    get_global_args,
 };
 
 pub(crate) static HEADING_TRUE_VALID: AtomicBool = AtomicBool::new(false);
@@ -109,7 +109,7 @@ pub(crate) struct NavigationData {
 
 impl NavigationData {
     pub(crate) fn new() -> Self {
-        match GLOBAL_ARGS.nmea0183 {
+        match get_global_args().nmea0183 {
             true => NavigationData {
                 nmea0183_mode: true,
                 service_name: NMEA0183_SERVICE_NAME,
@@ -134,7 +134,7 @@ impl NavigationData {
         let mut rx_ip_change = rx_ip_change;
         loop {
             match self
-                .find_service(&subsys, &mut rx_ip_change, &GLOBAL_ARGS.navigation_address)
+                .find_service(&subsys, &mut rx_ip_change, &get_global_args().navigation_address)
                 .await
             {
                 Ok(Stream::Tcp(stream)) => {
@@ -208,7 +208,7 @@ impl NavigationData {
         if interface.is_some() {
             let _ = mdns.disable_interface(IfKind::All);
             let _ = mdns.enable_interface(IfKind::Name(
-                GLOBAL_ARGS.navigation_address.as_ref().unwrap().to_string(),
+                get_global_args().navigation_address.as_ref().unwrap().to_string(),
             ));
         }
         let tcp_locator = mdns.browse(self.service_name).expect(&format!(

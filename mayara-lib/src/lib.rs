@@ -120,11 +120,15 @@ impl GlobalArgs {
 impl Deref for GlobalArgs {
     type Target = Cli;
     fn deref(&self) -> &Cli {
-        self.get().expect("GLOBAL_ARGS not yet initialized")
+        self.get().expect("get_global_args() not yet initialized")
     }
 }
 
 pub static GLOBAL_ARGS: GlobalArgs = GlobalArgs::new();
+
+pub fn get_global_args() -> Cli {
+    GLOBAL_ARGS.get().cloned().expect("get_global_args() not yet initialized")
+}
 
 pub fn set_global_args(cli: Cli) -> Result<(), Cli> {
     GLOBAL_ARGS.set(cli)

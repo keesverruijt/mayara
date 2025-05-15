@@ -12,7 +12,7 @@ use crate::radar::{RadarInfo, SharedRadars};
 use crate::settings::ControlType;
 use crate::util::c_string;
 use crate::util::PrintableSlice;
-use crate::{Brand, GLOBAL_ARGS};
+use crate::{Brand, get_global_args};
 
 mod command;
 mod data;
@@ -212,7 +212,7 @@ fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
         let report_name = info.key() + " reports";
         let info_clone = info.clone();
 
-        if GLOBAL_ARGS.output {
+        if get_global_args().output {
             let info_clone2 = info.clone();
 
             subsys.start(SubsystemBuilder::new("stdout", move |s| {

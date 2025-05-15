@@ -17,7 +17,7 @@ use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
 use crate::settings::{ControlType, DataUpdate};
 use crate::util::PrintableSpoke;
-use crate::{radar::*, GLOBAL_ARGS};
+use crate::{radar::*, get_global_args};
 
 use super::{NAVICO_SPOKES, NAVICO_SPOKES_RAW, RADAR_LINE_DATA_LENGTH, SPOKES_PER_FRAME};
 
@@ -479,7 +479,7 @@ impl NavicoDataReceiver {
             generic_spoke.push(pixel_to_blob[high_nibble_index][pixel]);
         }
 
-        if GLOBAL_ARGS.replay {
+        if get_global_args().replay {
             // Generate circle at extreme range
             let pixel = 0xff as usize;
             generic_spoke.pop();
