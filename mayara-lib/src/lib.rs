@@ -97,34 +97,7 @@ pub struct Cli {
     pub stationary: bool,
 }
 
-pub struct GlobalArgs {
-    inner: OnceCell<Cli>,
-}
-
-impl GlobalArgs {
-    pub const fn new() -> Self {
-        GlobalArgs {
-            inner: OnceCell::new(),
-        }
-    }
-
-    pub fn set(&self, cli: Cli) -> Result<(), Cli> {
-        self.inner.set(cli)
-    }
-
-    pub fn get(&self) -> Option<&Cli> {
-        self.inner.get()
-    }
-}
-
-impl Deref for GlobalArgs {
-    type Target = Cli;
-    fn deref(&self) -> &Cli {
-        self.get().expect("get_global_args() not yet initialized")
-    }
-}
-
-static GLOBAL_ARGS: GlobalArgs = GlobalArgs::new();
+static GLOBAL_ARGS: OnceCell<Cli> = OnceCell::new();
 
 pub fn get_global_args() -> Cli {
     GLOBAL_ARGS.get().cloned().expect("get_global_args() not yet initialized")
