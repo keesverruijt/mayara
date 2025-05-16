@@ -366,6 +366,7 @@ impl FurunoLocatorState {
                     let report_addr: SocketAddrV4 = SocketAddrV4::new(*from.ip(), 0); // Port is set in login_to_radar
                     let send_command_addr: SocketAddrV4 = report_addr.clone();
                     let location_info: RadarInfo = RadarInfo::new(
+                        self.session.clone(),
                         LocatorId::Furuno,
                         Brand::Furuno,
                         None,

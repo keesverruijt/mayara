@@ -253,6 +253,7 @@ impl NavicoLocatorState {
                         let radar_report: SocketAddrV4 = data.a.report.into();
                         let radar_send: SocketAddrV4 = data.a.send.into();
                         let location_info: RadarInfo = RadarInfo::new(
+                            self.session.clone(),
                             LocatorId::Gen3Plus,
                             Brand::Navico,
                             Some(serial_no),
@@ -274,6 +275,7 @@ impl NavicoLocatorState {
                         let radar_report: SocketAddrV4 = data.b.report.into();
                         let radar_send: SocketAddrV4 = data.b.send.into();
                         let location_info: RadarInfo = RadarInfo::new(
+                            self.session.clone(),
                             LocatorId::Gen3Plus,
                             Brand::Navico,
                             Some(serial_no),
@@ -309,6 +311,7 @@ impl NavicoLocatorState {
                         let radar_report: SocketAddrV4 = data.a.report.into();
                         let radar_send: SocketAddrV4 = data.a.send.into();
                         let location_info: RadarInfo = RadarInfo::new(
+                            self.session.clone(),
                             LocatorId::Gen3Plus,
                             Brand::Navico,
                             Some(serial_no),
@@ -344,6 +347,7 @@ impl NavicoLocatorState {
                         let radar_report: SocketAddrV4 = data.report.into();
                         let radar_send: SocketAddrV4 = data.send.into();
                         let location_info: RadarInfo = RadarInfo::new(
+                            self.session.clone(),
                             LocatorId::GenBR24,
                             Brand::Navico,
                             Some(serial_no),

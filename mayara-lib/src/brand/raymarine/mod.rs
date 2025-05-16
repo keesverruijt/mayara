@@ -139,6 +139,7 @@ impl RaymarineLocatorState {
                     let radar_addr: SocketAddrV4 = data.data.into();
                     let radar_send: SocketAddrV4 = data.radar.into();
                     let location_info: RadarInfo = RadarInfo::new(
+                        self.session.clone(),
                         LocatorId::Raymarine,
                         Brand::Raymarine,
                         None,

@@ -254,6 +254,12 @@ impl Session {
     }
 }
 
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Session {{ }}")
+    }
+}
+
 static GLOBAL_ARGS: OnceCell<Session> = OnceCell::new();
 
 pub fn get_global_args() -> Cli {
