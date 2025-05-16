@@ -27,7 +27,7 @@ use crate::brand::navico;
 use crate::brand::raymarine;
 
 use crate::radar::{RadarError, SharedRadars};
-use crate::{network, Brand, InterfaceApi, InterfaceId, RadarInterfaceApi, get_global_args};
+use crate::{network, Brand, InterfaceApi, InterfaceId, RadarInterfaceApi, Session, get_global_args};
 
 const LOCATOR_PACKET_BUFFER_LEN: usize = 300; // Long enough for any location packet
 
@@ -118,12 +118,13 @@ enum ResultType {
 }
 
 pub struct Locator {
+    pub session: Session,
     pub radars: SharedRadars,
 }
 
 impl Locator {
-    pub fn new(radars: SharedRadars) -> Self {
-        Locator { radars }
+    pub fn new(session: Session, radars: SharedRadars) -> Self {
+        Locator { session, radars }
     }
 
     pub async fn run(
@@ -146,7 +147,7 @@ impl Locator {
             first_loop: true,
         };
 
-        let listen_addresses = Self::compute_listen_addresses(&mut interface_state);
+        let listen_addresses = self.compute_listen_addresses(&mut interface_state);
 
         // Make a copy of the beacon request packets to send them later, as LocatorAddress is not 'Send'.
         let beacon_messages = listen_addresses
@@ -296,7 +297,7 @@ impl Locator {
         let _ = reply_channel.send(interface_api).await;
     }
 
-    fn compute_listen_addresses(interface_state: &mut InterfaceState) -> Vec<LocatorAddress> {
+    fn compute_listen_addresses(&self, interface_state: &mut InterfaceState) -> Vec<LocatorAddress> {
         let mut listen_addresses: Vec<LocatorAddress> = Vec::new();
         let mut locators: Vec<Box<dyn RadarLocator>> = Vec::new();
 
@@ -305,18 +306,18 @@ impl Locator {
 
         #[cfg(feature = "navico")]
         if get_global_args().brand.unwrap_or(Brand::Navico) == Brand::Navico {
-            locators.push(navico::create_locator());
-            locators.push(navico::create_br24_locator());
+            locators.push(navico::create_locator(self.session.clone()));
+            locators.push(navico::create_br24_locator(self.session.clone()));
             brands.insert(Brand::Navico);
         }
         #[cfg(feature = "furuno")]
         if get_global_args().brand.unwrap_or(Brand::Furuno) == Brand::Furuno {
-            locators.push(furuno::create_locator());
+            locators.push(furuno::create_locator(self.session.clone()));
             brands.insert(Brand::Furuno);
         }
         #[cfg(feature = "raymarine")]
         if get_global_args().brand.unwrap_or(Brand::Raymarine) == Brand::Raymarine {
-            locators.push(raymarine::create_locator());
+            locators.push(raymarine::create_locator(self.session.clone()));
             brands.insert(Brand::Raymarine);
         }
 

@@ -12,7 +12,7 @@ use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState};
 use crate::radar::{RadarInfo, SharedRadars};
 use crate::util::{c_string, PrintableSlice};
-use crate::{Brand, get_global_args};
+use crate::{Brand, Session, get_global_args};
 
 mod command;
 mod data;
@@ -439,7 +439,8 @@ impl FurunoLocatorState {
     }
 }
 
-struct FurunoLocator {}
+#[derive(Clone)]
+struct FurunoLocator {session: Session}
 
 #[async_trait]
 impl RadarLocator for FurunoLocator {
@@ -463,7 +464,7 @@ impl RadarLocator for FurunoLocator {
     }
 }
 
-pub fn create_locator() -> Box<dyn RadarLocator + Send> {
-    let locator = FurunoLocator {};
+pub fn create_locator(session: Session) -> Box<dyn RadarLocator + Send> {
+    let locator = FurunoLocator {session};
     Box::new(locator)
 }

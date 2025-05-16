@@ -12,7 +12,7 @@ use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState}
 use crate::network::LittleEndianSocketAddrV4;
 use crate::radar::{RadarInfo, SharedRadars};
 use crate::util::{c_string, PrintableSlice};
-use crate::{Brand, get_global_args};
+use crate::{Brand, Session, get_global_args};
 
 // mod command;
 // mod data;
@@ -296,7 +296,8 @@ impl RadarLocatorState for RaymarineLocatorState {
     }
 }
 
-struct RaymarineLocator {}
+#[derive(Clone)]
+struct RaymarineLocator {session: Session}
 
 #[async_trait]
 impl RadarLocator for RaymarineLocator {
@@ -313,8 +314,8 @@ impl RadarLocator for RaymarineLocator {
     }
 }
 
-pub fn create_locator() -> Box<dyn RadarLocator + Send> {
-    let locator = RaymarineLocator {};
+pub fn create_locator(session: Session) -> Box<dyn RadarLocator + Send> {
+    let locator = RaymarineLocator {session};
     Box::new(locator)
 }
 

@@ -233,7 +233,7 @@ impl Session {
 
         selfref.write().unwrap().radars = radars;
 
-        let locator = Locator::new(selfref.write().unwrap().radars.clone().unwrap());
+        let locator = Locator::new(selfref.clone(), selfref.write().unwrap().radars.clone().unwrap());
 
         let (tx_ip_change, rx_ip_change) = mpsc::channel(1);
 

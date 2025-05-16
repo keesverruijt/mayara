@@ -12,7 +12,7 @@ use crate::radar::{RadarInfo, SharedRadars};
 use crate::settings::ControlType;
 use crate::util::c_string;
 use crate::util::PrintableSlice;
-use crate::{Brand, get_global_args};
+use crate::{Brand, Session, get_global_args};
 
 mod command;
 mod data;
@@ -430,8 +430,8 @@ impl RadarLocatorState for NavicoLocatorState {
     }
 }
 
-#[derive(Clone, Copy)]
-struct NavicoLocator {}
+#[derive(Clone)]
+struct NavicoLocator {session: Session}
 
 impl RadarLocator for NavicoLocator {
     fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
@@ -447,12 +447,14 @@ impl RadarLocator for NavicoLocator {
     }
 }
 
-pub fn create_locator() -> Box<dyn RadarLocator + Send> {
-    let locator = NavicoLocator {};
+pub fn create_locator(session: Session) -> Box<dyn RadarLocator + Send> {
+    let locator = NavicoLocator {session};
     Box::new(locator)
 }
 
-struct NavicoBR24Locator {}
+
+#[derive(Clone)]
+struct NavicoBR24Locator {session: Session}
 
 impl RadarLocator for NavicoBR24Locator {
     fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
@@ -468,8 +470,8 @@ impl RadarLocator for NavicoBR24Locator {
     }
 }
 
-pub fn create_br24_locator() -> Box<dyn RadarLocator + Send> {
-    let locator = NavicoBR24Locator {};
+pub fn create_br24_locator(session: Session) -> Box<dyn RadarLocator + Send> {
+    let locator = NavicoBR24Locator {session};
     Box::new(locator)
 }
 
