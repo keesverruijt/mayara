@@ -187,231 +187,235 @@ const NAVICO_BEACON_SINGLE_SIZE: usize = size_of::<NavicoBeaconSingle>();
 const NAVICO_BEACON_DUAL_SIZE: usize = size_of::<NavicoBeaconDual>();
 const NAVICO_BEACON_BR24_SIZE: usize = size_of::<BR24Beacon>();
 
-fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
-    info.controls
-        .set_string(&crate::settings::ControlType::UserName, info.key())
-        .unwrap();
+#[derive(Clone)]
+struct NavicoLocatorState {session: Session}
 
-    if let Some(mut info) = radars.located(info) {
-        // It's new, start the RadarProcessor thread
-
-        // Load the model name afresh, it may have been modified from persisted data
-        let model = match info.controls.model_name() {
-            Some(s) => Model::new(&s),
-            None => Model::Unknown,
-        };
-        if model != Model::Unknown {
-            let info2 = info.clone();
-            settings::update_when_model_known(&mut info.controls, model, &info2);
-            info.set_legend(model == Model::HALO);
-            radars.update(&info);
+impl NavicoLocatorState {
+    fn process_locator_report(
+        &self,
+        report: &[u8],
+        from: &SocketAddrV4,
+        via: &Ipv4Addr,
+        radars: &SharedRadars,
+        subsys: &SubsystemHandle,
+    ) -> io::Result<()> {
+        if report.len() < 2 {
+            return Ok(());
         }
 
-        // Clone everything moved into future twice or more
-        let data_name = info.key() + " data";
-        let report_name = info.key() + " reports";
-        let info_clone = info.clone();
+        if log_enabled!(log::Level::Trace) {
+            trace!(
+                "{}: Navico report: {:02X?} len {}",
+                from,
+                report,
+                report.len()
+            );
+            trace!("{}: printable:     {}", from, PrintableSlice::new(report));
+        }
 
-        if get_global_args().output {
-            let info_clone2 = info.clone();
+        if report == NAVICO_ADDRESS_REQUEST_PACKET {
+            trace!("Radar address request packet from {}", from);
+            return Ok(());
+        }
+        if report[0] == 0x1 && report[1] == 0xB2 {
+            // Common Navico message
 
-            subsys.start(SubsystemBuilder::new("stdout", move |s| {
-                info_clone2.forward_output(s)
+            return self.process_beacon_report(report, from, via, radars, subsys);
+        }
+        Ok(())
+    }
+
+    fn process_beacon_report(
+        &self,
+        report: &[u8],
+        from: &SocketAddrV4,
+        via: &Ipv4Addr,
+        radars: &SharedRadars,
+        subsys: &SubsystemHandle,
+    ) -> Result<(), io::Error> {
+        if report.len() < size_of::<BR24Beacon>() {
+            debug!(
+                "{} via {}: Incomplete beacon, length {}",
+                from,
+                via,
+                report.len()
+            );
+            return Ok(());
+        }
+
+        if report.len() >= NAVICO_BEACON_DUAL_SIZE {
+            match deserialize::<NavicoBeaconDual>(report) {
+                Ok(data) => {
+                    if let Some(serial_no) = c_string(&data.header.serial_no) {
+                        let radar_addr: SocketAddrV4 = data.header.radar_addr.into();
+
+                        let radar_data: SocketAddrV4 = data.a.data.into();
+                        let radar_report: SocketAddrV4 = data.a.report.into();
+                        let radar_send: SocketAddrV4 = data.a.send.into();
+                        let location_info: RadarInfo = RadarInfo::new(
+                            LocatorId::Gen3Plus,
+                            Brand::Navico,
+                            Some(serial_no),
+                            Some("A"),
+                            16,
+                            NAVICO_SPOKES,
+                            NAVICO_SPOKE_LEN,
+                            radar_addr.into(),
+                            via.clone(),
+                            radar_data.into(),
+                            radar_report.into(),
+                            radar_send.into(),
+                            settings::new(None),
+                            true,
+                        );
+                        self.found(location_info, radars, subsys);
+
+                        let radar_data: SocketAddrV4 = data.b.data.into();
+                        let radar_report: SocketAddrV4 = data.b.report.into();
+                        let radar_send: SocketAddrV4 = data.b.send.into();
+                        let location_info: RadarInfo = RadarInfo::new(
+                            LocatorId::Gen3Plus,
+                            Brand::Navico,
+                            Some(serial_no),
+                            Some("B"),
+                            16,
+                            NAVICO_SPOKES,
+                            NAVICO_SPOKE_LEN,
+                            radar_addr.into(),
+                            via.clone(),
+                            radar_data.into(),
+                            radar_report.into(),
+                            radar_send.into(),
+                            settings::new(None),
+                            true,
+                        );
+                        self.found(location_info, radars, subsys);
+                    }
+                }
+                Err(e) => {
+                    error!(
+                        "{} via {}: Failed to decode dual range data: {}",
+                        from, via, e
+                    );
+                }
+            }
+        } else if report.len() >= NAVICO_BEACON_SINGLE_SIZE {
+            match deserialize::<NavicoBeaconSingle>(report) {
+                Ok(data) => {
+                    if let Some(serial_no) = c_string(&data.header.serial_no) {
+                        let radar_addr: SocketAddrV4 = data.header.radar_addr.into();
+
+                        let radar_data: SocketAddrV4 = data.a.data.into();
+                        let radar_report: SocketAddrV4 = data.a.report.into();
+                        let radar_send: SocketAddrV4 = data.a.send.into();
+                        let location_info: RadarInfo = RadarInfo::new(
+                            LocatorId::Gen3Plus,
+                            Brand::Navico,
+                            Some(serial_no),
+                            None,
+                            16,
+                            NAVICO_SPOKES,
+                            NAVICO_SPOKE_LEN,
+                            radar_addr.into(),
+                            via.clone(),
+                            radar_data.into(),
+                            radar_report.into(),
+                            radar_send.into(),
+                            settings::new(None),
+                            false,
+                        );
+                        self.found(location_info, radars, subsys);
+                    }
+                }
+                Err(e) => {
+                    error!(
+                        "{} via {}: Failed to decode single range data: {}",
+                        from, via, e
+                    );
+                }
+            }
+        } else if report.len() == NAVICO_BEACON_BR24_SIZE {
+            match deserialize::<BR24Beacon>(report) {
+                Ok(data) => {
+                    if let Some(serial_no) = c_string(&data.serial_no) {
+                        let radar_addr: SocketAddrV4 = data.radar_addr.into();
+
+                        let radar_data: SocketAddrV4 = data.data.into();
+                        let radar_report: SocketAddrV4 = data.report.into();
+                        let radar_send: SocketAddrV4 = data.send.into();
+                        let location_info: RadarInfo = RadarInfo::new(
+                            LocatorId::GenBR24,
+                            Brand::Navico,
+                            Some(serial_no),
+                            None,
+                            16,
+                            NAVICO_SPOKES,
+                            NAVICO_SPOKE_LEN,
+                            radar_addr.into(),
+                            via.clone(),
+                            radar_data.into(),
+                            radar_report.into(),
+                            radar_send.into(),
+                            settings::new(Some(BR24_MODEL_NAME)),
+                            false,
+                        );
+                        self.found(location_info, radars, subsys);
+                    }
+                }
+                Err(e) => {
+                    error!("{} via {}: Failed to decode BR24 data: {}", from, via, e);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn found(&self, info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
+        info.controls
+            .set_string(&crate::settings::ControlType::UserName, info.key())
+            .unwrap();
+
+        if let Some(mut info) = radars.located(info) {
+            // It's new, start the RadarProcessor thread
+
+            // Load the model name afresh, it may have been modified from persisted data
+            let model = match info.controls.model_name() {
+                Some(s) => Model::new(&s),
+                None => Model::Unknown,
+            };
+            if model != Model::Unknown {
+                let info2 = info.clone();
+                settings::update_when_model_known(&mut info.controls, model, &info2);
+                info.set_legend(model == Model::HALO);
+                radars.update(&info);
+            }
+
+            // Clone everything moved into future twice or more
+            let data_name = info.key() + " data";
+            let report_name = info.key() + " reports";
+            let info_clone = info.clone();
+
+            if get_global_args().output {
+                let info_clone2 = info.clone();
+
+                subsys.start(SubsystemBuilder::new("stdout", move |s| {
+                    info_clone2.forward_output(s)
+                }));
+            }
+
+            let data_receiver = data::NavicoDataReceiver::new(info);
+            let report_receiver = report::NavicoReportReceiver::new(info_clone, radars.clone(), model);
+
+            subsys.start(SubsystemBuilder::new(
+                data_name,
+                move |s: SubsystemHandle| data_receiver.run(s),
+            ));
+            subsys.start(SubsystemBuilder::new(report_name, |s| {
+                report_receiver.run(s)
             }));
         }
-
-        let data_receiver = data::NavicoDataReceiver::new(info);
-        let report_receiver = report::NavicoReportReceiver::new(info_clone, radars.clone(), model);
-
-        subsys.start(SubsystemBuilder::new(
-            data_name,
-            move |s: SubsystemHandle| data_receiver.run(s),
-        ));
-        subsys.start(SubsystemBuilder::new(report_name, |s| {
-            report_receiver.run(s)
-        }));
     }
 }
-
-fn process_locator_report(
-    report: &[u8],
-    from: &SocketAddrV4,
-    via: &Ipv4Addr,
-    radars: &SharedRadars,
-    subsys: &SubsystemHandle,
-) -> io::Result<()> {
-    if report.len() < 2 {
-        return Ok(());
-    }
-
-    if log_enabled!(log::Level::Trace) {
-        trace!(
-            "{}: Navico report: {:02X?} len {}",
-            from,
-            report,
-            report.len()
-        );
-        trace!("{}: printable:     {}", from, PrintableSlice::new(report));
-    }
-
-    if report == NAVICO_ADDRESS_REQUEST_PACKET {
-        trace!("Radar address request packet from {}", from);
-        return Ok(());
-    }
-    if report[0] == 0x1 && report[1] == 0xB2 {
-        // Common Navico message
-
-        return process_beacon_report(report, from, via, radars, subsys);
-    }
-    Ok(())
-}
-
-fn process_beacon_report(
-    report: &[u8],
-    from: &SocketAddrV4,
-    via: &Ipv4Addr,
-    radars: &SharedRadars,
-    subsys: &SubsystemHandle,
-) -> Result<(), io::Error> {
-    if report.len() < size_of::<BR24Beacon>() {
-        debug!(
-            "{} via {}: Incomplete beacon, length {}",
-            from,
-            via,
-            report.len()
-        );
-        return Ok(());
-    }
-
-    if report.len() >= NAVICO_BEACON_DUAL_SIZE {
-        match deserialize::<NavicoBeaconDual>(report) {
-            Ok(data) => {
-                if let Some(serial_no) = c_string(&data.header.serial_no) {
-                    let radar_addr: SocketAddrV4 = data.header.radar_addr.into();
-
-                    let radar_data: SocketAddrV4 = data.a.data.into();
-                    let radar_report: SocketAddrV4 = data.a.report.into();
-                    let radar_send: SocketAddrV4 = data.a.send.into();
-                    let location_info: RadarInfo = RadarInfo::new(
-                        LocatorId::Gen3Plus,
-                        Brand::Navico,
-                        Some(serial_no),
-                        Some("A"),
-                        16,
-                        NAVICO_SPOKES,
-                        NAVICO_SPOKE_LEN,
-                        radar_addr.into(),
-                        via.clone(),
-                        radar_data.into(),
-                        radar_report.into(),
-                        radar_send.into(),
-                        settings::new(None),
-                        true,
-                    );
-                    found(location_info, radars, subsys);
-
-                    let radar_data: SocketAddrV4 = data.b.data.into();
-                    let radar_report: SocketAddrV4 = data.b.report.into();
-                    let radar_send: SocketAddrV4 = data.b.send.into();
-                    let location_info: RadarInfo = RadarInfo::new(
-                        LocatorId::Gen3Plus,
-                        Brand::Navico,
-                        Some(serial_no),
-                        Some("B"),
-                        16,
-                        NAVICO_SPOKES,
-                        NAVICO_SPOKE_LEN,
-                        radar_addr.into(),
-                        via.clone(),
-                        radar_data.into(),
-                        radar_report.into(),
-                        radar_send.into(),
-                        settings::new(None),
-                        true,
-                    );
-                    found(location_info, radars, subsys);
-                }
-            }
-            Err(e) => {
-                error!(
-                    "{} via {}: Failed to decode dual range data: {}",
-                    from, via, e
-                );
-            }
-        }
-    } else if report.len() >= NAVICO_BEACON_SINGLE_SIZE {
-        match deserialize::<NavicoBeaconSingle>(report) {
-            Ok(data) => {
-                if let Some(serial_no) = c_string(&data.header.serial_no) {
-                    let radar_addr: SocketAddrV4 = data.header.radar_addr.into();
-
-                    let radar_data: SocketAddrV4 = data.a.data.into();
-                    let radar_report: SocketAddrV4 = data.a.report.into();
-                    let radar_send: SocketAddrV4 = data.a.send.into();
-                    let location_info: RadarInfo = RadarInfo::new(
-                        LocatorId::Gen3Plus,
-                        Brand::Navico,
-                        Some(serial_no),
-                        None,
-                        16,
-                        NAVICO_SPOKES,
-                        NAVICO_SPOKE_LEN,
-                        radar_addr.into(),
-                        via.clone(),
-                        radar_data.into(),
-                        radar_report.into(),
-                        radar_send.into(),
-                        settings::new(None),
-                        false,
-                    );
-                    found(location_info, radars, subsys);
-                }
-            }
-            Err(e) => {
-                error!(
-                    "{} via {}: Failed to decode single range data: {}",
-                    from, via, e
-                );
-            }
-        }
-    } else if report.len() == NAVICO_BEACON_BR24_SIZE {
-        match deserialize::<BR24Beacon>(report) {
-            Ok(data) => {
-                if let Some(serial_no) = c_string(&data.serial_no) {
-                    let radar_addr: SocketAddrV4 = data.radar_addr.into();
-
-                    let radar_data: SocketAddrV4 = data.data.into();
-                    let radar_report: SocketAddrV4 = data.report.into();
-                    let radar_send: SocketAddrV4 = data.send.into();
-                    let location_info: RadarInfo = RadarInfo::new(
-                        LocatorId::GenBR24,
-                        Brand::Navico,
-                        Some(serial_no),
-                        None,
-                        16,
-                        NAVICO_SPOKES,
-                        NAVICO_SPOKE_LEN,
-                        radar_addr.into(),
-                        via.clone(),
-                        radar_data.into(),
-                        radar_report.into(),
-                        radar_send.into(),
-                        settings::new(Some(BR24_MODEL_NAME)),
-                        false,
-                    );
-                    found(location_info, radars, subsys);
-                }
-            }
-            Err(e) => {
-                error!("{} via {}: Failed to decode BR24 data: {}", from, via, e);
-            }
-        }
-    }
-    Ok(())
-}
-
-#[derive(Clone, Copy)]
-struct NavicoLocatorState {}
 
 impl RadarLocatorState for NavicoLocatorState {
     fn process(
@@ -422,12 +426,13 @@ impl RadarLocatorState for NavicoLocatorState {
         radars: &SharedRadars,
         subsys: &SubsystemHandle,
     ) -> Result<(), io::Error> {
-        process_locator_report(message, from, nic_addr, radars, subsys)
+        self.process_locator_report(message, from, nic_addr, radars, subsys)
     }
 
     fn clone(&self) -> Box<dyn RadarLocatorState> {
-        Box::new(NavicoLocatorState {}) // Navico is stateless
+        Box::new(NavicoLocatorState {session:self.session.clone()}) // Navico is stateless
     }
+
 }
 
 #[derive(Clone)]
@@ -441,7 +446,7 @@ impl RadarLocator for NavicoLocator {
                 &NAVICO_BEACON_ADDRESS,
                 Brand::Navico,
                 vec![&NAVICO_ADDRESS_REQUEST_PACKET],
-                Box::new(NavicoLocatorState {}),
+                Box::new(NavicoLocatorState {session:self.session.clone()}),
             ));
         }
     }
@@ -464,7 +469,7 @@ impl RadarLocator for NavicoBR24Locator {
                 &NAVICO_BR24_BEACON_ADDRESS,
                 Brand::Navico,
                 vec![&NAVICO_ADDRESS_REQUEST_PACKET],
-                Box::new(NavicoLocatorState {}),
+                Box::new(NavicoLocatorState {session:self.session.clone()}),
             ));
         }
     }
