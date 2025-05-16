@@ -29,7 +29,7 @@ mod util;
 mod web;
 
 use mayara;
-use mayara::{network, Cli, Mayara};
+use mayara::{network, Cli, Session};
 
 /*
 
@@ -243,7 +243,7 @@ async fn main() -> Result<()> {
     }
 
     Toplevel::new(|s| async move {
-       let mr = Mayara::new(&s, args).await;
+       let mr = Session::new(&s, args).await;
        let m = mr.read().unwrap();
 
        let web = Web::new(m.radars.as_ref().unwrap().clone(), m.tx_interface_request.clone());

@@ -199,22 +199,22 @@ impl Serialize for InterfaceId {
 }
 
 
-pub struct MayaraInner {
+pub struct SessionInner {
     pub args: Cli,
     pub tx_interface_request: broadcast::Sender<Option<mpsc::Sender<InterfaceApi>>>,
     pub radars: Option<SharedRadars>
 }
 
-pub struct Mayara {
-    pub inner: Arc<RwLock<MayaraInner>>
+pub struct Session {
+    pub inner: Arc<RwLock<SessionInner>>
 }
 
-impl Mayara {
-    pub fn read(&self) -> Result<RwLockReadGuard<'_, MayaraInner>, PoisonError<RwLockReadGuard<'_, MayaraInner>>> {
+impl Session {
+    pub fn read(&self) -> Result<RwLockReadGuard<'_, SessionInner>, PoisonError<RwLockReadGuard<'_, SessionInner>>> {
         self.inner.read()
     }
 
-    pub fn write(&self) -> Result<RwLockWriteGuard<'_, MayaraInner>, PoisonError<RwLockWriteGuard<'_, MayaraInner>>> {
+    pub fn write(&self) -> Result<RwLockWriteGuard<'_, SessionInner>, PoisonError<RwLockWriteGuard<'_, SessionInner>>> {
         self.inner.write()
     }
 
@@ -223,7 +223,7 @@ impl Mayara {
         args: Cli
     ) -> Self {
         let (tx_interface_request, _) = broadcast::channel(10);
-        let selfref = Mayara { inner: Arc::new(RwLock::new(MayaraInner {args, tx_interface_request, radars: None})) };
+        let selfref = Session { inner: Arc::new(RwLock::new(SessionInner {args, tx_interface_request, radars: None})) };
         let _ = GLOBAL_ARGS.set(selfref.clone());
 
         let mut navdata = navdata::NavigationData::new();
@@ -253,7 +253,7 @@ impl Mayara {
     }
 }
 
-static GLOBAL_ARGS: OnceCell<Mayara> = OnceCell::new();
+static GLOBAL_ARGS: OnceCell<Session> = OnceCell::new();
 
 pub fn get_global_args() -> Cli {
     GLOBAL_ARGS.get().expect("get_global_args() not yet initialized").read().unwrap().args.clone()
