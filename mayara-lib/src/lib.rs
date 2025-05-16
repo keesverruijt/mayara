@@ -26,8 +26,8 @@ pub mod protos;
 pub mod radar;
 pub mod settings;
 pub mod util;
-use std::ops::Deref;
 use rust_embed::RustEmbed;
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard, PoisonError};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -95,16 +95,6 @@ pub struct Cli {
     /// Stationary mode
     #[arg(long, default_value_t = false)]
     pub stationary: bool,
-}
-
-static GLOBAL_ARGS: OnceCell<Cli> = OnceCell::new();
-
-pub fn get_global_args() -> Cli {
-    GLOBAL_ARGS.get().cloned().expect("get_global_args() not yet initialized")
-}
-
-pub fn set_global_args(cli: Cli) -> Result<(), Cli> {
-    GLOBAL_ARGS.set(cli)
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -208,29 +198,66 @@ impl Serialize for InterfaceId {
     }
 }
 
-pub async fn init(s: &SubsystemHandle) -> Result<(SharedRadars, broadcast::Sender<Option<mpsc::Sender<InterfaceApi>>>)> {
-    let mut navdata = navdata::NavigationData::new();
 
-    let (tx_interface_request, _) = broadcast::channel(10);
-    let tx_interface_request_clone = tx_interface_request.clone();
-
-    let radars = SharedRadars::new();
-    let radars_clone = radars.clone();
-
-    let locator = Locator::new(radars);
-
-    let (tx_ip_change, rx_ip_change) = mpsc::channel(1);
-
-    s.start(SubsystemBuilder::new("NavData", |a| async move {
-        navdata.run(a, rx_ip_change).await
-    }));
-    s.start(SubsystemBuilder::new("Locator", |a| {
-        locator.run(a, tx_ip_change, tx_interface_request)
-    }));
-    
-    Ok((radars_clone, tx_interface_request_clone))
+pub struct MayaraInner {
+    pub args: Cli,
+    pub tx_interface_request: broadcast::Sender<Option<mpsc::Sender<InterfaceApi>>>,
+    pub radars: Option<SharedRadars>
 }
 
+pub struct Mayara {
+    pub inner: Arc<RwLock<MayaraInner>>
+}
+
+impl Mayara {
+    pub fn read(&self) -> Result<RwLockReadGuard<'_, MayaraInner>, PoisonError<RwLockReadGuard<'_, MayaraInner>>> {
+        self.inner.read()
+    }
+
+    pub fn write(&self) -> Result<RwLockWriteGuard<'_, MayaraInner>, PoisonError<RwLockWriteGuard<'_, MayaraInner>>> {
+        self.inner.write()
+    }
+
+    pub async fn new(
+        subsystem: &SubsystemHandle,
+        args: Cli
+    ) -> Self {
+        let (tx_interface_request, _) = broadcast::channel(10);
+        let selfref = Mayara { inner: Arc::new(RwLock::new(MayaraInner {args, tx_interface_request, radars: None})) };
+        let _ = GLOBAL_ARGS.set(selfref.clone());
+
+        let mut navdata = navdata::NavigationData::new();
+
+        let radars = Some(SharedRadars::new());
+
+        selfref.write().unwrap().radars = radars;
+
+        let locator = Locator::new(selfref.write().unwrap().radars.clone().unwrap());
+
+        let (tx_ip_change, rx_ip_change) = mpsc::channel(1);
+
+        subsystem.start(SubsystemBuilder::new("NavData", |a| async move {
+            navdata.run(a, rx_ip_change).await
+        }));
+        let tx_interface_request = selfref.write().unwrap().tx_interface_request.clone();
+
+        subsystem.start(SubsystemBuilder::new("Locator", |a| {
+            locator.run(a, tx_ip_change, tx_interface_request)
+        }));
+
+        selfref
+    }
+
+    pub fn clone(&self) -> Self {
+        Self { inner: self.inner.clone() }
+    }
+}
+
+static GLOBAL_ARGS: OnceCell<Mayara> = OnceCell::new();
+
+pub fn get_global_args() -> Cli {
+    GLOBAL_ARGS.get().expect("get_global_args() not yet initialized").read().unwrap().args.clone()
+}
 
 #[cfg(test)]
 mod init {
