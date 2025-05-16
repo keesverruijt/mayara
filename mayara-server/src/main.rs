@@ -243,10 +243,10 @@ async fn main() -> Result<()> {
     }
 
     Toplevel::new(|s| async move {
-       let mr = Session::new(&s, args).await;
-       let m = mr.read().unwrap();
+       let session = Session::new(&s, args).await;
+       let m = session.read().unwrap();
 
-       let web = Web::new(m.radars.as_ref().unwrap().clone(), m.tx_interface_request.clone());
+       let web = Web::new(session.clone(), m.radars.as_ref().unwrap().clone(), m.tx_interface_request.clone());
        s.start(SubsystemBuilder::new("Webserver", move |a| web.run(a)));
     })
     .catch_signals()

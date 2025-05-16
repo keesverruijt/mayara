@@ -29,8 +29,9 @@ use axum_fix::{Message, WebSocket, WebSocketUpgrade};
 use mayara::{
     radar::{Legend, RadarError, RadarInfo, SharedRadars},
     settings::SharedControls,
-    InterfaceApi, get_global_args,
-    ProtoAssets
+    InterfaceApi,
+    ProtoAssets,
+    Session
 };
 
 const RADAR_URI: &str = "/v1/api/radars";
@@ -54,6 +55,7 @@ pub enum WebError {
 
 #[derive(Clone)]
 pub struct Web {
+    session: Session,
     radars: SharedRadars,
     shutdown_tx: broadcast::Sender<()>,
     tx_interface_request: broadcast::Sender<Option<mpsc::Sender<InterfaceApi>>>,
@@ -61,12 +63,14 @@ pub struct Web {
 
 impl Web {
     pub fn new(
+        session: Session,
         radars: SharedRadars,
         tx_interface_request: broadcast::Sender<Option<mpsc::Sender<InterfaceApi>>>,
     ) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
 
         Web {
+            session,
             radars,
             shutdown_tx,
             tx_interface_request,
@@ -74,9 +78,10 @@ impl Web {
     }
 
     pub async fn run(self, subsys: SubsystemHandle) -> Result<(), WebError> {
+        let port = self.session.read().unwrap().args.port.clone();
         let listener = TcpListener::bind(SocketAddr::new(
             IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-            get_global_args().port,
+            port,
         ))
         .await
         .map_err(|e| WebError::Io(e))?;
@@ -98,7 +103,7 @@ impl Web {
             .with_state(self)
             .into_make_service_with_connect_info::<SocketAddr>();
 
-        log::info!("Starting HTTP web server on port {}", get_global_args().port);
+        log::info!("Starting HTTP web server on port {}", port);
 
         tokio::select! { biased;
             _ = subsys.on_shutdown_requested() => {
@@ -177,7 +182,7 @@ async fn get_radars(
             Ok(uri) => uri.host().unwrap_or("localhost").to_string(),
             Err(_) => "localhost".to_string(),
         },
-        get_global_args().port
+        state.session.read().unwrap().args.port
     );
 
     debug!("target host = '{}'", host);

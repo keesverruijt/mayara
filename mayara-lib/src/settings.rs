@@ -12,7 +12,7 @@ use thiserror::Error;
 
 use crate::{
     radar::{DopplerMode, Legend, RadarError, RangeDetection},
-    TargetMode, Session, get_global_args,
+    TargetMode, Session,
 };
 
 ///
@@ -54,7 +54,7 @@ impl Controls {
     pub(self) fn insert(&mut self, control_type: ControlType, value: Control) {
         let v = Control {
             item: ControlDefinition {
-                is_read_only: get_global_args().replay,
+                is_read_only: self.session.read().unwrap().args.replay,
                 ..value.item
             },
             ..value
@@ -74,7 +74,7 @@ impl Controls {
             );
         }
 
-        if get_global_args().replay {
+        if session.read().unwrap().args.replay {
             controls.iter_mut().for_each(|(_k, v)| {
                 v.item.is_read_only = true;
             });
@@ -89,7 +89,7 @@ impl Controls {
                 .set_destination(ControlDestination::Internal),
         );
 
-        if get_global_args().targets != TargetMode::None {
+        if session.read().unwrap().args.targets != TargetMode::None {
             controls.insert(
                 ControlType::TargetTrails,
                 Control::new_map(
@@ -122,7 +122,7 @@ impl Controls {
                     .set_destination(ControlDestination::Data),
             );
 
-            if get_global_args().targets == TargetMode::Arpa {
+            if session.read().unwrap().args.targets == TargetMode::Arpa {
                 controls.insert(
                     ControlType::ClearTargets,
                     Control::new_button(ControlType::ClearTargets)
