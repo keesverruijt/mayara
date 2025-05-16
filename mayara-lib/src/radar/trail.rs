@@ -20,7 +20,6 @@ struct GeoPositionPixels {
 }
 
 pub struct TrailBuffer {
-    session: Session,
     legend: Legend,
     spokes: usize,
     max_spoke_len: usize,
@@ -53,12 +52,11 @@ impl TrailBuffer {
             PolarToCartesianLookup::new(info.spokes as usize, info.max_spoke_len as usize);
 
         let targets = match session.read().unwrap().args.targets {
-            TargetMode::Arpa => Some(TargetBuffer::new(info)),
+            TargetMode::Arpa => Some(TargetBuffer::new(session.clone(), info)),
             _ => None,
         };
 
         TrailBuffer {
-            session: session.clone(),
             legend,
             spokes,
             max_spoke_len,
