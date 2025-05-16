@@ -227,7 +227,7 @@ impl Session {
         let selfref = Session { inner: Arc::new(RwLock::new(SessionInner {args, tx_interface_request, radars: None})) };
         let _ = GLOBAL_ARGS.set(selfref.clone());
 
-        let mut navdata = navdata::NavigationData::new();
+        let mut navdata = navdata::NavigationData::new(selfref.clone());
 
         let radars = Some(SharedRadars::new(selfref.clone()));
 
