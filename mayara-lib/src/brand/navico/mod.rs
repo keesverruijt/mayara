@@ -404,7 +404,7 @@ impl NavicoLocatorState {
             }
 
             let data_receiver = data::NavicoDataReceiver::new(info);
-            let report_receiver = report::NavicoReportReceiver::new(info_clone, radars.clone(), model);
+            let report_receiver = report::NavicoReportReceiver::new(self.session.clone(), info_clone, radars.clone(), model);
 
             subsys.start(SubsystemBuilder::new(
                 data_name,
