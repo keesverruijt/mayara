@@ -17,7 +17,7 @@ use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
 use crate::settings::{ControlType, DataUpdate};
 use crate::util::PrintableSpoke;
-use crate::{radar::*, get_global_args};
+use crate::{radar::*, Session};
 
 use super::{NAVICO_SPOKES, NAVICO_SPOKES_RAW, RADAR_LINE_DATA_LENGTH, SPOKES_PER_FRAME};
 
@@ -112,6 +112,7 @@ enum LookupSpokeEnum {
 const LOOKUP_SPOKE_LENGTH: usize = (LookupSpokeEnum::HighApproaching as usize) + 1;
 
 pub struct NavicoDataReceiver {
+    session: Session,
     key: String,
     statistics: Statistics,
     info: RadarInfo,
@@ -123,7 +124,7 @@ pub struct NavicoDataReceiver {
 }
 
 impl NavicoDataReceiver {
-    pub fn new(info: RadarInfo) -> NavicoDataReceiver {
+    pub fn new(session: Session, info: RadarInfo) -> NavicoDataReceiver {
         let key = info.key();
 
         let data_update_rx = info.controls.data_update_subscribe();
@@ -139,6 +140,7 @@ impl NavicoDataReceiver {
         }
 
         NavicoDataReceiver {
+            session,
             key,
             statistics: Statistics { broken_packets: 0 },
             info,
@@ -479,7 +481,7 @@ impl NavicoDataReceiver {
             generic_spoke.push(pixel_to_blob[high_nibble_index][pixel]);
         }
 
-        if get_global_args().replay {
+        if self.session.read().unwrap().args.replay {
             // Generate circle at extreme range
             let pixel = 0xff as usize;
             generic_spoke.pop();
