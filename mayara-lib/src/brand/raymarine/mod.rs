@@ -12,7 +12,7 @@ use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState}
 use crate::network::LittleEndianSocketAddrV4;
 use crate::radar::{RadarInfo, SharedRadars};
 use crate::util::{c_string, PrintableSlice};
-use crate::{Brand, Session, get_global_args};
+use crate::{Brand, Session};
 
 // mod command;
 // mod data;
@@ -81,52 +81,6 @@ impl Model {
     }
 }
 
-fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
-    info.controls
-        .set_string(&crate::settings::ControlType::UserName, info.key())
-        .unwrap();
-
-    if let Some(mut info) = radars.located(info) {
-        // It's new, start the RadarProcessor thread
-
-        // Load the model name afresh, it may have been modified from persisted data
-        let model = match info.controls.model_name() {
-            Some(s) => Model::new(&s),
-            None => Model::Eseries,
-        };
-        let info2 = info.clone();
-        settings::update_when_model_known(&mut info.controls, model, &info2);
-        let doppler_supported = false;
-        info.set_legend(doppler_supported);
-        radars.update(&info);
-
-        // Clone everything moved into future twice or more
-        if get_global_args().output {
-            let info_clone2 = info.clone();
-
-            subsys.start(SubsystemBuilder::new("stdout", move |s| {
-                info_clone2.forward_output(s)
-            }));
-        }
-
-        // let data_name = info.key() + " data";
-        // let report_name = info.key() + " reports";
-        // let info_clone = info.clone();
-        // let (tx_data, rx_data) = mpsc::channel(10);
-        // let data_receiver = data::RaymarineDataReceiver::new(info, rx_data, args.replay);
-        // let report_receiver =
-        //     report::RaymarineReportReceiver::new(info_clone, radars.clone(), model, tx_data);
-
-        // subsys.start(SubsystemBuilder::new(
-        //     data_name,
-        //     move |s: SubsystemHandle| data_receiver.run(s),
-        // ));
-        // subsys.start(SubsystemBuilder::new(report_name, |s| {
-        //     report_receiver.run(s)
-        // }));
-    }
-}
-
 type LinkId = u32;
 
 #[derive(Clone)]
@@ -137,12 +91,14 @@ struct RadarState {
 
 #[derive(Clone)]
 struct RaymarineLocatorState {
+    session: Session,
     ids: HashMap<LinkId, RadarState>,
 }
 
 impl RaymarineLocatorState {
-    fn new() -> Self {
+    fn new(session: Session) -> Self {
         RaymarineLocatorState {
+            session,
             ids: HashMap::new(),
         }
     }
@@ -239,6 +195,52 @@ impl RaymarineLocatorState {
         }
         Ok(())
     }
+
+    fn found(&self, info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
+        info.controls
+            .set_string(&crate::settings::ControlType::UserName, info.key())
+            .unwrap();
+
+        if let Some(mut info) = radars.located(info) {
+            // It's new, start the RadarProcessor thread
+
+            // Load the model name afresh, it may have been modified from persisted data
+            let model = match info.controls.model_name() {
+                Some(s) => Model::new(&s),
+                None => Model::Eseries,
+            };
+            let info2 = info.clone();
+            settings::update_when_model_known(&mut info.controls, model, &info2);
+            let doppler_supported = false;
+            info.set_legend(doppler_supported);
+            radars.update(&info);
+
+            // Clone everything moved into future twice or more
+            if self.session.read().unwrap().args.output {
+                let info_clone2 = info.clone();
+
+                subsys.start(SubsystemBuilder::new("stdout", move |s| {
+                    info_clone2.forward_output(s)
+                }));
+            }
+
+            // let data_name = info.key() + " data";
+            // let report_name = info.key() + " reports";
+            // let info_clone = info.clone();
+            // let (tx_data, rx_data) = mpsc::channel(10);
+            // let data_receiver = data::RaymarineDataReceiver::new(info, rx_data, args.replay);
+            // let report_receiver =
+            //     report::RaymarineReportReceiver::new(info_clone, radars.clone(), model, tx_data);
+
+            // subsys.start(SubsystemBuilder::new(
+            //     data_name,
+            //     move |s: SubsystemHandle| data_receiver.run(s),
+            // ));
+            // subsys.start(SubsystemBuilder::new(report_name, |s| {
+            //     report_receiver.run(s)
+            // }));
+        }
+    }
 }
 
 impl RadarLocatorState for RaymarineLocatorState {
@@ -270,7 +272,7 @@ impl RadarLocatorState for RaymarineLocatorState {
 
                 match Self::process_beacon_36_report(self, report, nic_addr) {
                     Ok(Some(info)) => {
-                        found(info, radars, subsys);
+                        self.found(info, radars, subsys);
                     }
                     Ok(None) => {}
                     Err(e) => {
@@ -308,7 +310,7 @@ impl RadarLocator for RaymarineLocator {
                 &RAYMARINE_BEACON_ADDRESS,
                 Brand::Raymarine,
                 vec![], // The Raymarine radars send the beacon reports by themselves, no polling needed
-                Box::new(RaymarineLocatorState::new()),
+                Box::new(RaymarineLocatorState::new(self.session.clone())),
             ));
         }
     }
