@@ -6,11 +6,12 @@ use crate::{
         AutomaticValue, Control, ControlDestination, ControlType, SharedControls,
         HAS_AUTO_NOT_ADJUSTABLE,
     },
+    Session
 };
 
 use super::Model;
 
-pub fn new(model: Option<&str>) -> SharedControls {
+pub fn new(session: Session, model: Option<&str>) -> SharedControls {
     let mut controls = HashMap::new();
 
     let mut control = Control::new_string(ControlType::ModelName);
@@ -100,7 +101,7 @@ pub fn new(model: Option<&str>) -> SharedControls {
         .wire_scale_factor(255., false),
     );
 
-    SharedControls::new(controls)
+    SharedControls::new(session, controls)
 }
 
 pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_info: &RadarInfo) {

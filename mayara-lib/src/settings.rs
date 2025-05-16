@@ -12,7 +12,7 @@ use thiserror::Error;
 
 use crate::{
     radar::{DopplerMode, Legend, RadarError, RangeDetection},
-    TargetMode, get_global_args,
+    TargetMode, Session, get_global_args,
 };
 
 ///
@@ -36,6 +36,9 @@ use crate::{
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Controls {
+    #[serde(skip)]
+    session: Session,
+
     #[serde(flatten)]
     controls: HashMap<ControlType, Control>,
 
@@ -60,7 +63,7 @@ impl Controls {
         self.controls.insert(control_type, v);
     }
 
-    pub(self) fn new_base(mut controls: HashMap<ControlType, Control>) -> Self {
+    pub(self) fn new_base(session: Session, mut controls: HashMap<ControlType, Control>) -> Self {
         // Add _mandatory_ controls
         if !controls.contains_key(&ControlType::ModelName) {
             controls.insert(
@@ -133,6 +136,7 @@ impl Controls {
         let (data_update_tx, _) = tokio::sync::broadcast::channel(10);
 
         Controls {
+            session: session.clone(),
             controls,
             all_clients_tx,
             control_update_tx,
@@ -175,9 +179,9 @@ impl SharedControls {
     // Create a new set of controls, for a radar.
     // There is only one set that is shared amongst the various threads and
     // structs, hence the word Shared.
-    pub fn new(controls: HashMap<ControlType, Control>) -> Self {
+    pub fn new(session: Session, controls: HashMap<ControlType, Control>) -> Self {
         SharedControls {
-            controls: Arc::new(RwLock::new(Controls::new_base(controls))),
+            controls: Arc::new(RwLock::new(Controls::new_base(session, controls))),
         }
     }
 

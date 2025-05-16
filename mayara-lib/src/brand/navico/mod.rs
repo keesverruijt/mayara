@@ -266,7 +266,7 @@ impl NavicoLocatorState {
                             radar_data.into(),
                             radar_report.into(),
                             radar_send.into(),
-                            settings::new(None),
+                            settings::new(self.session.clone(), None),
                             true,
                         );
                         self.found(location_info, radars, subsys);
@@ -288,7 +288,7 @@ impl NavicoLocatorState {
                             radar_data.into(),
                             radar_report.into(),
                             radar_send.into(),
-                            settings::new(None),
+                            settings::new(self.session.clone(), None),
                             true,
                         );
                         self.found(location_info, radars, subsys);
@@ -324,7 +324,7 @@ impl NavicoLocatorState {
                             radar_data.into(),
                             radar_report.into(),
                             radar_send.into(),
-                            settings::new(None),
+                            settings::new(self.session.clone(), None),
                             false,
                         );
                         self.found(location_info, radars, subsys);
@@ -360,7 +360,7 @@ impl NavicoLocatorState {
                             radar_data.into(),
                             radar_report.into(),
                             radar_send.into(),
-                            settings::new(Some(BR24_MODEL_NAME)),
+                            settings::new(self.session.clone(), Some(BR24_MODEL_NAME)),
                             false,
                         );
                         self.found(location_info, radars, subsys);

@@ -379,7 +379,7 @@ impl FurunoLocatorState {
                         spoke_data_addr,
                         report_addr,
                         send_command_addr,
-                        settings::new(),
+                        settings::new(self.session.clone()),
                         true,
                     );
                     let key = location_info.key();

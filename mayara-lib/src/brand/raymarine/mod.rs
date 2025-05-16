@@ -152,7 +152,7 @@ impl RaymarineLocatorState {
                         radar_addr.into(),
                         radar_addr.into(),
                         radar_send.into(),
-                        settings::new(info.model_name.as_deref()),
+                        settings::new(self.session.clone(), info.model_name.as_deref()),
                         true, // TODO: Only for Quantum2
                     );
 
