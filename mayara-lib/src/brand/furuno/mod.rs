@@ -119,73 +119,6 @@ impl RadarModel {
     }
 }
 
-fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) -> bool {
-    info.controls
-        .set_string(&crate::settings::ControlType::UserName, info.key())
-        .unwrap();
-
-    if let Some(mut info) = radars.located(info) {
-        // It's new, start the RadarProcessor thread
-
-        // Load the model name afresh, it may have been modified from persisted data
-        /* let model = match info.model_name() {
-            Some(s) => Model::new(&s),
-            None => Model::Unknown,
-        };
-        if model != Model::Unknown {
-            let info2 = info.clone();
-            info.controls.update_when_model_known(model, &info2);
-            info.set_legend(model == Model::HALO);
-            radars.update(&info);
-        } */
-
-        // Furuno radars use a single TCP/IP connection to send commands and
-        // receive status reports, so report_addr and send_command_addr are identical.
-        // Only one of these would be enough for Furuno.
-        let port: u16 = match login_to_radar(info.addr) {
-            Err(e) => {
-                log::error!("{}: Unable to connect for login: {}", info.key(), e);
-                radars.remove(&info.key());
-                return false;
-            }
-            Ok(p) => p,
-        };
-        if port != info.send_command_addr.port() {
-            info.send_command_addr.set_port(port);
-            info.report_addr.set_port(port);
-            radars.update(&info);
-        }
-
-        // Clone everything moved into future twice or more
-        let data_name = info.key() + " data";
-        let report_name = info.key() + " reports";
-
-        if get_global_args().output {
-            let info_clone2 = info.clone();
-
-            subsys.start(SubsystemBuilder::new("stdout", move |s| {
-                info_clone2.forward_output(s)
-            }));
-        }
-
-        let data_receiver = data::FurunoDataReceiver::new(info.clone());
-        subsys.start(SubsystemBuilder::new(
-            data_name,
-            move |s: SubsystemHandle| data_receiver.run(s),
-        ));
-
-        if !get_global_args().replay {
-            let report_receiver = report::FurunoReportReceiver::new(info);
-            subsys.start(SubsystemBuilder::new(report_name, |s| {
-                report_receiver.run(s)
-            }));
-        }
-
-        return true;
-    }
-    return false;
-}
-
 // DRS-4D NXT
 // [01, 00, 00, 01, 00, 00, 00, 00, 00, 01, 00, 18, 01, 00, 00, 00, 52, 44, 30, 30, 33, 32, 31, 32, 01, 01, 00, 02, 00, 01, 00, 12] len 32
 // [ .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   R   D   0   0   3   2   1   2   .   .   .   .   .   .   .   .]
@@ -272,6 +205,7 @@ fn login_to_radar(radar_addr: SocketAddrV4) -> Result<u16, io::Error> {
 
 #[derive(Clone)]
 struct FurunoLocatorState {
+    session: Session,
     radar_keys: HashMap<SocketAddrV4, String>,
     model_found: bool,
 }
@@ -294,6 +228,81 @@ impl RadarLocatorState for FurunoLocatorState {
 }
 
 impl FurunoLocatorState {
+    fn new(session: Session, radar_keys: HashMap<SocketAddrV4, String>, model_found: bool) -> Self {
+        FurunoLocatorState {
+            session,
+            radar_keys,
+            model_found
+        }
+    }
+    
+    fn found(&self, info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) -> bool {
+        info.controls
+            .set_string(&crate::settings::ControlType::UserName, info.key())
+            .unwrap();
+
+        if let Some(mut info) = radars.located(info) {
+            // It's new, start the RadarProcessor thread
+
+            // Load the model name afresh, it may have been modified from persisted data
+            /* let model = match info.model_name() {
+                Some(s) => Model::new(&s),
+                None => Model::Unknown,
+            };
+            if model != Model::Unknown {
+                let info2 = info.clone();
+                info.controls.update_when_model_known(model, &info2);
+                info.set_legend(model == Model::HALO);
+                radars.update(&info);
+            } */
+
+            // Furuno radars use a single TCP/IP connection to send commands and
+            // receive status reports, so report_addr and send_command_addr are identical.
+            // Only one of these would be enough for Furuno.
+            let port: u16 = match login_to_radar(info.addr) {
+                Err(e) => {
+                    log::error!("{}: Unable to connect for login: {}", info.key(), e);
+                    radars.remove(&info.key());
+                    return false;
+                }
+                Ok(p) => p,
+            };
+            if port != info.send_command_addr.port() {
+                info.send_command_addr.set_port(port);
+                info.report_addr.set_port(port);
+                radars.update(&info);
+            }
+
+            // Clone everything moved into future twice or more
+            let data_name = info.key() + " data";
+            let report_name = info.key() + " reports";
+
+            if self.session.read().unwrap().args.output {
+                let info_clone2 = info.clone();
+
+                subsys.start(SubsystemBuilder::new("stdout", move |s| {
+                    info_clone2.forward_output(s)
+                }));
+            }
+
+            let data_receiver = data::FurunoDataReceiver::new(info.clone());
+            subsys.start(SubsystemBuilder::new(
+                data_name,
+                move |s: SubsystemHandle| data_receiver.run(s),
+            ));
+
+            if !self.session.read().unwrap().args.replay {
+                let report_receiver = report::FurunoReportReceiver::new(info);
+                subsys.start(SubsystemBuilder::new(report_name, |s| {
+                    report_receiver.run(s)
+                }));
+            }
+
+            return true;
+        }
+        return false;
+    }
+    
     fn process_locator_report(
         &mut self,
         report: &[u8],
@@ -373,7 +382,7 @@ impl FurunoLocatorState {
                         true,
                     );
                     let key = location_info.key();
-                    if found(location_info, radars, subsys) {
+                    if self.found(location_info, radars, subsys) {
                         self.radar_keys.insert(from.clone(), key);
                     }
                 }
@@ -455,10 +464,8 @@ impl RadarLocator for FurunoLocator {
                     &FURUNO_REQUEST_MODEL_PACKET,
                     &FURUNO_ANNOUNCE_MAYARA_PACKET,
                 ],
-                Box::new(FurunoLocatorState {
-                    radar_keys: HashMap::new(),
-                    model_found: false,
-                }),
+                Box::new(FurunoLocatorState::new(
+                    self.session.clone(), HashMap::new(), false)),
             ));
         }
     }
