@@ -285,7 +285,7 @@ impl FurunoLocatorState {
                 }));
             }
 
-            let data_receiver = data::FurunoDataReceiver::new(info.clone());
+            let data_receiver = data::FurunoDataReceiver::new(self.session.clone(), info.clone());
             subsys.start(SubsystemBuilder::new(
                 data_name,
                 move |s: SubsystemHandle| data_receiver.run(s),

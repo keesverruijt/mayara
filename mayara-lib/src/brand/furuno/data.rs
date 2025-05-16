@@ -3,7 +3,7 @@ use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
 use crate::settings::{ControlType, DataUpdate};
 use crate::util::PrintableSpoke;
-use crate::{radar::*, get_global_args};
+use crate::{radar::*, Session};
 
 use core::panic;
 use protobuf::Message;
@@ -25,6 +25,7 @@ enum ReceiveAddressType {
 }
 
 pub struct FurunoDataReceiver {
+    session: Session,
     key: String,
     info: RadarInfo,
     receive_type: ReceiveAddressType,
@@ -49,7 +50,7 @@ struct FurunoSpokeMetadata {
 }
 
 impl FurunoDataReceiver {
-    pub fn new(info: RadarInfo) -> FurunoDataReceiver {
+    pub fn new(session: Session, info: RadarInfo) -> FurunoDataReceiver {
         let key = info.key();
 
         let data_update_rx = info.controls.data_update_subscribe();
@@ -64,6 +65,7 @@ impl FurunoDataReceiver {
         }
 
         FurunoDataReceiver {
+            session,
             key,
             info,
             receive_type: ReceiveAddressType::Both,
@@ -147,7 +149,7 @@ impl FurunoDataReceiver {
 
     #[cfg(target_os = "macos")]
     fn verify_source_address(&self, addr: &SocketAddr) -> bool {
-        addr.ip() == std::net::SocketAddr::V4(self.info.addr).ip() || get_global_args().replay
+        addr.ip() == std::net::SocketAddr::V4(self.info.addr).ip() || self.session.read().unwrap().args.replay
     }
     #[cfg(not(target_os = "macos"))]
     fn verify_source_address(&self, addr: &SocketAddr) -> bool {
@@ -470,7 +472,7 @@ impl FurunoDataReceiver {
         heading: SpokeBearing,
         sweep: &[u8],
     ) -> Spoke {
-        if get_global_args().replay {
+        if self.session.read().unwrap().args.replay {
             let _ = self
                 .info
                 .controls
@@ -504,7 +506,7 @@ impl FurunoDataReceiver {
             spoke.data[i] = b >> 2;
             i += 1;
         }
-        if get_global_args().replay {
+        if self.session.read().unwrap().args.replay {
             spoke.data[sweep.len() - 1] = 64;
         }
 
