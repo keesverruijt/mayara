@@ -27,7 +27,7 @@ use crate::brand::navico;
 use crate::brand::raymarine;
 
 use crate::radar::{RadarError, SharedRadars};
-use crate::{network, Brand, InterfaceApi, InterfaceId, RadarInterfaceApi, GLOBAL_ARGS};
+use crate::{network, Brand, InterfaceApi, InterfaceId, RadarInterfaceApi, Session};
 
 const LOCATOR_PACKET_BUFFER_LEN: usize = 300; // Long enough for any location packet
 
@@ -118,12 +118,13 @@ enum ResultType {
 }
 
 pub struct Locator {
+    pub session: Session,
     pub radars: SharedRadars,
 }
 
 impl Locator {
-    pub fn new(radars: SharedRadars) -> Self {
-        Locator { radars }
+    pub fn new(session: Session, radars: SharedRadars) -> Self {
+        Locator { session, radars }
     }
 
     pub async fn run(
@@ -146,7 +147,7 @@ impl Locator {
             first_loop: true,
         };
 
-        let listen_addresses = Self::compute_listen_addresses(&mut interface_state);
+        let listen_addresses = self.compute_listen_addresses(&mut interface_state);
 
         // Make a copy of the beacon request packets to send them later, as LocatorAddress is not 'Send'.
         let beacon_messages = listen_addresses
@@ -164,7 +165,7 @@ impl Locator {
             let sockets = self.create_listen_sockets(&listen_addresses, &mut interface_state);
             let mut set = JoinSet::new();
             if sockets.is_err() {
-                if GLOBAL_ARGS.interface.is_some() {
+                if self.session.read().unwrap().args.interface.is_some() {
                     return Err(sockets.err().unwrap());
                 }
                 log::debug!("No NIC addresses found");
@@ -251,6 +252,7 @@ impl Locator {
                                     }
                                     RadarError::Timeout => {
                                         let _ = send_beacon_requests(
+                                            self.session.clone(),
                                             &beacon_messages,
                                             &interface_state.active_nic_addresses,
                                         )
@@ -296,7 +298,7 @@ impl Locator {
         let _ = reply_channel.send(interface_api).await;
     }
 
-    fn compute_listen_addresses(interface_state: &mut InterfaceState) -> Vec<LocatorAddress> {
+    fn compute_listen_addresses(&self, interface_state: &mut InterfaceState) -> Vec<LocatorAddress> {
         let mut listen_addresses: Vec<LocatorAddress> = Vec::new();
         let mut locators: Vec<Box<dyn RadarLocator>> = Vec::new();
 
@@ -304,19 +306,19 @@ impl Locator {
         brands.clear();
 
         #[cfg(feature = "navico")]
-        if GLOBAL_ARGS.brand.unwrap_or(Brand::Navico) == Brand::Navico {
-            locators.push(navico::create_locator());
-            locators.push(navico::create_br24_locator());
+        if self.session.read().unwrap().args.brand.unwrap_or(Brand::Navico) == Brand::Navico {
+            locators.push(navico::create_locator(self.session.clone()));
+            locators.push(navico::create_br24_locator(self.session.clone()));
             brands.insert(Brand::Navico);
         }
         #[cfg(feature = "furuno")]
-        if GLOBAL_ARGS.brand.unwrap_or(Brand::Furuno) == Brand::Furuno {
-            locators.push(furuno::create_locator());
+        if self.session.read().unwrap().args.brand.unwrap_or(Brand::Furuno) == Brand::Furuno {
+            locators.push(furuno::create_locator(self.session.clone()));
             brands.insert(Brand::Furuno);
         }
         #[cfg(feature = "raymarine")]
-        if GLOBAL_ARGS.brand.unwrap_or(Brand::Raymarine) == Brand::Raymarine {
-            locators.push(raymarine::create_locator());
+        if self.session.read().unwrap().args.brand.unwrap_or(Brand::Raymarine) == Brand::Raymarine {
+            locators.push(raymarine::create_locator(self.session.clone()));
             brands.insert(Brand::Raymarine);
         }
 
@@ -332,8 +334,8 @@ impl Locator {
         listen_addresses: &Vec<LocatorAddress>,
         interface_state: &mut InterfaceState,
     ) -> Result<Vec<LocatorSocket>, RadarError> {
-        let only_interface = &GLOBAL_ARGS.interface;
-        let avoid_wifi = !GLOBAL_ARGS.allow_wifi;
+        let only_interface = &self.session.read().unwrap().args.interface;
+        let avoid_wifi = !self.session.read().unwrap().args.allow_wifi;
 
         let if_api = &mut interface_state.interface_api.interfaces;
         if_api.clear();
@@ -448,11 +450,11 @@ impl Locator {
                                 );
                             }
                         }
-                        if GLOBAL_ARGS.interface.is_some()
+                        if self.session.read().unwrap().args.interface.is_some()
                             && interface_state.active_nic_addresses.len() == 0
                         {
                             return Err(RadarError::InterfaceNoV4(
-                                GLOBAL_ARGS.interface.clone().unwrap(),
+                                self.session.read().unwrap().args.interface.clone().unwrap(),
                             ));
                         }
                     }
@@ -482,11 +484,11 @@ impl Locator {
                 }
                 interface_state.first_loop = false;
 
-                if GLOBAL_ARGS.interface.is_some()
+                if self.session.read().unwrap().args.interface.is_some()
                     && interface_state.active_nic_addresses.len() == 0
                 {
                     return Err(RadarError::InterfaceNotFound(
-                        GLOBAL_ARGS.interface.clone().unwrap(),
+                        self.session.read().unwrap().args.interface.clone().unwrap(),
                     ));
                 }
 
@@ -531,10 +533,11 @@ fn spawn_receive(set: &mut JoinSet<Result<ResultType, RadarError>>, socket: Loca
 }
 
 async fn send_beacon_requests(
+    session: Session,
     beacon_messages: &Vec<(SocketAddr, Vec<&[u8]>)>,
     interface_addresses: &Vec<Ipv4Addr>,
 ) -> io::Result<()> {
-    if !GLOBAL_ARGS.replay {
+    if !session.read().unwrap().args.replay {
         for x in beacon_messages {
             for beacon_request in &x.1 {
                 if let Err(e) = send_beacon_request(interface_addresses, &x.0, beacon_request).await

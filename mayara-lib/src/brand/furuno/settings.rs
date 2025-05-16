@@ -3,11 +3,12 @@ use std::collections::HashMap;
 use crate::{
     radar::{RadarInfo, RangeDetection},
     settings::{Control, ControlType, DataUpdate, SharedControls},
+    Session
 };
 
 use super::{RadarModel, FURUNO_SPOKES};
 
-pub fn new() -> SharedControls {
+pub fn new(session: Session) -> SharedControls {
     let mut controls = HashMap::new();
 
     controls.insert(
@@ -52,7 +53,7 @@ pub fn new() -> SharedControls {
         );
     }
 
-    SharedControls::new(controls)
+    SharedControls::new(session, controls)
 }
 
 pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version: &str) {

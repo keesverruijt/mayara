@@ -17,7 +17,7 @@ use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
 use crate::settings::{ControlType, DataUpdate};
 use crate::util::PrintableSpoke;
-use crate::{radar::*, GLOBAL_ARGS};
+use crate::{radar::*, Session};
 
 use super::{NAVICO_SPOKES, NAVICO_SPOKES_RAW, RADAR_LINE_DATA_LENGTH, SPOKES_PER_FRAME};
 
@@ -112,6 +112,7 @@ enum LookupSpokeEnum {
 const LOOKUP_SPOKE_LENGTH: usize = (LookupSpokeEnum::HighApproaching as usize) + 1;
 
 pub struct NavicoDataReceiver {
+    session: Session,
     key: String,
     statistics: Statistics,
     info: RadarInfo,
@@ -123,13 +124,13 @@ pub struct NavicoDataReceiver {
 }
 
 impl NavicoDataReceiver {
-    pub fn new(info: RadarInfo) -> NavicoDataReceiver {
+    pub fn new(session: Session, info: RadarInfo) -> NavicoDataReceiver {
         let key = info.key();
 
         let data_update_rx = info.controls.data_update_subscribe();
 
         let pixel_to_blob = Self::pixel_to_blob(&info.legend);
-        let mut trails = TrailBuffer::new(&info);
+        let mut trails = TrailBuffer::new(session.clone(), &info);
 
         if let Some(control) = info.controls.get(&ControlType::DopplerTrailsOnly) {
             if let Some(value) = control.value {
@@ -139,6 +140,7 @@ impl NavicoDataReceiver {
         }
 
         NavicoDataReceiver {
+            session,
             key,
             statistics: Statistics { broken_packets: 0 },
             info,
@@ -479,7 +481,7 @@ impl NavicoDataReceiver {
             generic_spoke.push(pixel_to_blob[high_nibble_index][pixel]);
         }
 
-        if GLOBAL_ARGS.replay {
+        if self.session.read().unwrap().args.replay {
             // Generate circle at extreme range
             let pixel = 0xff as usize;
             generic_spoke.pop();

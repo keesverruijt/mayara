@@ -15,10 +15,12 @@ use super::settings;
 use super::RadarModel;
 use crate::radar::{RadarError, RadarInfo};
 use crate::settings::{ControlType, ControlUpdate};
+use crate::Session;
 
 use super::command::Command;
 
 pub struct FurunoReportReceiver {
+    session: Session,
     info: RadarInfo,
     key: String,
     command_sender: Command,
@@ -28,12 +30,13 @@ pub struct FurunoReportReceiver {
 }
 
 impl FurunoReportReceiver {
-    pub fn new(info: RadarInfo) -> FurunoReportReceiver {
+    pub fn new(session: Session, info: RadarInfo) -> FurunoReportReceiver {
         let key = info.key();
 
         let command_sender = Command::new(&info);
 
         FurunoReportReceiver {
+            session,
             info,
             key,
             command_sender,
@@ -171,7 +174,7 @@ impl FurunoReportReceiver {
         // Furuno radars use a single TCP/IP connection to send commands and
         // receive status reports, so report_addr and send_command_addr are identical.
         // Only one of these would be enough for Furuno.
-        let port: u16 = match super::login_to_radar(self.info.addr) {
+        let port: u16 = match super::login_to_radar(self.session.clone(), self.info.addr) {
             Err(e) => {
                 log::error!("{}: Unable to connect for login: {}", self.info.key(), e);
                 return Err(RadarError::LoginFailed);

@@ -29,7 +29,7 @@ mod util;
 mod web;
 
 use mayara;
-use mayara::{network, Cli, set_global_args, GLOBAL_ARGS};
+use mayara::{network, Cli, Session};
 
 /*
 
@@ -95,7 +95,7 @@ pub struct Cli {
     stationary: bool,
 }
 
-static GLOBAL_ARGS: Lazy<Cli> = Lazy::new(|| Cli::parse());
+static get_global_args(): Lazy<Cli> = Lazy::new(|| Cli::parse());
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Brand {
@@ -201,9 +201,9 @@ impl Serialize for InterfaceId {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    set_global_args(Cli::parse()).expect("Failed to set global args");
+    let args = Cli::parse();
 
-    let log_level = GLOBAL_ARGS.verbose.log_level_filter();
+    let log_level = args.verbose.log_level_filter();
     env_logger::Builder::from_env(Env::default())
         .filter_level(log_level)
         .filter_module("tungstenite::protocol", log::LevelFilter::Info)
@@ -211,31 +211,31 @@ async fn main() -> Result<()> {
         .filter_module("polling", log::LevelFilter::Info)
         .init();
 
-    network::set_replay(GLOBAL_ARGS.replay);
+    network::set_replay(args.replay);
 
     info!("Mayara {} loglevel {}", mayara::VERSION, log_level);
-    if GLOBAL_ARGS.replay {
+    if args.replay {
         warn!("Replay mode activated, this does the following:");
         warn!(" * A circle is drawn at the last two pixels in each spoke");
         warn!(" * Timestamp on each spoke is as if received now");
         warn!(" * Any 4G/HALO secondary radar B is ignored and not reported");
     }
-    if GLOBAL_ARGS.fake_errors {
+    if args.fake_errors {
         warn!("Fake error mode activated, this does the following:");
         warn!(" * Any control operation on Rain Clutter beyond values 0..10 will fail");
         warn!(" * Failure for value 11..13 are all different");
     }
-    if GLOBAL_ARGS.allow_wifi {
+    if args.allow_wifi {
         warn!("Allow WiFi mode activated, this does the following:");
         warn!(" * Radars will be detected even on WiFi interfaces");
     }
-    if GLOBAL_ARGS.output {
+    if args.output {
         warn!("Output mode activated; 'protobuf' formatted RadarMessage sent to stdout");
     }
-    if GLOBAL_ARGS.nmea0183 {
+    if args.nmea0183 {
         warn!(
             "NMEA0183 mode activated; will load GPS position, heading and date/time from {}",
-            GLOBAL_ARGS
+            args
                 .navigation_address
                 .as_ref()
                 .unwrap_or(&"MDNS".to_string())
@@ -243,9 +243,11 @@ async fn main() -> Result<()> {
     }
 
     Toplevel::new(|s| async move {
-        let (radars, tx_interface_request) = mayara::init(&s).await.expect("Unable to initialize mayara");
-        let web = Web::new(radars, tx_interface_request);
-        s.start(SubsystemBuilder::new("Webserver", move |a| web.run(a)));
+       let session = Session::new(&s, args).await;
+       let m = session.read().unwrap();
+
+       let web = Web::new(session.clone(), m.radars.as_ref().unwrap().clone(), m.tx_interface_request.clone());
+       s.start(SubsystemBuilder::new("Webserver", move |a| web.run(a)));
     })
     .catch_signals()
     .handle_shutdown_requests(Duration::from_millis(5000))

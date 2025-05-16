@@ -127,12 +127,12 @@ pub struct RaymarineDataReceiver {
 }
 
 impl RaymarineDataReceiver {
-    pub fn new(info: RadarInfo, rx: Receiver<DataUpdate>, replay: bool) -> RaymarineDataReceiver {
+    pub fn new(session: Session, info: RadarInfo, rx: Receiver<DataUpdate>, replay: bool) -> RaymarineDataReceiver {
         let key = info.key();
 
         let pixel_to_blob = Self::pixel_to_blob(&info.legend);
         let mut trails =
-            TrailBuffer::new(info.legend.clone(), RAYMARINE_SPOKES, RAYMARINE_SPOKE_LEN);
+            TrailBuffer::new(session.clone(), info.legend.clone(), RAYMARINE_SPOKES, RAYMARINE_SPOKE_LEN);
 
         if let Some(control) = info.controls.get(&ControlType::DopplerTrailsOnly) {
             if let Some(value) = control.value {
