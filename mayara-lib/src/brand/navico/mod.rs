@@ -12,7 +12,7 @@ use crate::radar::{RadarInfo, SharedRadars};
 use crate::settings::ControlType;
 use crate::util::c_string;
 use crate::util::PrintableSlice;
-use crate::{Brand, Session, get_global_args};
+use crate::{Brand, Session};
 
 mod command;
 mod data;
@@ -395,7 +395,7 @@ impl NavicoLocatorState {
             let report_name = info.key() + " reports";
             let info_clone = info.clone();
 
-            if get_global_args().output {
+            if self.session.read().unwrap().args.output {
                 let info_clone2 = info.clone();
 
                 subsys.start(SubsystemBuilder::new("stdout", move |s| {
