@@ -229,7 +229,7 @@ impl RaymarineLocatorState {
             // let report_name = info.key() + " reports";
             // let info_clone = info.clone();
             // let (tx_data, rx_data) = mpsc::channel(10);
-            // let data_receiver = data::RaymarineDataReceiver::new(info, rx_data, args.replay);
+            // let data_receiver = data::RaymarineDataReceiver::new(self.session.clone(), info, rx_data, args.replay);
             // let report_receiver =
             //     report::RaymarineReportReceiver::new(self.session.clone(), info_clone, radars.clone(), model, tx_data);
 

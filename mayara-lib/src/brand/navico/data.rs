@@ -130,7 +130,7 @@ impl NavicoDataReceiver {
         let data_update_rx = info.controls.data_update_subscribe();
 
         let pixel_to_blob = Self::pixel_to_blob(&info.legend);
-        let mut trails = TrailBuffer::new(&info);
+        let mut trails = TrailBuffer::new(session.clone(), &info);
 
         if let Some(control) = info.controls.get(&ControlType::DopplerTrailsOnly) {
             if let Some(value) = control.value {
