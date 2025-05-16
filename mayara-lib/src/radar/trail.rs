@@ -6,7 +6,7 @@ use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::radar::trail::cartesian::PointInt;
 use crate::radar::{GeoPosition, Legend, SpokeBearing, BLOB_HISTORY_COLORS};
 use crate::settings::{ControlError, ControlType, ControlValue, SharedControls};
-use crate::{TargetMode, Session, get_global_args};
+use crate::{TargetMode, Session};
 
 use super::target::TargetBuffer;
 use super::{RadarError, RadarInfo};
@@ -20,6 +20,7 @@ struct GeoPositionPixels {
 }
 
 pub struct TrailBuffer {
+    session: Session,
     legend: Legend,
     spokes: usize,
     max_spoke_len: usize,
@@ -57,6 +58,7 @@ impl TrailBuffer {
         };
 
         TrailBuffer {
+            session: session.clone(),
             legend,
             spokes,
             max_spoke_len,
@@ -189,7 +191,7 @@ impl TrailBuffer {
     }
 
     pub fn update_trails(&mut self, spoke: &mut Spoke, legend: &Legend) {
-        if get_global_args().targets == TargetMode::None {
+        if self.session.read().unwrap().args.targets == TargetMode::None {
             return;
         }
         if spoke.range != self.previous_range && spoke.range != 0 {
