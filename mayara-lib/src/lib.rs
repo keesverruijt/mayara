@@ -224,7 +224,6 @@ impl Session {
     ) -> Self {
         let (tx_interface_request, _) = broadcast::channel(10);
         let selfref = Session { inner: Arc::new(RwLock::new(SessionInner {args, tx_interface_request, radars: None})) };
-        //let _ = GLOBAL_ARGS.set(selfref.clone());
 
         let mut navdata = navdata::NavigationData::new(selfref.clone());
 
@@ -258,13 +257,7 @@ impl std::fmt::Debug for Session {
         write!(f, "Session {{ }}")
     }
 }
-/*
-static GLOBAL_ARGS: OnceCell<Session> = OnceCell::new();
 
-pub fn get_global_args() -> Cli {
-    GLOBAL_ARGS.get().expect("get_global_args() not yet initialized").read().unwrap().args.clone()
-}
-*/
 #[cfg(test)]
 mod init {
     use ctor::ctor;
