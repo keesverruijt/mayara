@@ -12,7 +12,7 @@ use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState};
 use crate::radar::{RadarInfo, SharedRadars};
 use crate::util::{c_string, PrintableSlice};
-use crate::{Brand, Session, get_global_args};
+use crate::{Brand, Session};
 
 mod command;
 mod data;
@@ -158,8 +158,8 @@ struct FurunoRadarModelReport {
 
 const LOGIN_TIMEOUT: Duration = Duration::from_millis(500);
 
-fn login_to_radar(radar_addr: SocketAddrV4) -> Result<u16, io::Error> {
-    if get_global_args().replay {
+fn login_to_radar(session: Session, radar_addr: SocketAddrV4) -> Result<u16, io::Error> {
+    if session.read().unwrap().args.replay {
         log::warn!("Replay mode, not logging in to radar",);
         return Ok(0);
     }
@@ -235,7 +235,7 @@ impl FurunoLocatorState {
             model_found
         }
     }
-    
+
     fn found(&self, info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) -> bool {
         info.controls
             .set_string(&crate::settings::ControlType::UserName, info.key())
@@ -259,7 +259,7 @@ impl FurunoLocatorState {
             // Furuno radars use a single TCP/IP connection to send commands and
             // receive status reports, so report_addr and send_command_addr are identical.
             // Only one of these would be enough for Furuno.
-            let port: u16 = match login_to_radar(info.addr) {
+            let port: u16 = match login_to_radar(self.session.clone(), info.addr) {
                 Err(e) => {
                     log::error!("{}: Unable to connect for login: {}", info.key(), e);
                     radars.remove(&info.key());
@@ -292,7 +292,7 @@ impl FurunoLocatorState {
             ));
 
             if !self.session.read().unwrap().args.replay {
-                let report_receiver = report::FurunoReportReceiver::new(info);
+                let report_receiver = report::FurunoReportReceiver::new(self.session.clone(), info);
                 subsys.start(SubsystemBuilder::new(report_name, |s| {
                     report_receiver.run(s)
                 }));
