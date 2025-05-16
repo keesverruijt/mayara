@@ -20,7 +20,7 @@ pub(crate) mod trail;
 use crate::config::Persistence;
 use crate::locator::LocatorId;
 use crate::settings::{ControlError, ControlType, ControlUpdate, ControlValue, SharedControls};
-use crate::{Brand, TargetMode, get_global_args};
+use crate::{Brand, TargetMode, Session, get_global_args};
 
 // A "native to radar" bearing, usually [0..2048] or [0..4096] or [0..8192]
 pub(crate) type SpokeBearing = u16;
@@ -381,12 +381,14 @@ impl Display for RadarInfo {
 
 #[derive(Clone)]
 pub struct SharedRadars {
+    session: Session,
     radars: Arc<RwLock<Radars>>,
 }
 
 impl SharedRadars {
-    pub fn new() -> Self {
+    pub fn new(session: Session) -> Self {
         SharedRadars {
+            session,
             radars: Arc::new(RwLock::new(Radars {
                 info: HashMap::new(),
                 persistent_data: Persistence::new(),
@@ -400,7 +402,7 @@ impl SharedRadars {
         let mut radars = self.radars.write().unwrap();
 
         // For now, drop second radar in replay Mode...
-        if get_global_args().replay && key.ends_with("-B") {
+        if self.session.read().unwrap().args.replay && key.ends_with("-B") {
             return None;
         }
 

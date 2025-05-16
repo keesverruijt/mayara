@@ -205,6 +205,7 @@ pub struct SessionInner {
     pub radars: Option<SharedRadars>
 }
 
+#[derive(Clone)]
 pub struct Session {
     pub inner: Arc<RwLock<SessionInner>>
 }
@@ -228,7 +229,7 @@ impl Session {
 
         let mut navdata = navdata::NavigationData::new();
 
-        let radars = Some(SharedRadars::new());
+        let radars = Some(SharedRadars::new(selfref.clone()));
 
         selfref.write().unwrap().radars = radars;
 
