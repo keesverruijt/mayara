@@ -697,7 +697,8 @@ mod tests {
 
     #[test]
     fn legend() {
-        let legend = default_legend(true, 16);
+        let session = crate::Session::new_fake();
+        let legend = default_legend(session.clone(), true, 16);
         let json = serde_json::to_string_pretty(&legend).unwrap();
         println!("{}", json);
     }

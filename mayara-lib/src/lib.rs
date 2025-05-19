@@ -218,12 +218,25 @@ impl Session {
         self.inner.write()
     }
 
+    pub fn new_fake() -> Self {
+        // This does not actually start anything - only use for testing
+        Self::new_base(Cli::parse_from(["my_program"]))
+    }
+
+    fn new_base(
+        args: Cli
+    ) -> Self {
+        // This does not actually start anything - only use for testing        
+        let (tx_interface_request, _) = broadcast::channel(10);
+        let selfref = Session { inner: Arc::new(RwLock::new(SessionInner {args, tx_interface_request, radars: None})) };
+        selfref
+    }
+
     pub async fn new(
         subsystem: &SubsystemHandle,
         args: Cli
     ) -> Self {
-        let (tx_interface_request, _) = broadcast::channel(10);
-        let selfref = Session { inner: Arc::new(RwLock::new(SessionInner {args, tx_interface_request, radars: None})) };
+        let selfref = Self::new_base(args);
 
         let mut navdata = navdata::NavigationData::new(selfref.clone());
 
@@ -258,14 +271,23 @@ impl std::fmt::Debug for Session {
     }
 }
 
+/*
 #[cfg(test)]
 mod init {
     use ctor::ctor;
     use crate::{Cli, set_global_args};
     use clap::Parser;
+    use once_cell::sync::OnceCell;
+
+    static GLOBAL_ARGS: OnceCell<Session> = OnceCell::new();
 
     #[ctor]
     fn setup() {
-        let _ = set_global_args(Cli::parse_from(["my_program"]));
+        let args = Cli::parse_from(["my_program"]);
+        
+        GLOBAL_ARGS.set()
+
+let _ = set_global_args(Cli::parse_from(["my_program"]));
     }
 }
+*/

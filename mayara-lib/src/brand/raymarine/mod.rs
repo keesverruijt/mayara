@@ -330,6 +330,8 @@ mod tests {
 
     #[test]
     fn decode_raymarine_locator_beacon() {
+        let session = crate::Session::new_fake();
+
         const VIA: Ipv4Addr = Ipv4Addr::new(1, 1, 1, 1);
 
         // This is a real beacon message from a Raymarine Quantum radar (E704980880217-NewZealand)
@@ -400,7 +402,7 @@ mod tests {
             0x33, 0xc0, 0x13, 0x2, 0x0, 0x1, 0x0,
         ];
 
-        let mut state = RaymarineLocatorState::new();
+        let mut state = RaymarineLocatorState::new(session.clone());
         let r = state.process_beacon_36_report(&DATA1_36, &VIA);
         assert!(r.is_ok());
         let r = r.unwrap();
@@ -428,7 +430,7 @@ mod tests {
             SocketAddrV4::new(Ipv4Addr::new(232, 1, 243, 1), 2574)
         );
 
-        let mut state = RaymarineLocatorState::new();
+        let mut state = RaymarineLocatorState::new(session.clone());
         let r = state.process_beacon_36_report(&DATA2_36, &VIA);
         assert!(r.is_ok());
         let r = r.unwrap();
@@ -456,7 +458,7 @@ mod tests {
             SocketAddrV4::new(Ipv4Addr::new(232, 1, 167, 1), 2574)
         );
 
-        let mut state = RaymarineLocatorState::new();
+        let mut state = RaymarineLocatorState::new(session.clone());
         let r = state.process_beacon_36_report(&DATA3_36, &VIA);
         assert!(r.is_ok());
         let r = r.unwrap();

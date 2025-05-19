@@ -1356,7 +1356,8 @@ mod test {
 
     #[test]
     fn control_range_values() {
-        let controls = SharedControls::new(HashMap::new());
+        let session = crate::Session::new_fake();
+        let controls = SharedControls::new(session, HashMap::new());
 
         assert!(controls.set(&ControlType::TargetTrails, 0., None).is_ok());
         assert_eq!(
