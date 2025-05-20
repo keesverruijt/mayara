@@ -19,7 +19,7 @@ use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::{
     radar::{GeoPosition, RadarError},
-    GLOBAL_ARGS,
+    Session
 };
 
 pub(crate) static HEADING_TRUE_VALID: AtomicBool = AtomicBool::new(false);
@@ -101,6 +101,7 @@ enum Stream {
 }
 
 pub(crate) struct NavigationData {
+    session: Session,
     nmea0183_mode: bool,
     service_name: &'static str,
     what: &'static str,
@@ -108,15 +109,18 @@ pub(crate) struct NavigationData {
 }
 
 impl NavigationData {
-    pub(crate) fn new() -> Self {
-        match GLOBAL_ARGS.nmea0183 {
+    pub(crate) fn new(session: Session) -> Self {
+        let nmea0183 = session.read().unwrap().args.nmea0183;
+        match nmea0183 {
             true => NavigationData {
+                session,
                 nmea0183_mode: true,
                 service_name: NMEA0183_SERVICE_NAME,
                 what: "NMEA0183",
                 nmea_parser: Some(NmeaParser::new()),
             },
             false => NavigationData {
+                session,
                 nmea0183_mode: false,
                 service_name: SIGNAL_K_SERVICE_NAME,
                 what: "Signal K",
@@ -133,8 +137,9 @@ impl NavigationData {
         log::debug!("{} run_loop (re)start", self.what);
         let mut rx_ip_change = rx_ip_change;
         loop {
+            let navigation_address = self.session.read().unwrap().args.navigation_address.clone();
             match self
-                .find_service(&subsys, &mut rx_ip_change, &GLOBAL_ARGS.navigation_address)
+                .find_service(&subsys, &mut rx_ip_change, &navigation_address)
                 .await
             {
                 Ok(Stream::Tcp(stream)) => {
@@ -207,9 +212,8 @@ impl NavigationData {
 
         if interface.is_some() {
             let _ = mdns.disable_interface(IfKind::All);
-            let _ = mdns.enable_interface(IfKind::Name(
-                GLOBAL_ARGS.navigation_address.as_ref().unwrap().to_string(),
-            ));
+            let navigation_address = self.session.read().unwrap().args.navigation_address.as_ref().unwrap().to_string().clone();
+            let _ = mdns.enable_interface(IfKind::Name(navigation_address));
         }
         let tcp_locator = mdns.browse(self.service_name).expect(&format!(
             "Failed to browse for {} service",

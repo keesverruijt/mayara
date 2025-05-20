@@ -14,7 +14,7 @@ use crate::network::create_udp_multicast_listen;
 use crate::radar::{DopplerMode, RadarError, RadarInfo, RangeDetection, SharedRadars};
 use crate::settings::{ControlMessage, ControlType, ControlValue};
 use crate::util::{c_string, c_wide_string};
-use crate::Cli;
+use crate::{Cli, Session};
 
 use super::command::Command;
 use super::{DataUpdate, Model};
@@ -274,6 +274,7 @@ const REPORT_08_C4_18_OR_21_OR_22: u8 = 0x08;
 
 impl RaymarineReportReceiver {
     pub fn new(
+        session: Session,
         info: RadarInfo, // Quick access to our own RadarInfo
         radars: SharedRadars,
         model: Model,
@@ -281,7 +282,7 @@ impl RaymarineReportReceiver {
     ) -> RaymarineReportReceiver {
         let key = info.key();
 
-        let command_sender = Command::new(info.clone(), model.clone(), radars.clone());
+        let command_sender = Command::new(session.clone(), info.clone(), model.clone(), radars.clone());
 
         RaymarineReportReceiver {
             key: key,

@@ -20,7 +20,7 @@ pub(crate) mod trail;
 use crate::config::Persistence;
 use crate::locator::LocatorId;
 use crate::settings::{ControlError, ControlType, ControlUpdate, ControlValue, SharedControls};
-use crate::{Brand, TargetMode, GLOBAL_ARGS};
+use crate::{Brand, TargetMode, Session};
 
 // A "native to radar" bearing, usually [0..2048] or [0..4096] or [0..8192]
 pub(crate) type SpokeBearing = u16;
@@ -195,6 +195,7 @@ impl fmt::Display for GeoPosition {
 
 #[derive(Clone, Debug)]
 pub struct RadarInfo {
+    pub session: Session,
     key: String,
     pub id: usize,
     pub locator_id: LocatorId,
@@ -221,6 +222,7 @@ pub struct RadarInfo {
 
 impl RadarInfo {
     pub fn new(
+        session: Session,
         locator_id: LocatorId,
         brand: Brand,
         serial_no: Option<&str>,
@@ -238,7 +240,10 @@ impl RadarInfo {
     ) -> Self {
         let (message_tx, _message_rx) = tokio::sync::broadcast::channel(32);
 
+        let legend = default_legend(session.clone(), false, pixel_values);
+
         RadarInfo {
+            session,
             key: {
                 let mut key = brand.to_string();
 
@@ -268,7 +273,7 @@ impl RadarInfo {
             spoke_data_addr,
             report_addr,
             send_command_addr,
-            legend: default_legend(false, pixel_values),
+            legend: legend,
             message_tx,
             range_detection: None,
             controls,
@@ -290,7 +295,7 @@ impl RadarInfo {
     }
 
     pub fn set_legend(&mut self, doppler: bool) {
-        self.legend = default_legend(doppler, self.pixel_values);
+        self.legend = default_legend(self.session.clone(), doppler, self.pixel_values);
     }
 
     pub fn full_rotation(&mut self) -> u32 {
@@ -381,12 +386,14 @@ impl Display for RadarInfo {
 
 #[derive(Clone)]
 pub struct SharedRadars {
+    session: Session,
     radars: Arc<RwLock<Radars>>,
 }
 
 impl SharedRadars {
-    pub fn new() -> Self {
+    pub fn new(session: Session) -> Self {
         SharedRadars {
+            session,
             radars: Arc::new(RwLock::new(Radars {
                 info: HashMap::new(),
                 persistent_data: Persistence::new(),
@@ -400,7 +407,7 @@ impl SharedRadars {
         let mut radars = self.radars.write().unwrap();
 
         // For now, drop second radar in replay Mode...
-        if GLOBAL_ARGS.replay && key.ends_with("-B") {
+        if self.session.read().unwrap().args.replay && key.ends_with("-B") {
             return None;
         }
 
@@ -561,7 +568,7 @@ pub const BLOB_HISTORY_COLORS: u8 = 32;
 const TRANSPARENT: u8 = 0;
 const OPAQUE: u8 = 255;
 
-fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
+fn default_legend(session: Session, doppler: bool, pixel_values: u8) -> Legend {
     let mut legend = Legend {
         pixels: Vec::new(),
         history_start: 255,
@@ -624,7 +631,7 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
         },
     });
 
-    if GLOBAL_ARGS.targets == TargetMode::Arpa {
+    if session.read().unwrap().args.targets == TargetMode::Arpa {
         legend.border = legend.pixels.len() as u8;
         legend.pixels.push(Lookup {
             r#type: PixelType::TargetBorder,
@@ -660,7 +667,7 @@ fn default_legend(doppler: bool, pixel_values: u8) -> Legend {
         });
     }
 
-    if GLOBAL_ARGS.targets != TargetMode::None {
+    if session.read().unwrap().args.targets != TargetMode::None {
         legend.history_start = legend.pixels.len() as u8;
         const START_DENSITY: u8 = 255; // Target trail starts as white
         const END_DENSITY: u8 = 63; // Ends as gray
@@ -690,7 +697,8 @@ mod tests {
 
     #[test]
     fn legend() {
-        let legend = default_legend(true, 16);
+        let session = crate::Session::new_fake();
+        let legend = default_legend(session.clone(), true, 16);
         let json = serde_json::to_string_pretty(&legend).unwrap();
         println!("{}", json);
     }

@@ -27,10 +27,10 @@ mod axum_fix;
 use axum_fix::{Message, WebSocket, WebSocketUpgrade};
 
 use mayara::{
-    radar::{Legend, RadarError, RadarInfo, SharedRadars},
+    radar::{Legend, RadarError, RadarInfo},
     settings::SharedControls,
-    InterfaceApi, GLOBAL_ARGS,
-    ProtoAssets
+    ProtoAssets,
+    Session
 };
 
 const RADAR_URI: &str = "/v1/api/radars";
@@ -54,29 +54,27 @@ pub enum WebError {
 
 #[derive(Clone)]
 pub struct Web {
-    radars: SharedRadars,
+    session: Session,
     shutdown_tx: broadcast::Sender<()>,
-    tx_interface_request: broadcast::Sender<Option<mpsc::Sender<InterfaceApi>>>,
 }
 
 impl Web {
     pub fn new(
-        radars: SharedRadars,
-        tx_interface_request: broadcast::Sender<Option<mpsc::Sender<InterfaceApi>>>,
+        session: Session,
     ) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
 
         Web {
-            radars,
-            shutdown_tx,
-            tx_interface_request,
+            session,
+            shutdown_tx
         }
     }
 
     pub async fn run(self, subsys: SubsystemHandle) -> Result<(), WebError> {
+        let port = self.session.read().unwrap().args.port.clone();
         let listener = TcpListener::bind(SocketAddr::new(
             IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-            GLOBAL_ARGS.port,
+            port,
         ))
         .await
         .map_err(|e| WebError::Io(e))?;
@@ -98,7 +96,7 @@ impl Web {
             .with_state(self)
             .into_make_service_with_connect_info::<SocketAddr>();
 
-        log::info!("Starting HTTP web server on port {}", GLOBAL_ARGS.port);
+        log::info!("Starting HTTP web server on port {}", port);
 
         tokio::select! { biased;
             _ = subsys.on_shutdown_requested() => {
@@ -177,13 +175,13 @@ async fn get_radars(
             Ok(uri) => uri.host().unwrap_or("localhost").to_string(),
             Err(_) => "localhost".to_string(),
         },
-        GLOBAL_ARGS.port
+        state.session.read().unwrap().args.port
     );
 
     debug!("target host = '{}'", host);
 
     let mut api: HashMap<String, RadarApi> = HashMap::new();
-    for info in state.radars.get_active() {
+    for info in state.session.read().unwrap().radars.as_ref().unwrap().get_active().clone() {
         let legend = &info.legend;
         let id = format!("radar-{}", info.id);
         let stream_url = format!("ws://{}{}{}", host, SPOKES_URI, id);
@@ -219,7 +217,7 @@ async fn get_interfaces(
     debug!("Interface state request from {} for host '{}'", addr, host);
 
     let (tx, mut rx) = mpsc::channel(1);
-    state.tx_interface_request.send(Some(tx)).unwrap();
+    state.session.read().unwrap().tx_interface_request.send(Some(tx)).unwrap();
     match rx.recv().await {
         Some(api) => Json(api).into_response(),
         _ => Json(Vec::<String>::new()).into_response(),
@@ -242,7 +240,7 @@ async fn spokes_handler(
 
     let ws = ws.accept_compression(true);
 
-    match state.radars.get_by_id(&params.key) {
+    match state.session.read().unwrap().radars.as_ref().unwrap().get_by_id(&params.key).clone() {
         Some(radar) => {
             let shutdown_rx = state.shutdown_tx.subscribe();
             let radar_message_rx = radar.message_tx.subscribe();
@@ -299,7 +297,7 @@ async fn control_handler(
 
     let ws = ws.accept_compression(true);
 
-    match state.radars.get_by_id(&params.key) {
+    match state.session.read().unwrap().radars.as_ref().unwrap().get_by_id(&params.key).clone() {
         Some(radar) => {
             let shutdown_rx = state.shutdown_tx.subscribe();
 
