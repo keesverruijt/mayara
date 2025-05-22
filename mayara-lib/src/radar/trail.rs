@@ -6,7 +6,7 @@ use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::radar::trail::cartesian::PointInt;
 use crate::radar::{GeoPosition, Legend, SpokeBearing, BLOB_HISTORY_COLORS};
 use crate::settings::{ControlError, ControlType, ControlValue, SharedControls};
-use crate::{TargetMode, GLOBAL_ARGS};
+use crate::{TargetMode, Session};
 
 use super::target::TargetBuffer;
 use super::{RadarError, RadarInfo};
@@ -20,6 +20,7 @@ struct GeoPositionPixels {
 }
 
 pub struct TrailBuffer {
+    session: Session,
     legend: Legend,
     spokes: usize,
     max_spoke_len: usize,
@@ -42,7 +43,7 @@ pub struct TrailBuffer {
 }
 
 impl TrailBuffer {
-    pub fn new(info: &RadarInfo) -> Self {
+    pub fn new(session: Session, info: &RadarInfo) -> Self {
         let legend = info.legend.clone();
         let spokes = info.spokes as usize;
         let max_spoke_len = info.max_spoke_len as usize;
@@ -51,12 +52,13 @@ impl TrailBuffer {
         let cartesian_lookup =
             PolarToCartesianLookup::new(info.spokes as usize, info.max_spoke_len as usize);
 
-        let targets = match GLOBAL_ARGS.targets {
-            TargetMode::Arpa => Some(TargetBuffer::new(info)),
+        let targets = match session.read().unwrap().args.targets {
+            TargetMode::Arpa => Some(TargetBuffer::new(session.clone(), info)),
             _ => None,
         };
 
         TrailBuffer {
+            session: session.clone(),
             legend,
             spokes,
             max_spoke_len,
@@ -189,7 +191,7 @@ impl TrailBuffer {
     }
 
     pub fn update_trails(&mut self, spoke: &mut Spoke, legend: &Legend) {
-        if GLOBAL_ARGS.targets == TargetMode::None {
+        if self.session.read().unwrap().args.targets == TargetMode::None {
             return;
         }
         if spoke.range != self.previous_range && spoke.range != 0 {

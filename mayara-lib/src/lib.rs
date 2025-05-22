@@ -15,7 +15,6 @@ use std::{
 };
 use tokio::sync::{broadcast, mpsc};
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
-use once_cell::sync::OnceCell;
 
 pub mod brand;
 pub mod config;
@@ -26,8 +25,8 @@ pub mod protos;
 pub mod radar;
 pub mod settings;
 pub mod util;
-use std::ops::Deref;
 use rust_embed::RustEmbed;
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard, PoisonError};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -95,39 +94,6 @@ pub struct Cli {
     /// Stationary mode
     #[arg(long, default_value_t = false)]
     pub stationary: bool,
-}
-
-pub struct GlobalArgs {
-    inner: OnceCell<Cli>,
-}
-
-impl GlobalArgs {
-    pub const fn new() -> Self {
-        GlobalArgs {
-            inner: OnceCell::new(),
-        }
-    }
-
-    pub fn set(&self, cli: Cli) -> Result<(), Cli> {
-        self.inner.set(cli)
-    }
-
-    pub fn get(&self) -> Option<&Cli> {
-        self.inner.get()
-    }
-}
-
-impl Deref for GlobalArgs {
-    type Target = Cli;
-    fn deref(&self) -> &Cli {
-        self.get().expect("GLOBAL_ARGS not yet initialized")
-    }
-}
-
-pub static GLOBAL_ARGS: GlobalArgs = GlobalArgs::new();
-
-pub fn set_global_args(cli: Cli) -> Result<(), Cli> {
-    GLOBAL_ARGS.set(cli)
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -231,38 +197,97 @@ impl Serialize for InterfaceId {
     }
 }
 
-pub async fn init(s: &SubsystemHandle) -> Result<(SharedRadars, broadcast::Sender<Option<mpsc::Sender<InterfaceApi>>>)> {
-    let mut navdata = navdata::NavigationData::new();
 
-    let (tx_interface_request, _) = broadcast::channel(10);
-    let tx_interface_request_clone = tx_interface_request.clone();
-
-    let radars = SharedRadars::new();
-    let radars_clone = radars.clone();
-
-    let locator = Locator::new(radars);
-
-    let (tx_ip_change, rx_ip_change) = mpsc::channel(1);
-
-    s.start(SubsystemBuilder::new("NavData", |a| async move {
-        navdata.run(a, rx_ip_change).await
-    }));
-    s.start(SubsystemBuilder::new("Locator", |a| {
-        locator.run(a, tx_ip_change, tx_interface_request)
-    }));
-    
-    Ok((radars_clone, tx_interface_request_clone))
+pub struct SessionInner {
+    pub args: Cli,
+    pub tx_interface_request: broadcast::Sender<Option<mpsc::Sender<InterfaceApi>>>,
+    pub radars: Option<SharedRadars>
 }
 
+#[derive(Clone)]
+pub struct Session {
+    pub inner: Arc<RwLock<SessionInner>>
+}
 
+impl Session {
+    pub fn read(&self) -> Result<RwLockReadGuard<'_, SessionInner>, PoisonError<RwLockReadGuard<'_, SessionInner>>> {
+        self.inner.read()
+    }
+
+    pub fn write(&self) -> Result<RwLockWriteGuard<'_, SessionInner>, PoisonError<RwLockWriteGuard<'_, SessionInner>>> {
+        self.inner.write()
+    }
+
+    pub fn new_fake() -> Self {
+        // This does not actually start anything - only use for testing
+        Self::new_base(Cli::parse_from(["my_program"]))
+    }
+
+    fn new_base(
+        args: Cli
+    ) -> Self {
+        // This does not actually start anything - only use for testing        
+        let (tx_interface_request, _) = broadcast::channel(10);
+        let selfref = Session { inner: Arc::new(RwLock::new(SessionInner {args, tx_interface_request, radars: None})) };
+        selfref
+    }
+
+    pub async fn new(
+        subsystem: &SubsystemHandle,
+        args: Cli
+    ) -> Self {
+        let selfref = Self::new_base(args);
+
+        let mut navdata = navdata::NavigationData::new(selfref.clone());
+
+        let radars = Some(SharedRadars::new(selfref.clone()));
+
+        selfref.write().unwrap().radars = radars;
+
+        let locator = Locator::new(selfref.clone(), selfref.write().unwrap().radars.clone().unwrap());
+
+        let (tx_ip_change, rx_ip_change) = mpsc::channel(1);
+
+        subsystem.start(SubsystemBuilder::new("NavData", |a| async move {
+            navdata.run(a, rx_ip_change).await
+        }));
+        let tx_interface_request = selfref.write().unwrap().tx_interface_request.clone();
+
+        subsystem.start(SubsystemBuilder::new("Locator", |a| {
+            locator.run(a, tx_ip_change, tx_interface_request)
+        }));
+
+        selfref
+    }
+
+    pub fn clone(&self) -> Self {
+        Self { inner: self.inner.clone() }
+    }
+}
+
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Session {{ }}")
+    }
+}
+
+/*
 #[cfg(test)]
 mod init {
     use ctor::ctor;
     use crate::{Cli, set_global_args};
     use clap::Parser;
+    use once_cell::sync::OnceCell;
+
+    static GLOBAL_ARGS: OnceCell<Session> = OnceCell::new();
 
     #[ctor]
     fn setup() {
-        let _ = set_global_args(Cli::parse_from(["my_program"]));
+        let args = Cli::parse_from(["my_program"]);
+        
+        GLOBAL_ARGS.set()
+
+let _ = set_global_args(Cli::parse_from(["my_program"]));
     }
 }
+*/

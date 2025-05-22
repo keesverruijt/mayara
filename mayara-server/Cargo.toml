@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.80.1"
 
 [[bin]]
-name = "mayara"
+name = "mayara-server"
 path = "src/main.rs"
 
 [features]

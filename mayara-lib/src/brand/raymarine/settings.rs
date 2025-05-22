@@ -3,11 +3,12 @@ use std::collections::HashMap;
 use crate::{
     radar::RadarInfo,
     settings::{Control, ControlType, SharedControls, HAS_AUTO_NOT_ADJUSTABLE},
+    Session
 };
 
 use super::Model;
 
-pub fn new(model: Option<&str>) -> SharedControls {
+pub fn new(session: Session, model: Option<&str>) -> SharedControls {
     let mut controls = HashMap::new();
 
     controls.insert(
@@ -73,7 +74,7 @@ pub fn new(model: Option<&str>) -> SharedControls {
 
     controls.insert(ControlType::Status, control);
 
-    SharedControls::new(controls)
+    SharedControls::new(session, controls)
 }
 
 pub fn update_when_model_known(

@@ -12,7 +12,7 @@ use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState}
 use crate::network::LittleEndianSocketAddrV4;
 use crate::radar::{RadarInfo, SharedRadars};
 use crate::util::{c_string, PrintableSlice};
-use crate::{Brand, GLOBAL_ARGS};
+use crate::{Brand, Session};
 
 // mod command;
 // mod data;
@@ -81,52 +81,6 @@ impl Model {
     }
 }
 
-fn found(info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
-    info.controls
-        .set_string(&crate::settings::ControlType::UserName, info.key())
-        .unwrap();
-
-    if let Some(mut info) = radars.located(info) {
-        // It's new, start the RadarProcessor thread
-
-        // Load the model name afresh, it may have been modified from persisted data
-        let model = match info.controls.model_name() {
-            Some(s) => Model::new(&s),
-            None => Model::Eseries,
-        };
-        let info2 = info.clone();
-        settings::update_when_model_known(&mut info.controls, model, &info2);
-        let doppler_supported = false;
-        info.set_legend(doppler_supported);
-        radars.update(&info);
-
-        // Clone everything moved into future twice or more
-        if GLOBAL_ARGS.output {
-            let info_clone2 = info.clone();
-
-            subsys.start(SubsystemBuilder::new("stdout", move |s| {
-                info_clone2.forward_output(s)
-            }));
-        }
-
-        // let data_name = info.key() + " data";
-        // let report_name = info.key() + " reports";
-        // let info_clone = info.clone();
-        // let (tx_data, rx_data) = mpsc::channel(10);
-        // let data_receiver = data::RaymarineDataReceiver::new(info, rx_data, args.replay);
-        // let report_receiver =
-        //     report::RaymarineReportReceiver::new(info_clone, radars.clone(), model, tx_data);
-
-        // subsys.start(SubsystemBuilder::new(
-        //     data_name,
-        //     move |s: SubsystemHandle| data_receiver.run(s),
-        // ));
-        // subsys.start(SubsystemBuilder::new(report_name, |s| {
-        //     report_receiver.run(s)
-        // }));
-    }
-}
-
 type LinkId = u32;
 
 #[derive(Clone)]
@@ -137,12 +91,14 @@ struct RadarState {
 
 #[derive(Clone)]
 struct RaymarineLocatorState {
+    session: Session,
     ids: HashMap<LinkId, RadarState>,
 }
 
 impl RaymarineLocatorState {
-    fn new() -> Self {
+    fn new(session: Session) -> Self {
         RaymarineLocatorState {
+            session,
             ids: HashMap::new(),
         }
     }
@@ -183,6 +139,7 @@ impl RaymarineLocatorState {
                     let radar_addr: SocketAddrV4 = data.data.into();
                     let radar_send: SocketAddrV4 = data.radar.into();
                     let location_info: RadarInfo = RadarInfo::new(
+                        self.session.clone(),
                         LocatorId::Raymarine,
                         Brand::Raymarine,
                         None,
@@ -195,7 +152,7 @@ impl RaymarineLocatorState {
                         radar_addr.into(),
                         radar_addr.into(),
                         radar_send.into(),
-                        settings::new(info.model_name.as_deref()),
+                        settings::new(self.session.clone(), info.model_name.as_deref()),
                         true, // TODO: Only for Quantum2
                     );
 
@@ -239,6 +196,52 @@ impl RaymarineLocatorState {
         }
         Ok(())
     }
+
+    fn found(&self, info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
+        info.controls
+            .set_string(&crate::settings::ControlType::UserName, info.key())
+            .unwrap();
+
+        if let Some(mut info) = radars.located(info) {
+            // It's new, start the RadarProcessor thread
+
+            // Load the model name afresh, it may have been modified from persisted data
+            let model = match info.controls.model_name() {
+                Some(s) => Model::new(&s),
+                None => Model::Eseries,
+            };
+            let info2 = info.clone();
+            settings::update_when_model_known(&mut info.controls, model, &info2);
+            let doppler_supported = false;
+            info.set_legend(doppler_supported);
+            radars.update(&info);
+
+            // Clone everything moved into future twice or more
+            if self.session.read().unwrap().args.output {
+                let info_clone2 = info.clone();
+
+                subsys.start(SubsystemBuilder::new("stdout", move |s| {
+                    info_clone2.forward_output(s)
+                }));
+            }
+
+            // let data_name = info.key() + " data";
+            // let report_name = info.key() + " reports";
+            // let info_clone = info.clone();
+            // let (tx_data, rx_data) = mpsc::channel(10);
+            // let data_receiver = data::RaymarineDataReceiver::new(self.session.clone(), info, rx_data, args.replay);
+            // let report_receiver =
+            //     report::RaymarineReportReceiver::new(self.session.clone(), info_clone, radars.clone(), model, tx_data);
+
+            // subsys.start(SubsystemBuilder::new(
+            //     data_name,
+            //     move |s: SubsystemHandle| data_receiver.run(s),
+            // ));
+            // subsys.start(SubsystemBuilder::new(report_name, |s| {
+            //     report_receiver.run(s)
+            // }));
+        }
+    }
 }
 
 impl RadarLocatorState for RaymarineLocatorState {
@@ -270,7 +273,7 @@ impl RadarLocatorState for RaymarineLocatorState {
 
                 match Self::process_beacon_36_report(self, report, nic_addr) {
                     Ok(Some(info)) => {
-                        found(info, radars, subsys);
+                        self.found(info, radars, subsys);
                     }
                     Ok(None) => {}
                     Err(e) => {
@@ -296,7 +299,8 @@ impl RadarLocatorState for RaymarineLocatorState {
     }
 }
 
-struct RaymarineLocator {}
+#[derive(Clone)]
+struct RaymarineLocator {session: Session}
 
 #[async_trait]
 impl RadarLocator for RaymarineLocator {
@@ -307,14 +311,14 @@ impl RadarLocator for RaymarineLocator {
                 &RAYMARINE_BEACON_ADDRESS,
                 Brand::Raymarine,
                 vec![], // The Raymarine radars send the beacon reports by themselves, no polling needed
-                Box::new(RaymarineLocatorState::new()),
+                Box::new(RaymarineLocatorState::new(self.session.clone())),
             ));
         }
     }
 }
 
-pub fn create_locator() -> Box<dyn RadarLocator + Send> {
-    let locator = RaymarineLocator {};
+pub fn create_locator(session: Session) -> Box<dyn RadarLocator + Send> {
+    let locator = RaymarineLocator {session};
     Box::new(locator)
 }
 
@@ -326,6 +330,8 @@ mod tests {
 
     #[test]
     fn decode_raymarine_locator_beacon() {
+        let session = crate::Session::new_fake();
+
         const VIA: Ipv4Addr = Ipv4Addr::new(1, 1, 1, 1);
 
         // This is a real beacon message from a Raymarine Quantum radar (E704980880217-NewZealand)
@@ -396,7 +402,7 @@ mod tests {
             0x33, 0xc0, 0x13, 0x2, 0x0, 0x1, 0x0,
         ];
 
-        let mut state = RaymarineLocatorState::new();
+        let mut state = RaymarineLocatorState::new(session.clone());
         let r = state.process_beacon_36_report(&DATA1_36, &VIA);
         assert!(r.is_ok());
         let r = r.unwrap();
@@ -424,7 +430,7 @@ mod tests {
             SocketAddrV4::new(Ipv4Addr::new(232, 1, 243, 1), 2574)
         );
 
-        let mut state = RaymarineLocatorState::new();
+        let mut state = RaymarineLocatorState::new(session.clone());
         let r = state.process_beacon_36_report(&DATA2_36, &VIA);
         assert!(r.is_ok());
         let r = r.unwrap();
@@ -452,7 +458,7 @@ mod tests {
             SocketAddrV4::new(Ipv4Addr::new(232, 1, 167, 1), 2574)
         );
 
-        let mut state = RaymarineLocatorState::new();
+        let mut state = RaymarineLocatorState::new(session.clone());
         let r = state.process_beacon_36_report(&DATA3_36, &VIA);
         assert!(r.is_ok());
         let r = r.unwrap();

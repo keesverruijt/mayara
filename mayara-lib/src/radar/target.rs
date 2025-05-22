@@ -16,7 +16,7 @@ use crate::{
     navdata,
     protos::RadarMessage::radar_message::Spoke,
     settings::{ControlError, ControlType},
-    GLOBAL_ARGS,
+    Session,
 };
 
 use super::{GeoPosition, Legend, RadarInfo};
@@ -211,6 +211,7 @@ struct HistorySpokes {
 }
 #[derive(Debug, Clone)]
 pub struct TargetBuffer {
+    session: Session,
     setup: TargetSetup,
     next_target_id: usize,
     history: HistorySpokes,
@@ -326,8 +327,8 @@ impl HistorySpoke {
 }
 
 impl HistorySpokes {
-    fn new(spokes: i32, spoke_len: i32) -> Self {
-        let stationary = GLOBAL_ARGS.stationary;
+    fn new(session: Session, spokes: i32, spoke_len: i32) -> Self {
+        let stationary = session.read().unwrap().args.stationary;
         log::debug!(
             "creating HistorySpokes ({} x {}) stationary: {}",
             spokes,
@@ -793,12 +794,13 @@ impl TargetSetup {
 }
 
 impl TargetBuffer {
-    pub fn new(info: &RadarInfo) -> Self {
-        let stationary = GLOBAL_ARGS.stationary;
+    pub fn new(session: Session, info: &RadarInfo) -> Self {
+        let stationary = session.read().unwrap().args.stationary;
         let spokes = info.spokes as i32;
         let spoke_len = info.max_spoke_len as i32;
 
         TargetBuffer {
+            session: session.clone(),
             setup: TargetSetup {
                 radar_id: info.id,
                 spokes,
@@ -813,7 +815,7 @@ impl TargetBuffer {
             next_target_id: 0,
             arpa_via_doppler: false,
 
-            history: HistorySpokes::new(spokes, spoke_len),
+            history: HistorySpokes::new(session.clone(), spokes, spoke_len),
             targets: Arc::new(RwLock::new(HashMap::new())),
             m_clear_contours: false,
             m_auto_learn_state: 0,
@@ -840,7 +842,7 @@ impl TargetBuffer {
     }
 
     fn reset_history(&mut self) {
-        self.history = HistorySpokes::new(self.setup.spokes, self.setup.spoke_len);
+        self.history = HistorySpokes::new(self.session.clone(), self.setup.spokes, self.setup.spoke_len);
     }
 
     fn clear_contours(&mut self) {

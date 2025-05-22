@@ -12,7 +12,7 @@ use thiserror::Error;
 
 use crate::{
     radar::{DopplerMode, Legend, RadarError, RangeDetection},
-    TargetMode, GLOBAL_ARGS,
+    TargetMode, Session,
 };
 
 ///
@@ -36,6 +36,9 @@ use crate::{
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Controls {
+    #[serde(skip)]
+    session: Session,
+
     #[serde(flatten)]
     controls: HashMap<ControlType, Control>,
 
@@ -51,7 +54,7 @@ impl Controls {
     pub(self) fn insert(&mut self, control_type: ControlType, value: Control) {
         let v = Control {
             item: ControlDefinition {
-                is_read_only: GLOBAL_ARGS.replay,
+                is_read_only: self.session.read().unwrap().args.replay,
                 ..value.item
             },
             ..value
@@ -60,7 +63,7 @@ impl Controls {
         self.controls.insert(control_type, v);
     }
 
-    pub(self) fn new_base(mut controls: HashMap<ControlType, Control>) -> Self {
+    pub(self) fn new_base(session: Session, mut controls: HashMap<ControlType, Control>) -> Self {
         // Add _mandatory_ controls
         if !controls.contains_key(&ControlType::ModelName) {
             controls.insert(
@@ -71,7 +74,7 @@ impl Controls {
             );
         }
 
-        if GLOBAL_ARGS.replay {
+        if session.read().unwrap().args.replay {
             controls.iter_mut().for_each(|(_k, v)| {
                 v.item.is_read_only = true;
             });
@@ -86,7 +89,7 @@ impl Controls {
                 .set_destination(ControlDestination::Internal),
         );
 
-        if GLOBAL_ARGS.targets != TargetMode::None {
+        if session.read().unwrap().args.targets != TargetMode::None {
             controls.insert(
                 ControlType::TargetTrails,
                 Control::new_map(
@@ -119,7 +122,7 @@ impl Controls {
                     .set_destination(ControlDestination::Data),
             );
 
-            if GLOBAL_ARGS.targets == TargetMode::Arpa {
+            if session.read().unwrap().args.targets == TargetMode::Arpa {
                 controls.insert(
                     ControlType::ClearTargets,
                     Control::new_button(ControlType::ClearTargets)
@@ -133,6 +136,7 @@ impl Controls {
         let (data_update_tx, _) = tokio::sync::broadcast::channel(10);
 
         Controls {
+            session: session.clone(),
             controls,
             all_clients_tx,
             control_update_tx,
@@ -175,9 +179,9 @@ impl SharedControls {
     // Create a new set of controls, for a radar.
     // There is only one set that is shared amongst the various threads and
     // structs, hence the word Shared.
-    pub fn new(controls: HashMap<ControlType, Control>) -> Self {
+    pub fn new(session: Session, controls: HashMap<ControlType, Control>) -> Self {
         SharedControls {
-            controls: Arc::new(RwLock::new(Controls::new_base(controls))),
+            controls: Arc::new(RwLock::new(Controls::new_base(session, controls))),
         }
     }
 
@@ -1352,7 +1356,8 @@ mod test {
 
     #[test]
     fn control_range_values() {
-        let controls = SharedControls::new(HashMap::new());
+        let session = crate::Session::new_fake();
+        let controls = SharedControls::new(session, HashMap::new());
 
         assert!(controls.set(&ControlType::TargetTrails, 0., None).is_ok());
         assert_eq!(

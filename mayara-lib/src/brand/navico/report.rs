@@ -14,12 +14,13 @@ use crate::network::create_udp_multicast_listen;
 use crate::radar::{DopplerMode, RadarError, RadarInfo, RangeDetection, SharedRadars};
 use crate::settings::{ControlType, ControlUpdate, ControlValue, DataUpdate};
 use crate::util::{c_string, c_wide_string};
-use crate::GLOBAL_ARGS;
+use crate::Session;
 
 use super::command::Command;
 use super::Model;
 
 pub struct NavicoReportReceiver {
+    session: Session,
     info: RadarInfo,
     key: String,
     buf: Vec<u8>,
@@ -274,17 +275,19 @@ const REPORT_08_C4_18_OR_21_OR_22: u8 = 0x08;
 
 impl NavicoReportReceiver {
     pub fn new(
+        session: Session,
         info: RadarInfo, // Quick access to our own RadarInfo
         radars: SharedRadars,
         model: Model,
     ) -> NavicoReportReceiver {
         let key = info.key();
 
-        let command_sender = Command::new(info.clone(), model.clone());
+        let command_sender = Command::new(session.clone(), info.clone(), model.clone());
         let control_update_rx = info.controls.control_update_subscribe();
         let data_update_tx = info.controls.get_data_update_tx();
 
         NavicoReportReceiver {
+            session,
             key,
             info,
             buf: Vec::with_capacity(1000),
@@ -503,7 +506,7 @@ impl NavicoReportReceiver {
     // If range detection is in progress, go to the next range
     async fn process_range(&mut self, range: i32) -> Result<(), RadarError> {
         let mut range = range / 10;
-        if self.info.range_detection.is_none() && !GLOBAL_ARGS.replay {
+        if self.info.range_detection.is_none() && !self.session.read().unwrap().args.replay {
             if let Some(control) = self.info.controls.get(&ControlType::Range) {
                 self.info.range_detection = Some(RangeDetection::new(
                     0,
