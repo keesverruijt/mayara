@@ -4,7 +4,7 @@ set -eu
 
 [ -d work ] && rm -rf work/
 mkdir -p work
-cp -r ../Cargo* ../*.rs ../src ../web work
+cp -r ../Cargo* ../mayara-* work
 
 docker buildx build --no-cache -t keesverruijt/mayara:latest .
 
