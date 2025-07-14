@@ -29,7 +29,7 @@ COPY samples/halo_and_0183.pcap .
 RUN chmod +x start.sh
 RUN rm -rf mayara || :
 
-COPY --from=build /src/work/target/release/mayara /app/mayara
+COPY --from=build /src/work/target/release/mayara-server /app/mayara
 
 RUN apk add strace tcpdump
 
