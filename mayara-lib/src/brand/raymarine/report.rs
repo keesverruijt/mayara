@@ -113,10 +113,10 @@ const REPORT_02_C4_99: u8 = 0x02;
 struct RadarReport3_129 {
     _what: u8,
     _command: u8,
-    model: u8,               // So far: 01 = 4G and new 3G, 08 = 3G, 0F = BR24, 00 = HALO
-    _u00: [u8; 31],          // Lots of unknown
-    hours: [u8; 4],          // Hours of operation
-    _u01: [u8; 20],          // Lots of unknown
+    model: u8,      // So far: 01 = 4G and new 3G, 08 = 3G, 0E and 0F = BR24, 00 = HALO
+    _u00: [u8; 31], // Lots of unknown
+    hours: [u8; 4], // Hours of operation
+    _u01: [u8; 20], // Lots of unknown
     firmware_date: [u8; 32], // Wide chars, assumed UTF16
     firmware_time: [u8; 32], // Wide chars, assumed UTF16
     _u02: [u8; 7],
@@ -282,7 +282,8 @@ impl RaymarineReportReceiver {
     ) -> RaymarineReportReceiver {
         let key = info.key();
 
-        let command_sender = Command::new(session.clone(), info.clone(), model.clone(), radars.clone());
+        let command_sender =
+            Command::new(session.clone(), info.clone(), model.clone(), radars.clone());
 
         RaymarineReportReceiver {
             key: key,

@@ -68,14 +68,14 @@ impl LocatorAddress {
         id: LocatorId,
         address: &SocketAddr,
         brand: Brand,
-        adress_request_packets: Vec<&'static [u8]>,
+        beacon_request_packets: Vec<&'static [u8]>,
         locator: Box<dyn RadarLocatorState>,
     ) -> LocatorAddress {
         LocatorAddress {
             id,
             address: address.clone(),
             brand,
-            beacon_request_packets: adress_request_packets,
+            beacon_request_packets,
             locator,
         }
     }
@@ -240,7 +240,6 @@ impl Locator {
                                 spawn_interface_request(&mut set, &tx_interface_request);
                             }
                             Err(e) => {
-                                log::debug!("JoinResult error: {:?}", e);
                                 match e {
                                     RadarError::Shutdown => {
                                         log::debug!("Locator shutdown");
@@ -298,26 +297,31 @@ impl Locator {
         let _ = reply_channel.send(interface_api).await;
     }
 
-    fn compute_listen_addresses(&self, interface_state: &mut InterfaceState) -> Vec<LocatorAddress> {
+    fn compute_listen_addresses(
+        &self,
+        interface_state: &mut InterfaceState,
+    ) -> Vec<LocatorAddress> {
         let mut listen_addresses: Vec<LocatorAddress> = Vec::new();
         let mut locators: Vec<Box<dyn RadarLocator>> = Vec::new();
 
         let brands = &mut interface_state.interface_api.brands;
         brands.clear();
 
+        let args = self.session.read().unwrap().args.clone();
+
         #[cfg(feature = "navico")]
-        if self.session.read().unwrap().args.brand.unwrap_or(Brand::Navico) == Brand::Navico {
+        if args.brand.unwrap_or(Brand::Navico) == Brand::Navico {
             locators.push(navico::create_locator(self.session.clone()));
             locators.push(navico::create_br24_locator(self.session.clone()));
             brands.insert(Brand::Navico);
         }
         #[cfg(feature = "furuno")]
-        if self.session.read().unwrap().args.brand.unwrap_or(Brand::Furuno) == Brand::Furuno {
+        if args.brand.unwrap_or(Brand::Furuno) == Brand::Furuno {
             locators.push(furuno::create_locator(self.session.clone()));
             brands.insert(Brand::Furuno);
         }
         #[cfg(feature = "raymarine")]
-        if self.session.read().unwrap().args.brand.unwrap_or(Brand::Raymarine) == Brand::Raymarine {
+        if args.brand.unwrap_or(Brand::Raymarine) == Brand::Raymarine {
             locators.push(raymarine::create_locator(self.session.clone()));
             brands.insert(Brand::Raymarine);
         }

@@ -27,7 +27,7 @@ pub struct NavicoReportReceiver {
     sock: Option<UdpSocket>,
     radars: SharedRadars,
     model: Model,
-    command_sender: Command,
+    command_sender: Option<Command>,
     data_tx: broadcast::Sender<DataUpdate>,
     control_update_rx: broadcast::Receiver<ControlUpdate>,
     range_timeout: Option<Instant>,
@@ -114,10 +114,10 @@ const REPORT_02_C4_99: u8 = 0x02;
 struct RadarReport3_129 {
     _what: u8,
     _command: u8,
-    model: u8,               // So far: 01 = 4G and new 3G, 08 = 3G, 0F = BR24, 00 = HALO
-    _u00: [u8; 31],          // Lots of unknown
-    hours: [u8; 4],          // Hours of operation
-    _u01: [u8; 20],          // Lots of unknown
+    model: u8,      // So far: 01 = 4G and new 3G, 08 = 3G, 0E and 0F = BR24, 00 = HALO
+    _u00: [u8; 31], // Lots of unknown
+    hours: [u8; 4], // Hours of operation
+    _u01: [u8; 20], // Lots of unknown
     firmware_date: [u8; 32], // Wide chars, assumed UTF16
     firmware_time: [u8; 32], // Wide chars, assumed UTF16
     _u02: [u8; 7],
@@ -282,7 +282,20 @@ impl NavicoReportReceiver {
     ) -> NavicoReportReceiver {
         let key = info.key();
 
-        let command_sender = Command::new(session.clone(), info.clone(), model.clone());
+        let args = session.read().unwrap().args.clone();
+        log::debug!(
+            "{}: Creating NavicoReportReceiver with args {:?}",
+            key,
+            args
+        );
+        // If we are in replay mode, we don't need a command sender, as we will not send any commands
+        let command_sender = if !args.replay {
+            log::debug!("{}: Starting command sender", key);
+            Some(Command::new(session.clone(), info.clone(), model.clone()))
+        } else {
+            log::debug!("{}: No command sender, replay mode", key);
+            None
+        };
         let control_update_rx = info.controls.control_update_subscribe();
         let data_update_tx = info.controls.get_data_update_tx();
 
@@ -387,25 +400,25 @@ impl NavicoReportReceiver {
         let cv = control_update.control_value;
         let reply_tx = control_update.reply_tx;
 
-        if let Err(e) = self
-            .command_sender
-            .set_control(&cv, &self.info.controls)
-            .await
-        {
-            return self
-                .info
-                .controls
-                .send_error_to_client(reply_tx, &cv, &e)
-                .await;
-        } else {
-            self.info.controls.set_refresh(&cv.id);
+        if let Some(command_sender) = &mut self.command_sender {
+            if let Err(e) = command_sender.set_control(&cv, &self.info.controls).await {
+                return self
+                    .info
+                    .controls
+                    .send_error_to_client(reply_tx, &cv, &e)
+                    .await;
+            } else {
+                self.info.controls.set_refresh(&cv.id);
+            }
         }
 
         Ok(())
     }
 
     async fn send_report_requests(&mut self) -> Result<(), RadarError> {
-        self.command_sender.send_report_requests().await?;
+        if let Some(command_sender) = &mut self.command_sender {
+            command_sender.send_report_requests().await?;
+        }
         self.report_request_timeout += self.report_request_interval;
         Ok(())
     }
@@ -567,6 +580,8 @@ impl NavicoReportReceiver {
                 range_detection.commanded_range = next_range;
                 let cv = ControlValue::new(ControlType::Range, next_range.to_string());
                 self.command_sender
+                    .as_mut()
+                    .unwrap() // Safe, as we only create a range detection when replay is false
                     .set_control(&cv, &self.info.controls)
                     .await?;
             }
@@ -785,16 +800,19 @@ impl NavicoReportReceiver {
 
         trace!("{}: report {:?}", self.key, report);
 
-        let model = report.model;
+        let model_raw = report.model;
         let hours = i32::from_le_bytes(report.hours);
         let firmware_date = c_wide_string(&report.firmware_date);
         let firmware_time = c_wide_string(&report.firmware_time);
-        let model: Result<Model, _> = model.try_into();
+        let model = Model::from(model_raw);
         match model {
-            Err(_) => {
-                bail!("{}: Unknown model # {}", self.key, report.model);
+            Model::Unknown => {
+                if !self.reported_unknown[model_raw as usize] {
+                    self.reported_unknown[model_raw as usize] = true;
+                    error!("{}: Unknown radar model 0x{:02x}", self.key, model_raw);
+                }
             }
-            Ok(model) => {
+            _ => {
                 if self.model != model {
                     info!("{}: Radar is model {}", self.key, model);
                     let info2 = self.info.clone();
@@ -973,7 +991,16 @@ impl NavicoReportReceiver {
             sidelobe_suppression_auto,
         );
         self.set_value(&ControlType::NoiseRejection, noise_reduction as f32);
-        self.set_value(&ControlType::TargetSeparation, target_sep as f32);
+        if self.model == Model::HALO || self.model == Model::Gen4 {
+            self.set_value(&ControlType::TargetSeparation, target_sep as f32);
+        } else if target_sep > 0 {
+            log::trace!(
+                "{}: Target separation value {} not supported on model {}",
+                self.key,
+                target_sep,
+                self.model
+            );
+        }
 
         Ok(())
     }

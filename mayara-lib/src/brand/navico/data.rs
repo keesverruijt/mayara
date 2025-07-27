@@ -139,6 +139,12 @@ impl NavicoDataReceiver {
             }
         }
 
+        log::debug!(
+            "{}: Creating NavicoDataReceiver with pixel_to_blob {:?}",
+            key,
+            pixel_to_blob
+        );
+
         NavicoDataReceiver {
             session,
             key,
@@ -239,11 +245,36 @@ impl NavicoDataReceiver {
         Ok(())
     }
 
+    pub async fn run(mut self, subsys: SubsystemHandle) -> Result<(), RadarError> {
+        self.start_socket().await.unwrap();
+        loop {
+            if self.sock.is_some() {
+                match self.socket_loop(&subsys).await {
+                    Err(RadarError::Shutdown) => {
+                        return Ok(());
+                    }
+                    _ => {
+                        // Ignore, reopen socket
+                    }
+                }
+                self.sock = None;
+            } else {
+                sleep(Duration::from_millis(1000)).await;
+                self.start_socket().await.unwrap();
+            }
+        }
+    }
+
     async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
         let mut buf = Vec::with_capacity(size_of::<RadarFramePkt>());
+        log::trace!(
+            "{}: Starting socket loop on {}",
+            self.key,
+            self.info.spoke_data_addr
+        );
 
         loop {
-            tokio::select! { biased;
+            tokio::select! {
                 _ = subsys.on_shutdown_requested() => {
                     return Err(RadarError::Shutdown);
                 },
@@ -272,26 +303,6 @@ impl NavicoDataReceiver {
         }
     }
 
-    pub async fn run(mut self, subsys: SubsystemHandle) -> Result<(), RadarError> {
-        self.start_socket().await.unwrap();
-        loop {
-            if self.sock.is_some() {
-                match self.socket_loop(&subsys).await {
-                    Err(RadarError::Shutdown) => {
-                        return Ok(());
-                    }
-                    _ => {
-                        // Ignore, reopen socket
-                    }
-                }
-                self.sock = None;
-            } else {
-                sleep(Duration::from_millis(1000)).await;
-                self.start_socket().await.unwrap();
-            }
-        }
-    }
-
     fn process_frame(&mut self, data: &mut Vec<u8>) {
         let mut prev_angle = 0;
 
@@ -311,7 +322,7 @@ impl NavicoDataReceiver {
             }
         }
 
-        trace!("Received UDP frame with {} spokes", &scanlines_in_packet);
+        log::trace!("Received UDP frame with {} spokes", &scanlines_in_packet);
 
         let mut mark_full_rotation = false;
         let mut message = RadarMessage::new();
@@ -446,7 +457,9 @@ impl NavicoDataReceiver {
 
         let heading = u16::from_le_bytes(header.heading);
         let angle = u16::from_le_bytes(header.angle) / 2;
-        let range = u32::from_le_bytes(header.range);
+        const BR24_RANGE_FACTOR: f64 = 10.0 / 1.414; // 10 m / sqrt(2)
+        let range =
+            ((u32::from_le_bytes(header.range) & 0xffffff) as f64 * BR24_RANGE_FACTOR) as u32;
 
         let heading = extract_heading_value(heading);
 

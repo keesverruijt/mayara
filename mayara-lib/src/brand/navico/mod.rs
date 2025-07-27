@@ -1,5 +1,4 @@
 use bincode::deserialize;
-use enum_primitive_derive::Primitive;
 use log::{debug, error, log_enabled, trace};
 use serde::Deserialize;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -147,13 +146,13 @@ struct BR24Beacon {
     data: NetworkSocketAddrV4, // Note different order from newer radars
 }
 
-#[derive(Copy, Clone, PartialEq, Debug, Primitive)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub enum Model {
-    Unknown = 0xff,
-    BR24 = 0x0f,
-    Gen3 = 0x08,
-    Gen4 = 0x01,
-    HALO = 0x00,
+    Unknown,
+    BR24,
+    Gen3,
+    Gen4,
+    HALO,
 }
 
 const BR24_MODEL_NAME: &str = "BR24";
@@ -181,6 +180,17 @@ impl Model {
             _ => Model::Unknown,
         }
     }
+
+    pub fn from(model: u8) -> Self {
+        match model {
+            0x0e => Model::BR24, // Davy's NorthStart BR24 from 2009
+            0x0f => Model::BR24,
+            0x08 => Model::Gen3,
+            0x01 => Model::Gen4,
+            0x00 => Model::HALO,
+            _ => Model::Unknown,
+        }
+    }
 }
 
 const NAVICO_BEACON_SINGLE_SIZE: usize = size_of::<NavicoBeaconSingle>();
@@ -188,7 +198,9 @@ const NAVICO_BEACON_DUAL_SIZE: usize = size_of::<NavicoBeaconDual>();
 const NAVICO_BEACON_BR24_SIZE: usize = size_of::<BR24Beacon>();
 
 #[derive(Clone)]
-struct NavicoLocatorState {session: Session}
+struct NavicoLocatorState {
+    session: Session,
+}
 
 impl NavicoLocatorState {
     fn process_locator_report(
@@ -408,7 +420,12 @@ impl NavicoLocatorState {
             }
 
             let data_receiver = data::NavicoDataReceiver::new(self.session.clone(), info);
-            let report_receiver = report::NavicoReportReceiver::new(self.session.clone(), info_clone, radars.clone(), model);
+            let report_receiver = report::NavicoReportReceiver::new(
+                self.session.clone(),
+                info_clone,
+                radars.clone(),
+                model,
+            );
 
             subsys.start(SubsystemBuilder::new(
                 data_name,
@@ -434,36 +451,46 @@ impl RadarLocatorState for NavicoLocatorState {
     }
 
     fn clone(&self) -> Box<dyn RadarLocatorState> {
-        Box::new(NavicoLocatorState {session:self.session.clone()}) // Navico is stateless
+        Box::new(NavicoLocatorState {
+            session: self.session.clone(),
+        }) // Navico is stateless
     }
-
 }
 
 #[derive(Clone)]
-struct NavicoLocator {session: Session}
+struct NavicoLocator {
+    session: Session,
+}
 
 impl RadarLocator for NavicoLocator {
     fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
+        let mut beacon_request_packets: Vec<&'static [u8]> = Vec::new();
+        if !self.session.read().unwrap().args.replay {
+            beacon_request_packets.push(&NAVICO_ADDRESS_REQUEST_PACKET);
+        };
         if !addresses.iter().any(|i| i.id == LocatorId::Gen3Plus) {
             addresses.push(LocatorAddress::new(
                 LocatorId::Gen3Plus,
                 &NAVICO_BEACON_ADDRESS,
                 Brand::Navico,
-                vec![&NAVICO_ADDRESS_REQUEST_PACKET],
-                Box::new(NavicoLocatorState {session:self.session.clone()}),
+                beacon_request_packets,
+                Box::new(NavicoLocatorState {
+                    session: self.session.clone(),
+                }),
             ));
         }
     }
 }
 
 pub fn create_locator(session: Session) -> Box<dyn RadarLocator + Send> {
-    let locator = NavicoLocator {session};
+    let locator = NavicoLocator { session };
     Box::new(locator)
 }
 
-
 #[derive(Clone)]
-struct NavicoBR24Locator {session: Session}
+struct NavicoBR24Locator {
+    session: Session,
+}
 
 impl RadarLocator for NavicoBR24Locator {
     fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
@@ -473,14 +500,16 @@ impl RadarLocator for NavicoBR24Locator {
                 &NAVICO_BR24_BEACON_ADDRESS,
                 Brand::Navico,
                 vec![&NAVICO_ADDRESS_REQUEST_PACKET],
-                Box::new(NavicoLocatorState {session:self.session.clone()}),
+                Box::new(NavicoLocatorState {
+                    session: self.session.clone(),
+                }),
             ));
         }
     }
 }
 
 pub fn create_br24_locator(session: Session) -> Box<dyn RadarLocator + Send> {
-    let locator = NavicoBR24Locator {session};
+    let locator = NavicoBR24Locator { session };
     Box::new(locator)
 }
 
