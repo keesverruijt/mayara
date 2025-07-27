@@ -5,23 +5,24 @@
     "version": "0.2.0",
     "configurations": [
 
+
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'mayara'",
+            "name": "Debug executable 'mayara-server'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=mayara",
-                    "--package=mayara",
+                    "--bin=mayara-server",
+                    "--package=mayara-server",
                 ],
                 "filter": {
-                    "name": "mayara",
+                    "name": "mayara-server",
                     "kind": "bin"
                 }
             },
             "args": [ 
-                    "-v", "--targets", "trails", "--replay"
+                    "-v", "--replay"
                ],
             "cwd": "${workspaceFolder}"
         },
@@ -29,21 +30,21 @@
             "type": "lldb",
             "request": "attach",
             "name": "Attach to running 'mayara'",
-            "program": "${workspaceFolder}/target/mayara",
+            "program": "${workspaceFolder}/target/mayara-server",
         },
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'mayara'",
+            "name": "Debug unit tests in executable 'mayara-server'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=mayara",
-                    "--package=mayara"
+                    "--bin=mayara-server",
+                    "--package=mayara-server"
                 ],
                 "filter": {
-                    "name": "mayara",
+                    "name": "mayara-server",
                     "kind": "bin"
                 }
             },
