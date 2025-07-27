@@ -106,7 +106,7 @@ impl RaymarineLocatorState {
     fn process_beacon_36_report(
         &mut self,
         report: &[u8],
-        via: &Ipv4Addr,
+        from: &Ipv4Addr,
     ) -> Result<Option<RadarInfo>, Error> {
         match deserialize::<RaymarineBeacon36>(report) {
             Ok(data) => {
@@ -117,6 +117,15 @@ impl RaymarineLocatorState {
                 let link_id = data.link_id;
 
                 if let Some(info) = self.ids.get(&link_id) {
+                    log::debug!(
+                        "{}: link {} report: {:02X?} len {}",
+                        from,
+                        link_id,
+                        report,
+                        report.len()
+                    );
+                    log::debug!("{}: data {:?}", from, data);
+
                     let model = info.model;
                     match model {
                         Model::Quantum => {
@@ -148,7 +157,7 @@ impl RaymarineLocatorState {
                         spokes,
                         max_spoke_len,
                         radar_addr.into(),
-                        via.clone(),
+                        from.clone(),
                         radar_addr.into(),
                         radar_addr.into(),
                         radar_send.into(),
@@ -166,7 +175,7 @@ impl RaymarineLocatorState {
         Ok(None)
     }
 
-    fn process_beacon_56_report(&mut self, report: &[u8], _via: &Ipv4Addr) -> Result<(), Error> {
+    fn process_beacon_56_report(&mut self, report: &[u8], from: &Ipv4Addr) -> Result<(), Error> {
         match deserialize::<RaymarineBeacon56>(report) {
             Ok(data) => {
                 if data.beacon_type != 0x01 {
@@ -180,11 +189,39 @@ impl RaymarineLocatorState {
                         let model = Model::Quantum;
                         let model_name: Option<String> =
                             c_string(&data.model_name).map(String::from);
+                        log::debug!(
+                            "{}: Located via report: {:02X?} len {}",
+                            from,
+                            report,
+                            report.len()
+                        );
+                        log::debug!(
+                            "{}: Located via report: {} len {}",
+                            from,
+                            PrintableSlice::new(report),
+                            report.len()
+                        );
+                        log::debug!(
+                            "{}: link_id {} model_name: {:?} model {}",
+                            from,
+                            link_id,
+                            model_name,
+                            model
+                        );
+                        log::debug!("{}: data {:?}", from, data);
                         self.ids.insert(link_id, RadarState { model_name, model });
                     }
                     0x01 => {
                         let model = Model::Eseries;
                         let model_name = Some(model.to_string());
+                        log::debug!(
+                            "{}: Located via report: {:02X?} len {}",
+                            from,
+                            report,
+                            report.len()
+                        );
+                        log::debug!("{}: model_name: {:?} model {}", from, model_name, model);
+                        log::debug!("{}: link_id: {:?}", from, link_id);
                         self.ids.insert(link_id, RadarState { model_name, model });
                     }
                     _ => {}
