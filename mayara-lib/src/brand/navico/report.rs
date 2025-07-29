@@ -1,6 +1,5 @@
 use anyhow::{bail, Error};
 use enum_primitive_derive::Primitive;
-use log::{debug, error, info, trace};
 use std::cmp::{max, min};
 use std::mem::transmute;
 use std::time::Duration;
@@ -321,17 +320,22 @@ impl NavicoReportReceiver {
         match create_udp_multicast_listen(&self.info.report_addr, &self.info.nic_addr) {
             Ok(sock) => {
                 self.sock = Some(sock);
-                debug!(
+                log::debug!(
                     "{}: {} via {}: listening for reports",
-                    self.key, &self.info.report_addr, &self.info.nic_addr
+                    self.key,
+                    &self.info.report_addr,
+                    &self.info.nic_addr
                 );
                 Ok(())
             }
             Err(e) => {
                 sleep(Duration::from_millis(1000)).await;
-                debug!(
+                log::debug!(
                     "{}: {} via {}: create multicast failed: {}",
-                    self.key, &self.info.report_addr, &self.info.nic_addr, e
+                    self.key,
+                    &self.info.report_addr,
+                    &self.info.nic_addr,
+                    e
                 );
                 Ok(())
             }
@@ -343,7 +347,7 @@ impl NavicoReportReceiver {
     // controller (= user) on self.info.command_tx.
     //
     async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
-        debug!("{}: listening for reports", self.key);
+        log::debug!("{}: listening for reports", self.key);
 
         loop {
             let mut is_range_timeout = false;
@@ -356,7 +360,7 @@ impl NavicoReportReceiver {
             }
             tokio::select! {
                 _ = subsys.on_shutdown_requested() => {
-                    info!("{}: shutdown", self.key);
+                    log::debug!("{}: shutdown", self.key);
                     return Err(RadarError::Shutdown);
                 },
 
@@ -372,12 +376,12 @@ impl NavicoReportReceiver {
                     match r {
                         Ok((_len, _addr)) => {
                             if let Err(e) = self.process_report().await {
-                                error!("{}: {}", self.key, e);
+                                log::error!("{}: {}", self.key, e);
                             }
                             self.buf.clear();
                         }
                         Err(e) => {
-                            error!("{}: receive error: {}", self.key, e);
+                            log::error!("{}: receive error: {}", self.key, e);
                             return Err(RadarError::Io(e));
                         }
                     }
@@ -446,7 +450,7 @@ impl NavicoReportReceiver {
     fn set(&mut self, control_type: &ControlType, value: f32, auto: Option<bool>) {
         match self.info.controls.set(control_type, value, auto) {
             Err(e) => {
-                error!("{}: {}", self.key, e.to_string());
+                log::error!("{}: {}", self.key, e.to_string());
             }
             Ok(Some(())) => {
                 if log::log_enabled!(log::Level::Debug) {
@@ -485,12 +489,12 @@ impl NavicoReportReceiver {
             .set_value_with_many_auto(control_type, value, auto_value)
         {
             Err(e) => {
-                error!("{}: {}", self.key, e.to_string());
+                log::error!("{}: {}", self.key, e.to_string());
             }
             Ok(Some(())) => {
                 if log::log_enabled!(log::Level::Debug) {
                     let control = self.info.controls.get(control_type).unwrap();
-                    debug!(
+                    log::debug!(
                         "{}: Control '{}' new value {} auto_value {:?} auto {:?}",
                         self.key,
                         control_type,
@@ -507,10 +511,10 @@ impl NavicoReportReceiver {
     fn set_string(&mut self, control: &ControlType, value: String) {
         match self.info.controls.set_string(control, value) {
             Err(e) => {
-                error!("{}: {}", self.key, e.to_string());
+                log::error!("{}: {}", self.key, e.to_string());
             }
             Ok(Some(v)) => {
-                debug!("{}: Control '{}' new value '{}'", self.key, control, v);
+                log::debug!("{}: Control '{}' new value '{}'", self.key, control, v);
             }
             Ok(None) => {}
         };
@@ -526,6 +530,7 @@ impl NavicoReportReceiver {
                     control.item().max_value.unwrap() as i32,
                 ));
                 range = 0;
+                log::info!("{}: Starting all possible ranges detection", self.key);
             }
         }
 
@@ -564,7 +569,7 @@ impl NavicoReportReceiver {
                     next_range = max(range_detection.saved_range, range_detection.ranges[0]);
                     complete = true;
                     log::info!(
-                        "{}: Range detection complete, ranges: {:?}",
+                        "{}: Range detection complete, valid ranges are: {:?}",
                         self.key,
                         range_detection.ranges
                     );
@@ -572,7 +577,7 @@ impl NavicoReportReceiver {
                     // Set a timer to pick up the range if it doesn't do anything, so we are called again...
                     self.range_timeout = Some(Instant::now() + Duration::from_secs(2));
                 }
-                log::trace!(
+                log::debug!(
                     "{}: Range detection ask for range {}m",
                     self.key,
                     next_range
@@ -687,11 +692,11 @@ impl NavicoReportReceiver {
                         // not sure what purpose it serves.
                     }
                     _ => {
-                        trace!("Unknown report 0x{:02x} 0xc6: {:02X?}", data[0], data);
+                        log::trace!("Unknown report 0x{:02x} 0xc6: {:02X?}", data[0], data);
                     }
                 }
             } else {
-                trace!("Unknown report {:02X?} dropped", data)
+                log::trace!("Unknown report {:02X?} dropped", data)
             }
             return Ok(());
         }
@@ -727,7 +732,7 @@ impl NavicoReportReceiver {
             _ => {
                 if !self.reported_unknown[report_identification as usize] {
                     self.reported_unknown[report_identification as usize] = true;
-                    trace!(
+                    log::trace!(
                         "Unknown report identification {} len {} data {:02X?} dropped",
                         report_identification,
                         data.len(),
@@ -742,7 +747,7 @@ impl NavicoReportReceiver {
     async fn process_report_01(&mut self) -> Result<(), Error> {
         let report = RadarReport1_18::transmute(&self.buf)?;
 
-        info!("{}: report {:?}", self.key, report);
+        log::debug!("{}: report {:?}", self.key, report);
 
         let status: Result<Status, _> = report.status.try_into();
         if status.is_err() {
@@ -756,7 +761,7 @@ impl NavicoReportReceiver {
     async fn process_report_02(&mut self) -> Result<(), Error> {
         let report = RadarReport2_99::transmute(&self.buf)?;
 
-        trace!("{}: report {:?}", self.key, report);
+        log::trace!("{}: report {:?}", self.key, report);
 
         let mode = report.mode as i32;
         let range = i32::from_le_bytes(report.range);
@@ -798,7 +803,7 @@ impl NavicoReportReceiver {
     async fn process_report_03(&mut self) -> Result<(), Error> {
         let report = RadarReport3_129::transmute(&self.buf)?;
 
-        trace!("{}: report {:?}", self.key, report);
+        log::trace!("{}: report {:?}", self.key, report);
 
         let model_raw = report.model;
         let hours = i32::from_le_bytes(report.hours);
@@ -809,12 +814,12 @@ impl NavicoReportReceiver {
             Model::Unknown => {
                 if !self.reported_unknown[model_raw as usize] {
                     self.reported_unknown[model_raw as usize] = true;
-                    error!("{}: Unknown radar model 0x{:02x}", self.key, model_raw);
+                    log::error!("{}: Unknown radar model 0x{:02x}", self.key, model_raw);
                 }
             }
             _ => {
                 if self.model != model {
-                    info!("{}: Radar is model {}", self.key, model);
+                    log::info!("{}: Radar is model {}", self.key, model);
                     let info2 = self.info.clone();
                     self.model = model;
                     super::settings::update_when_model_known(
@@ -842,7 +847,7 @@ impl NavicoReportReceiver {
     async fn process_report_04(&mut self) -> Result<(), Error> {
         let report = RadarReport4_66::transmute(&self.buf)?;
 
-        trace!("{}: report {:?}", self.key, report);
+        log::trace!("{}: report {:?}", self.key, report);
 
         self.set_value(
             &ControlType::BearingAlignment,
@@ -865,7 +870,7 @@ impl NavicoReportReceiver {
     async fn process_report_06_68(&mut self) -> Result<(), Error> {
         let report = RadarReport6_68::transmute(&self.buf)?;
 
-        trace!("{}: report {:?}", self.key, report);
+        log::trace!("{}: report {:?}", self.key, report);
 
         let name = c_string(&report.name);
         self.set_string(&ControlType::ModelName, name.unwrap_or("").to_string());
@@ -892,7 +897,7 @@ impl NavicoReportReceiver {
     async fn process_report_06_74(&mut self) -> Result<(), Error> {
         let report = RadarReport6_74::transmute(&self.buf)?;
 
-        trace!("{}: report {:?}", self.key, report);
+        log::trace!("{}: report {:?}", self.key, report);
 
         let name = c_string(&report.name);
         // self.set_string(&ControlType::ModelName, name.unwrap_or("").to_string());
@@ -930,7 +935,7 @@ impl NavicoReportReceiver {
 
         let report = RadarReport8_18::transmute(&data[0..size_of::<RadarReport8_18>()])?;
 
-        trace!("{}: report {:?}", self.key, report);
+        log::trace!("{}: report {:?}", self.key, report);
 
         let sea_state = report.sea_state as i32;
         let local_interference_rejection = report.interference_rejection as i32;
@@ -946,7 +951,7 @@ impl NavicoReportReceiver {
         if data.len() >= size_of::<RadarReport8_21>() {
             let report = RadarReport8_21::transmute(&data[0..size_of::<RadarReport8_21>()])?;
 
-            trace!("{}: report {:?}", self.key, report);
+            log::trace!("{}: report {:?}", self.key, report);
 
             let doppler_speed = u16::from_le_bytes(report.doppler_speed);
             let doppler_state = report.doppler_state;
@@ -961,9 +966,11 @@ impl NavicoReportReceiver {
                     );
                 }
                 Ok(doppler_mode) => {
-                    debug!(
+                    log::debug!(
                         "{}: doppler mode={} speed={}",
-                        self.key, doppler_mode, doppler_speed
+                        self.key,
+                        doppler_mode,
+                        doppler_speed
                     );
                     self.data_tx.send(DataUpdate::Doppler(doppler_mode))?;
                 }

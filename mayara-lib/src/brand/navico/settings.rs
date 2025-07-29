@@ -6,7 +6,7 @@ use crate::{
         AutomaticValue, Control, ControlDestination, ControlType, SharedControls,
         HAS_AUTO_NOT_ADJUSTABLE,
     },
-    Session
+    Session,
 };
 
 use super::Model;

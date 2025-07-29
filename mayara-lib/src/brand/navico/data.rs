@@ -1,5 +1,4 @@
 use bincode::deserialize;
-use log::{debug, trace, warn};
 use protobuf::Message;
 use serde::Deserialize;
 use std::f64::consts::PI;
@@ -162,17 +161,20 @@ impl NavicoDataReceiver {
         match create_udp_multicast_listen(&self.info.spoke_data_addr, &self.info.nic_addr) {
             Ok(sock) => {
                 self.sock = Some(sock);
-                debug!(
+                log::debug!(
                     "{} via {}: listening for spoke data",
-                    &self.info.spoke_data_addr, &self.info.nic_addr
+                    &self.info.spoke_data_addr,
+                    &self.info.nic_addr
                 );
                 Ok(())
             }
             Err(e) => {
                 sleep(Duration::from_millis(1000)).await;
-                debug!(
+                log::debug!(
                     "{} via {}: create multicast failed: {}",
-                    &self.info.spoke_data_addr, &self.info.nic_addr, e
+                    &self.info.spoke_data_addr,
+                    &self.info.nic_addr,
+                    e
                 );
                 Ok(())
             }
@@ -214,7 +216,7 @@ impl NavicoDataReceiver {
     }
 
     async fn handle_data_update(&mut self, r: DataUpdate) -> Result<(), RadarError> {
-        log::info!("Received data update: {:?}", r);
+        log::debug!("{}: Received data update: {:?}", self.key, r);
         match r {
             DataUpdate::Doppler(doppler) => {
                 self.doppler = doppler;
@@ -307,7 +309,7 @@ impl NavicoDataReceiver {
         let mut prev_angle = 0;
 
         if data.len() < FRAME_HEADER_LENGTH + RADAR_LINE_LENGTH {
-            warn!(
+            log::warn!(
                 "UDP data frame with even less than one spoke, len {} dropped",
                 data.len()
             );
@@ -335,8 +337,8 @@ impl NavicoDataReceiver {
                 ..offset + RADAR_LINE_HEADER_LENGTH + RADAR_LINE_DATA_LENGTH];
 
             if let Some((range, angle, heading)) = self.validate_header(header_slice, scanline) {
-                trace!("range {} angle {} heading {:?}", range, angle, heading);
-                trace!(
+                log::trace!("range {} angle {} heading {:?}", range, angle, heading);
+                log::trace!(
                     "Received {:04} spoke {}",
                     scanline,
                     PrintableSpoke::new(spoke_slice)
@@ -349,7 +351,7 @@ impl NavicoDataReceiver {
                 }
                 prev_angle = angle;
             } else {
-                warn!("Invalid spoke: header {:02X?}", &header_slice);
+                log::warn!("Invalid spoke: header {:02X?}", &header_slice);
                 self.statistics.broken_packets += 1;
             }
 
@@ -368,10 +370,10 @@ impl NavicoDataReceiver {
 
         match self.info.message_tx.send(bytes) {
             Err(e) => {
-                trace!("{}: Dropping received spoke: {}", self.key, e);
+                log::trace!("{}: Dropping received spoke: {}", self.key, e);
             }
             Ok(count) => {
-                trace!("{}: sent to {} receivers", self.key, count);
+                log::trace!("{}: sent to {} receivers", self.key, count);
             }
         }
     }
@@ -384,23 +386,23 @@ impl NavicoDataReceiver {
         match self.info.locator_id {
             LocatorId::Gen3Plus => match deserialize::<Br4gHeader>(&header_slice) {
                 Ok(header) => {
-                    trace!("Received {:04} header {:?}", scanline, header);
+                    log::trace!("Received {:04} header {:?}", scanline, header);
 
                     NavicoDataReceiver::validate_4g_header(&header)
                 }
                 Err(e) => {
-                    warn!("Illegible spoke: {} header {:02X?}", e, &header_slice);
+                    log::warn!("Illegible spoke: {} header {:02X?}", e, &header_slice);
                     return None;
                 }
             },
             LocatorId::GenBR24 => match deserialize::<Br24Header>(&header_slice) {
                 Ok(header) => {
-                    trace!("Received {:04} header {:?}", scanline, header);
+                    log::trace!("Received {:04} header {:?}", scanline, header);
 
                     NavicoDataReceiver::validate_br24_header(&header)
                 }
                 Err(e) => {
-                    warn!("Illegible spoke: {} header {:02X?}", e, &header_slice);
+                    log::warn!("Illegible spoke: {} header {:02X?}", e, &header_slice);
                     return None;
                 }
             },
@@ -412,14 +414,14 @@ impl NavicoDataReceiver {
 
     fn validate_4g_header(header: &Br4gHeader) -> Option<(u32, SpokeBearing, Option<u16>)> {
         if header.header_len != (RADAR_LINE_HEADER_LENGTH as u8) {
-            warn!(
+            log::warn!(
                 "Spoke with illegal header length ({}) ignored",
                 header.header_len
             );
             return None;
         }
         if header.status != 0x02 && header.status != 0x12 {
-            warn!("Spoke with illegal status (0x{:x}) ignored", header.status);
+            log::warn!("Spoke with illegal status (0x{:x}) ignored", header.status);
             return None;
         }
 
@@ -444,14 +446,14 @@ impl NavicoDataReceiver {
 
     fn validate_br24_header(header: &Br24Header) -> Option<(u32, SpokeBearing, Option<u16>)> {
         if header.header_len != (RADAR_LINE_HEADER_LENGTH as u8) {
-            warn!(
+            log::warn!(
                 "Spoke with illegal header length ({}) ignored",
                 header.header_len
             );
             return None;
         }
         if header.status != 0x02 && header.status != 0x12 {
-            warn!("Spoke with illegal status (0x{:x}) ignored", header.status);
+            log::warn!("Spoke with illegal status (0x{:x}) ignored", header.status);
             return None;
         }
 
@@ -503,7 +505,7 @@ impl NavicoDataReceiver {
             generic_spoke.push(pixel_to_blob[high_nibble_index][pixel]);
         }
 
-        trace!(
+        log::trace!(
             "Spoke {}/{:?}/{} len {}",
             range,
             heading,

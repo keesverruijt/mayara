@@ -1,6 +1,5 @@
 use std::cmp::{max, min};
 
-use log::{debug, trace};
 use tokio::net::UdpSocket;
 
 use crate::network::create_multicast_send;
@@ -38,18 +37,23 @@ impl Command {
     async fn start_socket(&mut self) -> Result<(), RadarError> {
         match create_multicast_send(&self.info.send_command_addr, &self.info.nic_addr) {
             Ok(sock) => {
-                debug!(
+                log::debug!(
                     "{} {} via {}: sending commands",
-                    self.key, &self.info.send_command_addr, &self.info.nic_addr
+                    self.key,
+                    &self.info.send_command_addr,
+                    &self.info.nic_addr
                 );
                 self.sock = Some(sock);
 
                 Ok(())
             }
             Err(e) => {
-                debug!(
+                log::debug!(
                     "{} {} via {}: create multicast failed: {}",
-                    self.key, &self.info.send_command_addr, &self.info.nic_addr, e
+                    self.key,
+                    &self.info.send_command_addr,
+                    &self.info.nic_addr,
+                    e
                 );
                 Err(RadarError::Io(e))
             }
@@ -62,7 +66,7 @@ impl Command {
         }
         if let Some(sock) = &self.sock {
             sock.send(message).await.map_err(RadarError::Io)?;
-            trace!("{}: sent {:02X?}", self.key, message);
+            log::trace!("{}: sent {:02X?}", self.key, message);
         }
 
         Ok(())
@@ -356,7 +360,7 @@ impl Command {
             _ => return Err(RadarError::CannotSetControlType(cv.id)),
         };
 
-        log::info!("{}: Send command {:02X?}", self.info.key(), cmd);
+        log::debug!("{}: Send command {:02X?}", self.info.key(), cmd);
         self.send(&cmd).await?;
 
         if self.fake_errors && cv.id == ControlType::Rain && value > 10. {

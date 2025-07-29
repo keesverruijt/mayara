@@ -1,5 +1,4 @@
 use bincode::deserialize;
-use log::{debug, error, log_enabled, trace};
 use serde::Deserialize;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::{fmt, io};
@@ -215,18 +214,16 @@ impl NavicoLocatorState {
             return Ok(());
         }
 
-        if log_enabled!(log::Level::Trace) {
-            trace!(
-                "{}: Navico report: {:02X?} len {}",
-                from,
-                report,
-                report.len()
-            );
-            trace!("{}: printable:     {}", from, PrintableSlice::new(report));
-        }
+        log::trace!(
+            "{}: Navico report: {:02X?} len {}",
+            from,
+            report,
+            report.len()
+        );
+        log::trace!("{}: printable:     {}", from, PrintableSlice::new(report));
 
         if report == NAVICO_ADDRESS_REQUEST_PACKET {
-            trace!("Radar address request packet from {}", from);
+            log::trace!("Radar address request packet from {}", from);
             return Ok(());
         }
         if report[0] == 0x1 && report[1] == 0xB2 {
@@ -246,7 +243,7 @@ impl NavicoLocatorState {
         subsys: &SubsystemHandle,
     ) -> Result<(), io::Error> {
         if report.len() < size_of::<BR24Beacon>() {
-            debug!(
+            log::debug!(
                 "{} via {}: Incomplete beacon, length {}",
                 from,
                 via,
@@ -307,9 +304,11 @@ impl NavicoLocatorState {
                     }
                 }
                 Err(e) => {
-                    error!(
+                    log::error!(
                         "{} via {}: Failed to decode dual range data: {}",
-                        from, via, e
+                        from,
+                        via,
+                        e
                     );
                 }
             }
@@ -343,9 +342,11 @@ impl NavicoLocatorState {
                     }
                 }
                 Err(e) => {
-                    error!(
+                    log::error!(
                         "{} via {}: Failed to decode single range data: {}",
-                        from, via, e
+                        from,
+                        via,
+                        e
                     );
                 }
             }
@@ -379,7 +380,7 @@ impl NavicoLocatorState {
                     }
                 }
                 Err(e) => {
-                    error!("{} via {}: Failed to decode BR24 data: {}", from, via, e);
+                    log::error!("{} via {}: Failed to decode BR24 data: {}", from, via, e);
                 }
             }
         }
