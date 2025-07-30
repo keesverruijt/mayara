@@ -24,6 +24,9 @@ use crate::settings::{ControlError, ControlType, ControlUpdate, ControlValue, Sh
 use crate::{Brand, Session, TargetMode};
 use range::{RangeDetection, Ranges};
 
+pub(crate) const NAUTICAL_MILE: i32 = 1852; // 1 nautical mile in meters
+pub(crate) const NAUTICAL_MILE_F64: f64 = 1852.; // 1 nautical mile in meters
+
 // A "native to radar" bearing, usually [0..2048] or [0..4096] or [0..8192]
 pub(crate) type SpokeBearing = u16;
 

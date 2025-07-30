@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    radar::RadarInfo,
+    radar::{RadarInfo, NAUTICAL_MILE_F64},
     settings::{Control, ControlType, SharedControls, HAS_AUTO_NOT_ADJUSTABLE},
     Session,
 };
@@ -120,7 +120,7 @@ pub fn update_when_model_known(
         _ => {}
     }
 
-    let max_value = 36. * 1852.;
+    let max_value = 36. * NAUTICAL_MILE_F64 as f32;
     let range_control = Control::new_numeric(ControlType::Range, 50., max_value).unit("m");
     controls.insert(ControlType::Range, range_control);
 

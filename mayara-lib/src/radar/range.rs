@@ -10,7 +10,7 @@
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::sync::LazyLock;
 
-pub const NAUTICAL_MILE: i32 = 1852; // 1 nautical mile in meters
+use super::NAUTICAL_MILE;
 
 // All ranges seen on all radars
 pub static ALL_POSSIBLE_NAUTICAL_RANGES: LazyLock<Ranges> = LazyLock::new(|| {
@@ -147,22 +147,22 @@ impl Display for Range {
                     write!(f, "{} m", v)
                 }
             } else {
-                if v % 1852 == 0 {
-                    write!(f, "{} nm", v / 1852)
-                } else if v >= 1852 && v % 1852 == 1852 / 2 {
-                    write!(f, "{},5 nm", v / 1852)
+                if v % NAUTICAL_MILE == 0 {
+                    write!(f, "{} nm", v / NAUTICAL_MILE)
+                } else if v >= NAUTICAL_MILE && v % NAUTICAL_MILE == NAUTICAL_MILE / 2 {
+                    write!(f, "{},5 nm", v / NAUTICAL_MILE)
                 } else {
                     let s = match v {
-                        56 | 57 | 58 => "1/32 nm",
-                        114 | 115 | 116 => "1/16 nm",
-                        230 | 231 | 232 => "1/8 nm",
-                        346 | 347 | 348 => "3/16 nm",
-                        462 | 463 | 464 => "1/4 nm",
-                        693 | 694 | 695 => "3/8 nm",
-                        925 | 926 | 927 => "1/2 nm",
-                        1156 | 1157 | 1158 => "5/8 nm",
-                        1388 | 1389 | 1390 => "3/4 nm",
-                        2314 | 2315 | 2316 => "1,25 nm",
+                        57 => "1/32 nm",
+                        115 => "1/16 nm",
+                        231 => "1/8 nm",
+                        347 => "3/16 nm",
+                        463 => "1/4 nm",
+                        694 => "3/8 nm",
+                        926 => "1/2 nm",
+                        1157 => "5/8 nm",
+                        1389 => "3/4 nm",
+                        2315 => "1,25 nm",
                         _ => "",
                     };
                     if s.len() > 0 {

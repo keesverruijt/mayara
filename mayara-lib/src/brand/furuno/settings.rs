@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    radar::range::{Ranges, NAUTICAL_MILE},
-    radar::RadarInfo,
+    radar::{range::Ranges, RadarInfo, NAUTICAL_MILE},
     settings::{Control, ControlType, DataUpdate, SharedControls},
     Session,
 };
@@ -147,23 +146,23 @@ static FURUNO_RADAR_RANGES: [i32; 22] = [
     463,  // 1/4nm
     926,  // 1/2nm
     1389, // 3/4nm
-    1852,
+    NAUTICAL_MILE,
     2778, // 1,5nm
-    1852 * 2,
-    1852 * 3,
-    1852 * 4,
-    1852 * 6,
-    1852 * 8,
-    1852 * 12,
-    1852 * 16,
-    1852 * 24,
-    1852 * 32,
-    1852 * 36,
-    1852 * 48,
-    1852 * 64,
-    1852 * 72,
-    1852 * 96,
-    1852 * 120,
+    NAUTICAL_MILE * 2,
+    NAUTICAL_MILE * 3,
+    NAUTICAL_MILE * 4,
+    NAUTICAL_MILE * 6,
+    NAUTICAL_MILE * 8,
+    NAUTICAL_MILE * 12,
+    NAUTICAL_MILE * 16,
+    NAUTICAL_MILE * 24,
+    NAUTICAL_MILE * 32,
+    NAUTICAL_MILE * 36,
+    NAUTICAL_MILE * 48,
+    NAUTICAL_MILE * 64,
+    NAUTICAL_MILE * 72,
+    NAUTICAL_MILE * 96,
+    NAUTICAL_MILE * 120,
 ];
 
 // See Far.Wrapper.SensorProperty._availableRangeCodeListsForNm etc.

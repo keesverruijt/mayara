@@ -3,10 +3,11 @@ use ndarray::{s, Array2};
 
 mod cartesian;
 use crate::protos::RadarMessage::radar_message::Spoke;
+use crate::radar::target::{meters_per_degree_longitude, METERS_PER_DEGREE_LATITUDE};
 use crate::radar::trail::cartesian::PointInt;
 use crate::radar::{GeoPosition, Legend, SpokeBearing, BLOB_HISTORY_COLORS};
 use crate::settings::{ControlError, ControlType, ControlValue, SharedControls};
-use crate::{TargetMode, Session};
+use crate::{Session, TargetMode};
 
 use super::target::TargetBuffer;
 use super::{RadarError, RadarInfo};
@@ -337,10 +338,11 @@ impl TrailBuffer {
 
             self.position = position;
             // get (floating point) shift of the ship in radar pixels
-            let fshift_lat = dif_lat * 60. * 1852. * pixels_per_meter;
-            let mut fshift_lon = dif_lon * 60. * 1852. * pixels_per_meter;
-            fshift_lon *= position.lat.to_radians().cos(); // at higher latitudes a degree of longitude is fewer meters
-                                                           // Get the integer pixel shift, first add previous rounding error
+            let fshift_lat = dif_lat * METERS_PER_DEGREE_LATITUDE * pixels_per_meter;
+            let fshift_lon =
+                dif_lon * meters_per_degree_longitude(&position.lat) * pixels_per_meter;
+
+            // Get the integer pixel shift, first add previous rounding error
             let shift = GeoPositionPixels {
                 lat: (fshift_lat + self.position_difference.lat) as i16,
                 lon: (fshift_lon + self.position_difference.lon) as i16,

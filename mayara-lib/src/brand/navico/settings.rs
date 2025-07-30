@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    radar::RadarInfo,
+    radar::{RadarInfo, NAUTICAL_MILE_F64},
     settings::{
         AutomaticValue, Control, ControlDestination, ControlType, SharedControls,
         HAS_AUTO_NOT_ADJUSTABLE,
@@ -136,7 +136,7 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
         Model::Gen3 => 36.,
         Model::Gen4 => 48.,
         Model::HALO => 96.,
-    }) * 1852.;
+    }) * NAUTICAL_MILE_F64 as f32;
     let mut range_control = Control::new_numeric(ControlType::Range, 50., max_value)
         .unit("m")
         .wire_scale_factor(10. * max_value, false); // Radar sends and receives in decimeters

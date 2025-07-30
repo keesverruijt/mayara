@@ -15,6 +15,7 @@ use ndarray::Array2;
 use crate::{
     navdata,
     protos::RadarMessage::radar_message::Spoke,
+    radar::NAUTICAL_MILE_F64,
     settings::{ControlError, ControlType},
     Session,
 };
@@ -29,8 +30,9 @@ const MAX_CONTOUR_LENGTH: usize = 2000; // defines maximal size of target contou
 const MAX_LOST_COUNT: i32 = 12; // number of sweeps that target can be missed before it is set to lost
 const MAX_DETECTION_SPEED_KN: f64 = 40.;
 
-const METERS_PER_DEGREE_LATITUDE: f64 = 60. * 1852.;
-const KN_TO_MS: f64 = 1852. / 3600.;
+pub const METERS_PER_DEGREE_LATITUDE: f64 = 60. * NAUTICAL_MILE_F64;
+pub const KN_TO_MS: f64 = NAUTICAL_MILE_F64 / 3600.;
+pub const MS_TO_KN: f64 = 3600. / NAUTICAL_MILE_F64;
 
 const TODO_ROTATION_SPEED_MS: i32 = 2500;
 const TODO_TARGET_AGE_TO_MIXER: u32 = 5;
@@ -762,8 +764,7 @@ impl TargetSetup {
             / METERS_PER_DEGREE_LATITUDE;
         pos.pos.lon += (pol.r as f64 / self.pixels_per_meter)  // Scale to fraction of distance to radar
                                        * pol.angle_in_rad(self.spokes_f64).sin()
-            / own_ship.pos.lat.to_radians().cos()
-            / METERS_PER_DEGREE_LATITUDE;
+            / meters_per_degree_longitude(&own_ship.pos.lat);
         pos
     }
 
@@ -842,7 +843,11 @@ impl TargetBuffer {
     }
 
     fn reset_history(&mut self) {
-        self.history = HistorySpokes::new(self.session.clone(), self.setup.spokes, self.setup.spoke_len);
+        self.history = HistorySpokes::new(
+            self.session.clone(),
+            self.setup.spokes,
+            self.setup.spoke_len,
+        );
     }
 
     fn clear_contours(&mut self) {
@@ -1619,11 +1624,9 @@ impl ArpaTarget {
 
         let mut x_local = LocalPosition::new(
             GeoPosition::new(
-                (target.position.pos.lat - own_pos.pos.lat) * 60. * 1852.,
+                (target.position.pos.lat - own_pos.pos.lat) * METERS_PER_DEGREE_LATITUDE,
                 (target.position.pos.lon - own_pos.pos.lon)
-                    * 60.
-                    * 1852.
-                    * own_pos.pos.lat.to_radians().cos(),
+                    * meters_per_degree_longitude(&own_pos.pos.lat),
             ),
             target.position.dlat_dt,
             target.position.dlon_dt,
@@ -1777,7 +1780,7 @@ impl ArpaTarget {
                         + x_local.pos.lon / meters_per_degree_longitude(&own_pos.pos.lat);
                     target.position.dlat_dt = x_local.dlat_dt; // meters / sec
                     target.position.dlon_dt = x_local.dlon_dt; // meters /sec
-                    target.position.sd_speed_kn = x_local.sd_speed_m_s * 3600. / 1852.;
+                    target.position.sd_speed_kn = x_local.sd_speed_m_s * MS_TO_KN;
                 }
 
                 // Here we bypass the Kalman filter to predict the speed of the target
@@ -1843,7 +1846,7 @@ impl ArpaTarget {
                 if target.age_rotations >= 1 {
                     let s1 = target.position.dlat_dt; // m per second
                     let s2 = target.position.dlon_dt; // m  per second
-                    target.position.speed_kn = (s1 * s1 + s2 * s2).sqrt() * 3600. / 1852.; // and convert to nautical miles per hour
+                    target.position.speed_kn = (s1 * s1 + s2 * s2).sqrt() * MS_TO_KN; // and convert to nautical miles per hour
                     target.m_course = f64::atan2(s2, s1).to_degrees();
                     if target.m_course < 0. {
                         target.m_course += 360.;
@@ -2047,7 +2050,7 @@ impl ArpaTarget {
       s_Course_Unit = wxT("T");      // Course type R; Realtive T; true
       s_Dist_Unit = wxT("N");        // Speed/Distance Unit K, N, S N= NM/h = Knots
 
-      // f64 dist = pol.r / self.pixels_per_meter / 1852.;
+      // f64 dist = pol.r / self.pixels_per_meter / NAUTICAL_MILE.;
       f64 bearing = pol.angle * 360. / m_ri.m_spokes;
       if (bearing < 0) bearing += 360;
 
@@ -2096,7 +2099,7 @@ impl ArpaTarget {
         s_status = wxT("T");
       }
 
-      f64 dist = pol.r / self.pixels_per_meter / 1852.;
+      f64 dist = pol.r / self.pixels_per_meter / NAUTICAL_MILE.;
       f64 bearing = pol.angle * 360. / m_ri.m_spokes;
 
       if (bearing < 0) bearing += 360;
@@ -2283,7 +2286,7 @@ impl ArpaTarget {
   message << wxT(",\"stale\":\"");
   message << dt.FormatISOCombined() << wxString::Format(wxT(".%03uZ\""), dt.GetMillisecond(wxDateTime::TZ::GMT0));
 
-  message << wxString::Format(wxT(",\"sog\":%5.2f"), self.position.speed_kn * 1852. / 3600.);
+  message << wxString::Format(wxT(",\"sog\":%5.2f"), self.position.speed_kn * NAUTICAL_MILE. / 3600.);
   message << wxString::Format(wxT(",\"cog\":%4.1f"), m_course);
 
   message << wxT(",\"state\":");
