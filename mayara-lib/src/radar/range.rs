@@ -10,6 +10,8 @@
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::sync::LazyLock;
 
+use crate::radar::NAUTICAL_MILE_F64;
+
 use super::NAUTICAL_MILE;
 
 // All ranges seen on all radars
@@ -147,10 +149,13 @@ impl Display for Range {
                     write!(f, "{} m", v)
                 }
             } else {
-                if v % NAUTICAL_MILE == 0 {
-                    write!(f, "{} nm", v / NAUTICAL_MILE)
-                } else if v >= NAUTICAL_MILE && v % NAUTICAL_MILE == NAUTICAL_MILE / 2 {
-                    write!(f, "{},5 nm", v / NAUTICAL_MILE)
+                if v >= NAUTICAL_MILE {
+                    if (v % NAUTICAL_MILE) == 0 {
+                        // If the value is a multiple of NAUTICAL_MILE, write it as nm
+                        write!(f, "{} nm", v / NAUTICAL_MILE)
+                    } else {
+                        write!(f, "{} nm", v as f64 / NAUTICAL_MILE_F64)
+                    }
                 } else {
                     let s = match v {
                         57 => "1/32 nm",
@@ -162,7 +167,6 @@ impl Display for Range {
                         926 => "1/2 nm",
                         1157 => "5/8 nm",
                         1389 => "3/4 nm",
-                        2315 => "1,25 nm",
                         _ => "",
                     };
                     if s.len() > 0 {
@@ -264,7 +268,7 @@ impl Display for Ranges {
             if !first {
                 write!(f, ", ")?;
             }
-            write!(f, "{}", range.distance)?;
+            write!(f, "{}", range)?;
             first = false;
         }
         Ok(())

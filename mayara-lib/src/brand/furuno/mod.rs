@@ -232,7 +232,7 @@ impl FurunoLocatorState {
         FurunoLocatorState {
             session,
             radar_keys,
-            model_found
+            model_found,
         }
     }
 
@@ -296,13 +296,22 @@ impl FurunoLocatorState {
                 subsys.start(SubsystemBuilder::new(report_name, |s| {
                     report_receiver.run(s)
                 }));
+            } else {
+                let model = RadarModel::DRS4DNXT; // Default model for replay
+                let version = "01.05";
+                log::info!(
+                    "{}: Radar model {} assumed for replay mode",
+                    info.key(),
+                    model.to_str(),
+                );
+                settings::update_when_model_known(&mut info, model, version);
             }
 
             return true;
         }
         return false;
     }
-    
+
     fn process_locator_report(
         &mut self,
         report: &[u8],
@@ -450,7 +459,9 @@ impl FurunoLocatorState {
 }
 
 #[derive(Clone)]
-struct FurunoLocator {session: Session}
+struct FurunoLocator {
+    session: Session,
+}
 
 #[async_trait]
 impl RadarLocator for FurunoLocator {
@@ -466,13 +477,16 @@ impl RadarLocator for FurunoLocator {
                     &FURUNO_ANNOUNCE_MAYARA_PACKET,
                 ],
                 Box::new(FurunoLocatorState::new(
-                    self.session.clone(), HashMap::new(), false)),
+                    self.session.clone(),
+                    HashMap::new(),
+                    false,
+                )),
             ));
         }
     }
 }
 
 pub fn create_locator(session: Session) -> Box<dyn RadarLocator + Send> {
-    let locator = FurunoLocator {session};
+    let locator = FurunoLocator { session };
     Box::new(locator)
 }

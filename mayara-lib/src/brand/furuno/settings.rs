@@ -81,6 +81,12 @@ pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version:
     }
 
     let ranges = Ranges::new_by_distance(&get_ranges_by_model(&model));
+    log::info!(
+        "{}: model {} supports ranges {}",
+        info.key(),
+        model_name,
+        ranges
+    );
     info.controls
         .set_valid_ranges(&ControlType::Range, &ranges)
         .expect("Set valid values");

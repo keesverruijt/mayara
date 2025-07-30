@@ -93,7 +93,7 @@ impl FurunoReportReceiver {
                     match r {
                         Ok(len) => {
                             if len > 2 {
-                                if let Err(e) = self.process_report(&line).await {
+                                if let Err(e) = self.process_report(&line) {
                                     log::error!("{}: {}", self.key, e);
                                 } else if !first_report_received {
                                     self.command_sender.init(&mut writer).await?;
@@ -283,7 +283,7 @@ impl FurunoReportReceiver {
         };
     }
 
-    async fn process_report(&mut self, line: &str) -> Result<(), Error> {
+    fn process_report(&mut self, line: &str) -> Result<(), Error> {
         let line = match line.find('$') {
             Some(pos) => {
                 if pos > 0 {
