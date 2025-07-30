@@ -1,5 +1,3 @@
-use std::cmp::{max, min};
-
 use tokio::net::UdpSocket;
 
 use crate::network::create_multicast_send;
@@ -87,43 +85,6 @@ impl Command {
         (a + 7200) % 3600
     }
 
-    fn near(a: i32, b: i32) -> bool {
-        return a >= b - 1 && a <= b + 1 || (b == 0 && a == 99);
-    }
-
-    fn is_metric(i: i32) -> bool {
-        Self::near(i, 50) || Self::near(i, 75) || Self::near(i % 100, 0)
-    }
-
-    fn valid_range(&self, i: i32) -> i32 {
-        if let Some(rd) = &self.info.range_detection {
-            let mut next = false;
-            let metric = Self::is_metric(i);
-            let mut prev = if metric { rd.ranges[0] } else { rd.ranges[1] };
-            for range in &rd.ranges {
-                if next && metric == Self::is_metric(*range) {
-                    return *range;
-                }
-                if i == *range - 1 {
-                    return prev;
-                }
-                if i == *range {
-                    return i;
-                }
-                if i == *range + 1 {
-                    next = true;
-                }
-                if metric == Self::is_metric(*range) {
-                    prev = *range;
-                }
-            }
-
-            prev
-        } else {
-            min(max(i, 50), 96 * 1852)
-        }
-    }
-
     fn generate_fake_error(v: i32) -> Result<(), RadarError> {
         match v {
             11 => Err(RadarError::CannotSetControlType(ControlType::Rain)),
@@ -185,7 +146,7 @@ impl Command {
             }
 
             ControlType::Range => {
-                let decimeters: i32 = self.valid_range(deci_value / 10) * 10; //TODO
+                let decimeters: i32 = deci_value;
                 log::trace!("range {value} -> {decimeters}");
 
                 cmd.extend_from_slice(&[0x03, 0xc1]);

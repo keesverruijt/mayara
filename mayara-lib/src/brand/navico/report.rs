@@ -1,6 +1,5 @@
 use anyhow::{bail, Error};
 use enum_primitive_derive::Primitive;
-use std::cmp::{max, min};
 use std::mem::transmute;
 use std::time::Duration;
 use std::{fmt, io};
@@ -10,7 +9,8 @@ use tokio::time::{sleep, sleep_until, Instant};
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::network::create_udp_multicast_listen;
-use crate::radar::{DopplerMode, RadarError, RadarInfo, RangeDetection, SharedRadars};
+use crate::radar::range::{RangeDetection, RangeDetectionResult};
+use crate::radar::{DopplerMode, RadarError, RadarInfo, SharedRadars};
 use crate::settings::{ControlType, ControlUpdate, ControlValue, DataUpdate};
 use crate::util::{c_string, c_wide_string};
 use crate::Session;
@@ -522,156 +522,56 @@ impl NavicoReportReceiver {
 
     // If range detection is in progress, go to the next range
     async fn process_range(&mut self, range: i32) -> Result<(), RadarError> {
-        let mut range = range / 10;
-        if self.info.range_detection.is_none() && !self.session.read().unwrap().args.replay {
+        let range = range / 10;
+        if self.info.ranges.len() == 0
+            && self.info.range_detection.is_none()
+            && !self.session.read().unwrap().args.replay
+        {
             if let Some(control) = self.info.controls.get(&ControlType::Range) {
                 self.info.range_detection = Some(RangeDetection::new(
-                    0,
+                    self.key.clone(),
+                    50,
                     control.item().max_value.unwrap() as i32,
+                    true,
+                    true,
                 ));
-                range = 0;
-                log::info!("{}: Starting all possible ranges detection", self.key);
             }
         }
 
         if let Some(range_detection) = &mut self.info.range_detection {
-            if range_detection.complete {
-                return Ok(());
-            }
-            let mut complete = false;
-
-            if !range_detection.complete {
-                let mut next_range = Self::next_range(max(range, range_detection.commanded_range));
-                log::debug!(
-                    "{}: Range detected range={}m commanded={}m -> next {}",
-                    self.key,
-                    range,
-                    range_detection.commanded_range,
-                    next_range
-                );
-
-                if range > 0
-                    && range
-                        > *range_detection
-                            .ranges
-                            .last()
-                            .unwrap_or(&(range_detection.min_range - 1))
-                {
-                    range_detection.ranges.push(range);
-                    log::debug!(
-                        "{}: Range detection ranges: {:?}",
-                        self.key,
-                        range_detection.ranges
-                    );
+            match range_detection.found_range(range) {
+                RangeDetectionResult::NoRange => {
+                    return Ok(());
                 }
-                if next_range > range_detection.max_range {
-                    range_detection.complete = true;
-                    next_range = max(range_detection.saved_range, range_detection.ranges[0]);
-                    complete = true;
-                    log::info!(
-                        "{}: Range detection complete, valid ranges are: {:?}",
-                        self.key,
-                        range_detection.ranges
-                    );
-                } else {
-                    // Set a timer to pick up the range if it doesn't do anything, so we are called again...
+                RangeDetectionResult::Complete(ranges, saved_range) => {
+                    self.info.ranges = ranges.clone();
+                    self.info
+                        .controls
+                        .set_valid_ranges(&ControlType::Range, &ranges)?;
+                    self.info.range_detection = None;
+                    self.radars.update(&self.info);
+
+                    self.send_range(saved_range).await?;
+                }
+                RangeDetectionResult::NextRange(r) => {
                     self.range_timeout = Some(Instant::now() + Duration::from_secs(2));
+
+                    self.send_range(r).await?;
                 }
-                log::debug!(
-                    "{}: Range detection ask for range {}m",
-                    self.key,
-                    next_range
-                );
-                range_detection.commanded_range = next_range;
-                let cv = ControlValue::new(ControlType::Range, next_range.to_string());
-                self.command_sender
-                    .as_mut()
-                    .unwrap() // Safe, as we only create a range detection when replay is false
-                    .set_control(&cv, &self.info.controls)
-                    .await?;
-            }
-
-            if complete {
-                self.info
-                    .controls
-                    .set_valid_values(&ControlType::Range, range_detection.ranges.clone())
-                    .unwrap();
-
-                self.radars.update(&self.info);
             }
         }
 
         Ok(())
     }
 
-    ///
-    /// Come up with a next range where the result > input and result
-    /// is some nice "round" number, either in NM or meters.
-    ///
-    fn next_range(r: i32) -> i32 {
-        let metric = match r {
-            i32::MIN..50 => 50,
-            50..75 => 75,
-            75..100 => 100,
-            100..150 => 150,
-            150..400 => r / 100 * 100 + 100,
-            400..1000 => r / 200 * 200 + 200,
-            1000..1500 => 1500,
-            1500..4000 => r / 1000 * 1000 + 1000,
-            4000.. => {
-                1000 * match r / 1000 {
-                    i32::MIN..6 => 6,
-                    6..8 => 8,
-                    8..12 => 12,
-                    12..16 => 16,
-                    16..24 => 24,
-                    24..36 => 36,
-                    36..48 => 48,
-                    48..72 => 72,
-                    72..96 => 96,
-                    96.. => r * 96 / 64,
-                }
-            }
-        };
-        let nautical = match r {
-            i32::MIN..57 => 57, // 1/32 nm
-            57..114 => 114,     // 1/16 nm
-            114..231 => 231,    // 1/8 nm
-            231..347 => 347,    // 3/16 nm
-            347..463 => 463,    // 1/4 nm
-            463..693 => 693,    // 3/4 nm
-            693..926 => 926,    // 1/2 nm
-            926..1157 => 1157,  // 5/8 nm
-            1157..1389 => 1389, // 3/4 nm
-            1389..1852 => 1852, // 1 nm
-            1852..2315 => 2315, // 1,25 nm
-            2315..2778 => 2778, // 1,5 nm
-            2778..3704 => 3704, // 2 nm
-            3704..4630 => 4630, // 2,5 nm
-            4630.. => {
-                1852 * match r / 1852 {
-                    i32::MIN..3 => 3,
-                    3 => 4,
-                    4 => 5,
-                    5 => 6,
-                    6..8 => 8,
-                    8..10 => 10,
-                    10..12 => 12,
-                    12..15 => 15,
-                    12..16 => 16,
-                    16..20 => 20,
-                    20..24 => 24,
-                    24..30 => 30,
-                    30..36 => 36,
-                    36..48 => 48,
-                    48..64 => 64,
-                    64..72 => 72,
-                    72.. => r * 72 / 48,
-                }
-            }
-        };
-        log::debug!("compute next {}: metric {} nautic {}", r, metric, nautical);
-        min(metric, nautical)
+    async fn send_range(&mut self, range: i32) -> Result<(), RadarError> {
+        let cv = ControlValue::new(ControlType::Range, range.to_string());
+        self.command_sender
+            .as_mut()
+            .unwrap() // Safe, as we only create a range detection when replay is false
+            .set_control(&cv, &self.info.controls)
+            .await?;
+        Ok(())
     }
 
     async fn process_report(&mut self) -> Result<(), Error> {

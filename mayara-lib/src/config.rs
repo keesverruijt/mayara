@@ -9,7 +9,8 @@ use std::io::{BufReader, BufWriter, Write};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use crate::radar::{RadarInfo, RangeDetection};
+use crate::radar::range::Ranges;
+use crate::radar::RadarInfo;
 use crate::settings::ControlType;
 
 pub fn get_project_dirs() -> ProjectDirs {
@@ -33,7 +34,7 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone)]
-pub struct Persistence {
+pub(crate) struct Persistence {
     pub config: Config,
     timestamp: SystemTime,
     path: PathBuf,
@@ -185,7 +186,7 @@ impl Persistence {
             }
             if let Some(ranges) = &p.ranges {
                 if ranges.len() > 0 {
-                    info.range_detection = Some(RangeDetection::restore(ranges));
+                    info.ranges = Ranges::new_by_distance(ranges);
                 }
             }
             info.controls.set_user_name(p.user_name.clone());

@@ -380,16 +380,7 @@ impl FurunoReportReceiver {
                 if numbers[2] != 0. {
                     bail!("Cannot handle radar not set to NM range");
                 }
-                let index = numbers[0] as usize;
-                if let Some(range_detection) = &self.info.range_detection {
-                    if index >= range_detection.ranges.len() {
-                        bail!("Range index {} out of bounds", index);
-                    }
-                    let range = range_detection.ranges.get(index).unwrap_or(&0);
-                    self.set_value(&ControlType::Range, *range as f32);
-                } else {
-                    log::warn!("{}: Range detection not set", self.key);
-                }
+                self.set_value(&ControlType::Range, numbers[0]);
             }
             CommandId::OnTime => {
                 let hours = numbers[0] / 3600.0;
@@ -423,8 +414,7 @@ impl FurunoReportReceiver {
                 version
             );
             settings::update_when_model_known(&mut self.info, model, version);
-            self.command_sender
-                .set_ranges(self.info.range_detection.as_ref().unwrap().clone());
+            self.command_sender.set_ranges(self.info.ranges.clone());
             return;
         }
         log::error!("{}: Unknown radar type, modules {:?}", self.key, values);

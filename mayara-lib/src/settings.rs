@@ -11,8 +11,8 @@ use std::{
 use thiserror::Error;
 
 use crate::{
-    radar::{DopplerMode, Legend, RadarError, RangeDetection},
-    TargetMode, Session,
+    radar::{range::Ranges, DopplerMode, Legend, RadarError},
+    Session, TargetMode,
 };
 
 ///
@@ -565,6 +565,22 @@ impl SharedControls {
                 ()
             })
     }
+
+    pub fn set_valid_ranges(
+        &self,
+        control_type: &ControlType,
+        ranges: &Ranges,
+    ) -> Result<(), ControlError> {
+        let mut locked = self.controls.write().unwrap();
+        locked
+            .controls
+            .get_mut(control_type)
+            .ok_or(ControlError::NotSupported(*control_type))
+            .map(|c| {
+                c.set_valid_ranges(ranges);
+                ()
+            })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -578,7 +594,7 @@ pub struct ControlUpdate {
 pub enum DataUpdate {
     Doppler(DopplerMode),
     Legend(Legend),
-    RangeDetection(RangeDetection),
+    Ranges(Ranges),
     ControlValue(tokio::sync::mpsc::Sender<ControlValue>, ControlValue),
 }
 
@@ -860,49 +876,18 @@ impl Control {
 
     pub fn set_valid_values(&mut self, values: Vec<i32>) {
         self.item.valid_values = Some(values);
+    }
 
-        if let Some(unit) = &self.item.unit {
-            if unit == "m" {
-                // Reset the descriptions map
-                let mut descriptions = HashMap::new();
-                for v in self.item.valid_values.as_ref().unwrap().iter() {
-                    let mut desc = if v % 25 == 0 {
-                        // Metric
-                        if v % 1000 == 0 {
-                            format!("{} km", v / 1000)
-                        } else {
-                            format!("{} m", v)
-                        }
-                    } else {
-                        if v % 1852 == 0 {
-                            format!("{} nm", v / 1852)
-                        } else if *v >= 1852 && v % 1852 == 1852 / 2 {
-                            format!("{},5 nm", v / 1852)
-                        } else {
-                            match v {
-                                57 | 58 => "1/32 nm",
-                                114 | 115 | 116 => "1/16 nm",
-                                231 | 232 => "1/8 nm",
-                                347 | 348 => "3/16 nm",
-                                463 => "1/4 nm",
-                                693 | 694 | 695 => "3/8 nm",
-                                926 => "1/2 nm",
-                                1157 | 1158 => "5/8 nm",
-                                1389 => "3/4 nm",
-                                2315 => "1,25 nm",
-                                _ => "",
-                            }
-                            .to_string()
-                        }
-                    };
-                    if desc.len() == 0 {
-                        desc = format!("{} m", v);
-                    }
-                    descriptions.insert(*v, desc);
-                }
-                self.item.descriptions = Some(descriptions);
-            }
+    pub fn set_valid_ranges(&mut self, ranges: &Ranges) {
+        let mut values = Vec::new();
+        let mut descriptions = HashMap::new();
+        for range in ranges.ranges.iter() {
+            values.push(range.value());
+            descriptions.insert(range.value() as i32, format!("{}", range));
         }
+
+        self.item.valid_values = Some(values);
+        self.item.descriptions = Some(descriptions);
     }
 
     // pub fn auto(&self) -> Option<bool> {

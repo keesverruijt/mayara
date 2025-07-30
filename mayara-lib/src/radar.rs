@@ -14,13 +14,15 @@ use std::{
 use thiserror::Error;
 use tokio_graceful_shutdown::SubsystemHandle;
 
+pub(crate) mod range;
 pub(crate) mod target;
 pub(crate) mod trail;
 
 use crate::config::Persistence;
 use crate::locator::LocatorId;
 use crate::settings::{ControlError, ControlType, ControlUpdate, ControlValue, SharedControls};
-use crate::{Brand, TargetMode, Session};
+use crate::{Brand, Session, TargetMode};
+use range::{RangeDetection, Ranges};
 
 // A "native to radar" bearing, usually [0..2048] or [0..4096] or [0..8192]
 pub(crate) type SpokeBearing = u16;
@@ -137,39 +139,6 @@ impl Serialize for Legend {
         state.end()
     }
 }
-#[derive(Clone, Debug)]
-pub struct RangeDetection {
-    pub complete: bool,
-    pub saved_range: i32,
-    pub commanded_range: i32,
-    pub min_range: i32,
-    pub max_range: i32,
-    pub ranges: Vec<i32>,
-}
-
-impl RangeDetection {
-    pub fn new(min_range: i32, max_range: i32) -> Self {
-        RangeDetection {
-            complete: false,
-            saved_range: 0,
-            commanded_range: 0,
-            min_range,
-            max_range,
-            ranges: Vec::new(),
-        }
-    }
-
-    pub fn restore(ranges: &Vec<i32>) -> Self {
-        RangeDetection {
-            complete: true,
-            saved_range: 0,
-            commanded_range: 0,
-            min_range: *ranges.first().unwrap_or(&0),
-            max_range: *ranges.last().unwrap_or(&0),
-            ranges: ranges.clone(),
-        }
-    }
-}
 
 /// A geographic position expressed in degrees latitude and longitude.
 /// Latitude is positive in the northern hemisphere, negative in the southern.
@@ -212,8 +181,9 @@ pub struct RadarInfo {
     pub send_command_addr: SocketAddrV4, // Where displays will send commands to the radar
     pub legend: Legend,                  // What pixel values mean
     pub controls: SharedControls,        // Which controls there are, not complete in beginning
-    pub range_detection: Option<RangeDetection>, // if Some, then ranges are flexible, detected and persisted
-    pub doppler: bool,                           // Does it support Doppler?
+    pub ranges: Ranges,                  // Ranges for this radar, empty in beginning
+    pub(crate) range_detection: Option<RangeDetection>, // if Some, then ranges are flexible, detected and persisted
+    pub doppler: bool,                                  // Does it support Doppler?
     rotation_timestamp: Instant,
 
     // Channels
@@ -275,6 +245,7 @@ impl RadarInfo {
             send_command_addr,
             legend: legend,
             message_tx,
+            ranges: Ranges::new_empty(),
             range_detection: None,
             controls,
             doppler,
@@ -402,7 +373,7 @@ impl SharedRadars {
     }
 
     // A radar has been found
-    pub fn located(&self, mut new_info: RadarInfo) -> Option<RadarInfo> {
+    pub(crate) fn located(&self, mut new_info: RadarInfo) -> Option<RadarInfo> {
         let key = new_info.key.to_owned();
         let mut radars = self.radars.write().unwrap();
 
@@ -468,10 +439,7 @@ impl SharedRadars {
             .info
             .iter()
             .map(|(_k, v)| v)
-            .filter(|i| {
-                i.range_detection.is_none()
-                    || i.range_detection.as_ref().is_some_and(|r| r.complete)
-            })
+            .filter(|i| i.ranges.len() > 0)
             .map(|v| v.clone())
             .collect()
     }

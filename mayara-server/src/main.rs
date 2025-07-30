@@ -8,9 +8,7 @@ use miette::Result;
 //use once_cell::sync::Lazy;
 //use radar::SharedRadars;
 //use serde::{Serialize, Serializer};
-use std::{
-    time::Duration,
-};
+use std::time::Duration;
 //use tokio::sync::{broadcast, mpsc};
 use tokio_graceful_shutdown::{SubsystemBuilder, Toplevel};
 use web::Web;
@@ -56,17 +54,16 @@ async fn main() -> Result<()> {
     if args.nmea0183 {
         warn!(
             "NMEA0183 mode activated; will load GPS position, heading and date/time from {}",
-            args
-                .navigation_address
+            args.navigation_address
                 .as_ref()
                 .unwrap_or(&"MDNS".to_string())
         );
     }
 
     Toplevel::new(|s| async move {
-       let session = Session::new(&s, args).await;
-       let web = Web::new(session.clone());
-       s.start(SubsystemBuilder::new("Webserver", move |a| web.run(a)));
+        let session = Session::new(&s, args).await;
+        let web = Web::new(session.clone());
+        s.start(SubsystemBuilder::new("Webserver", move |a| web.run(a)));
     })
     .catch_signals()
     .handle_shutdown_requests(Duration::from_millis(5000))

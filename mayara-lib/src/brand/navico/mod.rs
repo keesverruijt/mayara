@@ -305,7 +305,7 @@ impl NavicoLocatorState {
                 }
                 Err(e) => {
                     log::error!(
-                        "{} via {}: Failed to decode dual range data: {}",
+                        "{} via {}: Failed to decode dual range capable data: {}",
                         from,
                         via,
                         e
@@ -343,7 +343,7 @@ impl NavicoLocatorState {
                 }
                 Err(e) => {
                     log::error!(
-                        "{} via {}: Failed to decode single range data: {}",
+                        "{} via {}: Failed to decode single range capable data: {}",
                         from,
                         via,
                         e

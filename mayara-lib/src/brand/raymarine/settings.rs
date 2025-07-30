@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::{
     radar::RadarInfo,
     settings::{Control, ControlType, SharedControls, HAS_AUTO_NOT_ADJUSTABLE},
-    Session
+    Session,
 };
 
 use super::Model;
@@ -121,14 +121,7 @@ pub fn update_when_model_known(
     }
 
     let max_value = 36. * 1852.;
-    let mut range_control = Control::new_numeric(ControlType::Range, 50., max_value)
-        .unit("m")
-        .wire_scale_factor(10. * max_value, true); // Radar sends and receives in decimeters
-    if let Some(range_detection) = &radar_info.range_detection {
-        if range_detection.complete {
-            range_control.set_valid_values(range_detection.ranges.clone());
-        }
-    };
+    let range_control = Control::new_numeric(ControlType::Range, 50., max_value).unit("m");
     controls.insert(ControlType::Range, range_control);
 
     controls.insert(

@@ -29,8 +29,7 @@ use axum_fix::{Message, WebSocket, WebSocketUpgrade};
 use mayara::{
     radar::{Legend, RadarError, RadarInfo},
     settings::SharedControls,
-    ProtoAssets,
-    Session
+    ProtoAssets, Session,
 };
 
 const RADAR_URI: &str = "/v1/api/radars";
@@ -59,25 +58,21 @@ pub struct Web {
 }
 
 impl Web {
-    pub fn new(
-        session: Session,
-    ) -> Self {
+    pub fn new(session: Session) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
 
         Web {
             session,
-            shutdown_tx
+            shutdown_tx,
         }
     }
 
     pub async fn run(self, subsys: SubsystemHandle) -> Result<(), WebError> {
         let port = self.session.read().unwrap().args.port.clone();
-        let listener = TcpListener::bind(SocketAddr::new(
-            IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-            port,
-        ))
-        .await
-        .map_err(|e| WebError::Io(e))?;
+        let listener =
+            TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port))
+                .await
+                .map_err(|e| WebError::Io(e))?;
 
         let serve_assets = ServeEmbed::<Assets>::new();
         let proto_web_assets = ServeEmbed::<ProtoWebAssets>::new();
@@ -181,7 +176,16 @@ async fn get_radars(
     debug!("target host = '{}'", host);
 
     let mut api: HashMap<String, RadarApi> = HashMap::new();
-    for info in state.session.read().unwrap().radars.as_ref().unwrap().get_active().clone() {
+    for info in state
+        .session
+        .read()
+        .unwrap()
+        .radars
+        .as_ref()
+        .unwrap()
+        .get_active()
+        .clone()
+    {
         let legend = &info.legend;
         let id = format!("radar-{}", info.id);
         let stream_url = format!("ws://{}{}{}", host, SPOKES_URI, id);
@@ -217,7 +221,13 @@ async fn get_interfaces(
     debug!("Interface state request from {} for host '{}'", addr, host);
 
     let (tx, mut rx) = mpsc::channel(1);
-    state.session.read().unwrap().tx_interface_request.send(Some(tx)).unwrap();
+    state
+        .session
+        .read()
+        .unwrap()
+        .tx_interface_request
+        .send(Some(tx))
+        .unwrap();
     match rx.recv().await {
         Some(api) => Json(api).into_response(),
         _ => Json(Vec::<String>::new()).into_response(),
@@ -240,7 +250,16 @@ async fn spokes_handler(
 
     let ws = ws.accept_compression(true);
 
-    match state.session.read().unwrap().radars.as_ref().unwrap().get_by_id(&params.key).clone() {
+    match state
+        .session
+        .read()
+        .unwrap()
+        .radars
+        .as_ref()
+        .unwrap()
+        .get_by_id(&params.key)
+        .clone()
+    {
         Some(radar) => {
             let shutdown_rx = state.shutdown_tx.subscribe();
             let radar_message_rx = radar.message_tx.subscribe();
@@ -297,7 +316,16 @@ async fn control_handler(
 
     let ws = ws.accept_compression(true);
 
-    match state.session.read().unwrap().radars.as_ref().unwrap().get_by_id(&params.key).clone() {
+    match state
+        .session
+        .read()
+        .unwrap()
+        .radars
+        .as_ref()
+        .unwrap()
+        .get_by_id(&params.key)
+        .clone()
+    {
         Some(radar) => {
             let shutdown_rx = state.shutdown_tx.subscribe();
 

@@ -149,7 +149,8 @@ impl FurunoDataReceiver {
 
     #[cfg(target_os = "macos")]
     fn verify_source_address(&self, addr: &SocketAddr) -> bool {
-        addr.ip() == std::net::SocketAddr::V4(self.info.addr).ip() || self.session.read().unwrap().args.replay
+        addr.ip() == std::net::SocketAddr::V4(self.info.addr).ip()
+            || self.session.read().unwrap().args.replay
     }
     #[cfg(not(target_os = "macos"))]
     fn verify_source_address(&self, addr: &SocketAddr) -> bool {
@@ -246,8 +247,8 @@ impl FurunoDataReceiver {
                 // self.pixel_to_blob = Self::pixel_to_blob(&legend);
                 self.info.legend = legend;
             }
-            DataUpdate::RangeDetection(range_detection) => {
-                self.info.range_detection = Some(range_detection);
+            DataUpdate::Ranges(ranges) => {
+                self.info.ranges = ranges;
             }
             DataUpdate::ControlValue(reply_tx, cv) => {
                 match self.trails.set_control_value(&self.info.controls, &cv) {
@@ -552,11 +553,7 @@ impl FurunoDataReceiver {
     // [2, 250, 0, 1, 0, 0, 0, 0, 36, 49, 116, 59, 0, 0, 240, 9]
 
     fn parse_metadata_header(&self, data: &[u8]) -> FurunoSpokeMetadata {
-        let ranges = self
-            .info
-            .range_detection
-            .as_ref()
-            .expect("No range detection");
+        let ranges = &self.info.ranges;
 
         // Extract all the fields from the header
         let v1 = (data[8] as u32 + (data[9] as u32 & 0x01) * 256) * 4 + 4;
@@ -569,8 +566,19 @@ impl FurunoDataReceiver {
         let have_heading = ((data[15] & 0x30) >> 3) as u8;
 
         // Now do stuff with the data
-        let range = ranges.ranges.get(range_index).unwrap_or(&0);
-        let range = *range as u32;
+        let range = ranges
+            .ranges
+            .get(range_index)
+            .map(|r| r.value())
+            .unwrap_or_else(|| {
+                log::warn!(
+                    "Unknown range index {} in header: {:?}",
+                    range_index,
+                    &data[0..20]
+                );
+                0
+            });
+        let range = range as u32;
         let metadata = FurunoSpokeMetadata {
             sweep_count,
             sweep_len,

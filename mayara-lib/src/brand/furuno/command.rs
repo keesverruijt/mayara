@@ -4,7 +4,8 @@ use tokio::io::{AsyncWriteExt, WriteHalf};
 use tokio::net::TcpStream;
 
 use super::CommandMode;
-use crate::radar::{RadarError, RadarInfo, RangeDetection};
+use crate::radar::range::Ranges;
+use crate::radar::{RadarError, RadarInfo};
 use crate::settings::{ControlType, ControlValue, SharedControls};
 
 const RADAR_A: i32 = 0;
@@ -57,7 +58,7 @@ pub(crate) enum CommandId {
 pub struct Command {
     key: String,
     controls: SharedControls,
-    range_detection: Option<RangeDetection>,
+    ranges: Ranges,
 }
 
 impl Command {
@@ -65,12 +66,12 @@ impl Command {
         Command {
             key: info.key(),
             controls: info.controls.clone(),
-            range_detection: info.range_detection.clone(),
+            ranges: info.ranges.clone(),
         }
     }
 
-    pub fn set_ranges(&mut self, ranges: RangeDetection) {
-        self.range_detection = Some(ranges);
+    pub fn set_ranges(&mut self, ranges: Ranges) {
+        self.ranges = ranges;
     }
 
     pub async fn send(
@@ -172,17 +173,13 @@ impl Command {
             }
 
             ControlType::Range => {
-                let ranges = &self
-                    .range_detection
-                    .as_ref()
-                    .expect("Range should be present")
-                    .ranges;
+                let ranges = &self.ranges;
                 cmd.push(if value < ranges.len() as i32 {
                     value
                 } else {
                     let mut i = 0;
-                    for r in ranges {
-                        if *r >= value {
+                    for r in ranges.ranges.iter() {
+                        if r.value() >= value {
                             break;
                         }
                         i += 1;

@@ -225,8 +225,8 @@ impl NavicoDataReceiver {
                 self.pixel_to_blob = Self::pixel_to_blob(&legend);
                 self.info.legend = legend;
             }
-            DataUpdate::RangeDetection(_) => {
-                // Navico DataReceiver does not need to know what range detection is in use.
+            DataUpdate::Ranges(_) => {
+                // Navico DataReceiver does not need to know what ranges are in use.
             }
             DataUpdate::ControlValue(reply_tx, cv) => {
                 match self.trails.set_control_value(&self.info.controls, &cv) {

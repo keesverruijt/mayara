@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
 use crate::{
-    radar::{RadarInfo, RangeDetection},
+    radar::range::{Ranges, NAUTICAL_MILE},
+    radar::RadarInfo,
     settings::{Control, ControlType, DataUpdate, SharedControls},
-    Session
+    Session,
 };
 
 use super::{RadarModel, FURUNO_SPOKES};
@@ -16,7 +17,7 @@ pub fn new(session: Session) -> SharedControls {
         Control::new_string(ControlType::UserName).read_only(false),
     );
 
-    let max_value = 120. * 1852.;
+    let max_value = 120. * NAUTICAL_MILE as f32;
     let mut range_control = Control::new_numeric(ControlType::Range, 0., max_value).unit("m");
     range_control.set_valid_values(FURUNO_RADAR_RANGES.into());
     controls.insert(ControlType::Range, range_control);
@@ -80,17 +81,14 @@ pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version:
         info.controls.set_user_name(user_name);
     }
 
-    let ranges = get_ranges_by_model(&model);
-    let mut range_detection = RangeDetection::new(ranges[0], ranges[ranges.len() - 1]);
-    range_detection.ranges = ranges.clone();
-    info.range_detection = Some(range_detection.clone());
+    let ranges = Ranges::new_by_distance(&get_ranges_by_model(&model));
     info.controls
-        .set_valid_values(&ControlType::Range, ranges.clone())
+        .set_valid_ranges(&ControlType::Range, &ranges)
         .expect("Set valid values");
     info.controls
         .get_data_update_tx()
-        .send(DataUpdate::RangeDetection(range_detection))
-        .expect("RangeDetection");
+        .send(DataUpdate::Ranges(ranges))
+        .expect("Ranges update");
 
     // TODO: Add controls based on reverse engineered capability table
 
