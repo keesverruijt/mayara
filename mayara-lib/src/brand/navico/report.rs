@@ -37,6 +37,7 @@ pub struct NavicoReportReceiver {
 
 #[derive(Primitive, Debug)]
 enum Status {
+    Off = 0x00,
     Standby = 0x01,
     Transmit = 0x02,
     SpinningUp = 0x05,
