@@ -1,4 +1,4 @@
-use anyhow::{bail, Error};
+use anyhow::{bail, Context, Error};
 use num_traits::FromPrimitive;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
@@ -380,7 +380,15 @@ impl FurunoReportReceiver {
                 if numbers[2] != 0. {
                     bail!("Cannot handle radar not set to NM range");
                 }
-                self.set_value(&ControlType::Range, numbers[0]);
+                let index = numbers[0] as usize;
+                let range = self.info.ranges.all.get(index).with_context(|| {
+                    format!(
+                        "Range index {} out of bounds for ranges {}",
+                        index, self.info.ranges,
+                    )
+                })?;
+
+                self.set_value(&ControlType::Range, range.value() as f32);
             }
             CommandId::OnTime => {
                 let hours = numbers[0] / 3600.0;

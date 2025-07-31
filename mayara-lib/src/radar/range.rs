@@ -139,7 +139,7 @@ impl Display for Range {
             let v = self.distance;
             if Range::metric(v) {
                 // Metric
-                if v > 1000 {
+                if v >= 1000 {
                     if v % 1000 == 0 {
                         write!(f, "{} km", v / 1000)
                     } else {
@@ -157,23 +157,18 @@ impl Display for Range {
                         write!(f, "{} nm", v as f64 / NAUTICAL_MILE_F64)
                     }
                 } else {
-                    let s = match v {
-                        57 => "1/32 nm",
-                        115 => "1/16 nm",
-                        231 => "1/8 nm",
-                        347 => "3/16 nm",
-                        463 => "1/4 nm",
-                        694 => "3/8 nm",
-                        926 => "1/2 nm",
-                        1157 => "5/8 nm",
-                        1389 => "3/4 nm",
-                        _ => "",
-                    };
-                    if s.len() > 0 {
-                        write!(f, "{}", s)
+                    if v % (NAUTICAL_MILE / 2) == 0 {
+                        write!(f, "{}/2 nm", v / (NAUTICAL_MILE / 2))
+                    } else if v % (NAUTICAL_MILE / 4) == 0 {
+                        write!(f, "{}/4 nm", v / (NAUTICAL_MILE / 4))
+                    } else if v % (NAUTICAL_MILE / 8) == 0 {
+                        write!(f, "{}/8 nm", v / (NAUTICAL_MILE / 8))
+                    } else if v % (NAUTICAL_MILE / 16) == 0 {
+                        write!(f, "{}/16 nm", v / (NAUTICAL_MILE / 16))
+                    } else if v % (NAUTICAL_MILE / 32) == 0 {
+                        write!(f, "{}/32 nm", v / (NAUTICAL_MILE / 32))
                     } else {
-                        // If we don't have a special case, just write the value in meters
-                        write!(f, "{} m", v)
+                        write!(f, "{} nm", v as f64 / NAUTICAL_MILE_F64)
                     }
                 }
             }
@@ -193,9 +188,9 @@ impl From<&Range> for i32 {
 }
 #[derive(Debug, Clone)]
 pub struct Ranges {
-    pub ranges: Vec<Range>,
-    pub metric_ranges: Vec<Range>,
-    pub nautical_ranges: Vec<Range>,
+    pub all: Vec<Range>,
+    pub metric: Vec<Range>,
+    pub nautical: Vec<Range>,
 }
 
 impl Ranges {
@@ -213,17 +208,17 @@ impl Ranges {
             complete_ranges.push(Range::new(range.distance, i));
         }
         Self {
-            ranges,
-            metric_ranges,
-            nautical_ranges,
+            all: ranges,
+            metric: metric_ranges,
+            nautical: nautical_ranges,
         }
     }
 
     pub fn new_empty() -> Self {
         Self {
-            ranges: Vec::new(),
-            metric_ranges: Vec::new(),
-            nautical_ranges: Vec::new(),
+            all: Vec::new(),
+            metric: Vec::new(),
+            nautical: Vec::new(),
         }
     }
 
@@ -236,35 +231,35 @@ impl Ranges {
     }
 
     fn push(&mut self, range: Range) -> bool {
-        if self.ranges.iter().any(|r| r.distance == range.distance) {
+        if self.all.iter().any(|r| r.distance == range.distance) {
             // If the range already exists, do not add it again
             return false;
         }
-        let index = self.ranges.len();
-        self.ranges.push(range);
-        if Range::metric(self.ranges[index].distance) {
-            self.metric_ranges
-                .push(Range::new(self.ranges[index].distance, index));
+        let index = self.all.len();
+        self.all.push(range);
+        if Range::metric(self.all[index].distance) {
+            self.metric
+                .push(Range::new(self.all[index].distance, index));
         } else {
-            self.nautical_ranges
-                .push(Range::new(self.ranges[index].distance, index));
+            self.nautical
+                .push(Range::new(self.all[index].distance, index));
         }
         true
     }
 
     pub fn get_distance(&self, index: usize) -> Option<&Range> {
-        self.ranges.get(index)
+        self.all.get(index)
     }
 
     pub fn len(&self) -> usize {
-        self.ranges.len()
+        self.all.len()
     }
 }
 
 impl Display for Ranges {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         let mut first = true;
-        for range in &self.ranges {
+        for range in &self.all {
             if !first {
                 write!(f, ", ")?;
             }
@@ -296,10 +291,10 @@ impl RangeDetection {
     pub fn new(key: String, min_range: i32, max_range: i32, metric: bool, nautical: bool) -> Self {
         let mut ranges_to_try = Vec::new();
         if metric {
-            ranges_to_try.extend(ALL_POSSIBLE_METRIC_RANGES.ranges.iter().cloned());
+            ranges_to_try.extend(ALL_POSSIBLE_METRIC_RANGES.all.iter().cloned());
         }
         if nautical {
-            ranges_to_try.extend(ALL_POSSIBLE_NAUTICAL_RANGES.ranges.iter().cloned());
+            ranges_to_try.extend(ALL_POSSIBLE_NAUTICAL_RANGES.all.iter().cloned());
         }
 
         log::info!("{key}: Trying all ranges between {min_range} and {max_range}");
@@ -320,13 +315,13 @@ impl RangeDetection {
     /// Returns false if there are no more ranges to try,
     ///
     fn advance_to_next_index(&mut self) -> Option<&Range> {
-        while self.index_to_try < self.ranges_to_try.ranges.len() {
-            let range = &self.ranges_to_try.ranges[self.index_to_try];
+        while self.index_to_try < self.ranges_to_try.all.len() {
+            let range = &self.ranges_to_try.all[self.index_to_try];
             log::debug!(
                 "{}: advance_to_next_index i={} of {}",
                 self.key,
                 self.index_to_try,
-                self.ranges_to_try.ranges.len(),
+                self.ranges_to_try.all.len(),
             );
             self.index_to_try += 1;
             if range.value() >= self.min_range && range.value() <= self.max_range {
@@ -357,7 +352,7 @@ impl RangeDetection {
             if let Some(range) = self.advance_to_next_index() {
                 return RangeDetectionResult::NextRange(range.value());
             } else {
-                self.ranges = Ranges::new(self.ranges.ranges.clone()); // Sort by distance
+                self.ranges = Ranges::new(self.ranges.all.clone()); // Sort by distance
                 log::info!("{}: Found supported ranges {}", self.key, self.ranges);
                 return RangeDetectionResult::Complete(self.ranges.clone(), self.saved_range);
             }

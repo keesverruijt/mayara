@@ -881,7 +881,7 @@ impl Control {
     pub fn set_valid_ranges(&mut self, ranges: &Ranges) {
         let mut values = Vec::new();
         let mut descriptions = HashMap::new();
-        for range in ranges.ranges.iter() {
+        for range in ranges.all.iter() {
             values.push(range.value());
             descriptions.insert(range.value() as i32, format!("{}", range));
         }

@@ -178,7 +178,7 @@ impl Command {
                     value
                 } else {
                     let mut i = 0;
-                    for r in ranges.ranges.iter() {
+                    for r in ranges.all.iter() {
                         if r.value() >= value {
                             break;
                         }

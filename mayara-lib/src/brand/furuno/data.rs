@@ -567,7 +567,7 @@ impl FurunoDataReceiver {
 
         // Now do stuff with the data
         let range = ranges
-            .ranges
+            .all
             .get(range_index)
             .map(|r| r.value())
             .unwrap_or_else(|| {
