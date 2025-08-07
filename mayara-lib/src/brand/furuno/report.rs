@@ -388,7 +388,7 @@ impl FurunoReportReceiver {
                     )
                 })?;
 
-                self.set_value(&ControlType::Range, range.value() as f32);
+                self.set_value(&ControlType::Range, range.distance() as f32);
             }
             CommandId::OnTime => {
                 let hours = numbers[0] / 3600.0;

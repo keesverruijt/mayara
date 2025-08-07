@@ -179,7 +179,7 @@ impl Command {
                 } else {
                     let mut i = 0;
                     for r in ranges.all.iter() {
-                        if r.value() >= value {
+                        if r.distance() >= value {
                             break;
                         }
                         i += 1;

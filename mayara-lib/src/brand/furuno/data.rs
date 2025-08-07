@@ -569,7 +569,7 @@ impl FurunoDataReceiver {
         let range = ranges
             .all
             .get(range_index)
-            .map(|r| r.value())
+            .map(|r| r.distance())
             .unwrap_or_else(|| {
                 log::warn!(
                     "Unknown range index {} in header: {:?}",

@@ -97,7 +97,7 @@ impl Range {
         }
     }
 
-    pub fn value(&self) -> i32 {
+    pub fn distance(&self) -> i32 {
         self.distance
     }
 
@@ -119,6 +119,14 @@ impl Range {
 
     pub fn is_nautical(&self) -> bool {
         !Self::metric(self.distance)
+    }
+
+    fn mark(&mut self) {
+        self.index = 1; // Mark this range as used
+    }
+
+    fn is_marked(&self) -> bool {
+        self.index > 0
     }
 }
 
@@ -191,34 +199,37 @@ pub struct Ranges {
     pub all: Vec<Range>,
     pub metric: Vec<Range>,
     pub nautical: Vec<Range>,
+    ordered: bool,
 }
 
 impl Ranges {
     pub fn new(mut ranges: Vec<Range>) -> Self {
-        let mut metric_ranges = Vec::new();
-        let mut nautical_ranges = Vec::new();
-        let mut complete_ranges = Vec::new();
+        let mut metric = Vec::new();
+        let mut nautical = Vec::new();
+        let mut all = Vec::new();
         ranges.sort_by(|a, b| a.distance.cmp(&b.distance));
         for (i, range) in ranges.iter().enumerate() {
             if Range::metric(range.distance) {
-                metric_ranges.push(Range::new(range.distance, i));
+                metric.push(Range::new(range.distance, i));
             } else {
-                nautical_ranges.push(Range::new(range.distance, i));
+                nautical.push(Range::new(range.distance, i));
             }
-            complete_ranges.push(Range::new(range.distance, i));
+            all.push(Range::new(range.distance, i));
         }
         Self {
             all: ranges,
-            metric: metric_ranges,
-            nautical: nautical_ranges,
+            metric,
+            nautical,
+            ordered: true,
         }
     }
 
-    pub fn new_empty() -> Self {
+    pub fn empty() -> Self {
         Self {
             all: Vec::new(),
             metric: Vec::new(),
             nautical: Vec::new(),
+            ordered: false,
         }
     }
 
@@ -247,6 +258,18 @@ impl Ranges {
         true
     }
 
+    fn mark(&mut self, range: &Range) -> bool {
+        if self.ordered {
+            // If the ranges are ordered, we cannot mark them
+            return false;
+        }
+        if let Some(index) = self.all.iter().position(|r| r.distance == range.distance) {
+            self.all[index].mark();
+            return true;
+        }
+        false
+    }
+
     pub fn get_distance(&self, index: usize) -> Option<&Range> {
         self.all.get(index)
     }
@@ -264,6 +287,9 @@ impl Display for Ranges {
                 write!(f, ", ")?;
             }
             write!(f, "{}", range)?;
+            if !self.ordered && range.index > 0 {
+                write!(f, " ")?;
+            }
             first = false;
         }
         Ok(())
@@ -291,10 +317,20 @@ impl RangeDetection {
     pub fn new(key: String, min_range: i32, max_range: i32, metric: bool, nautical: bool) -> Self {
         let mut ranges_to_try = Vec::new();
         if metric {
-            ranges_to_try.extend(ALL_POSSIBLE_METRIC_RANGES.all.iter().cloned());
+            ranges_to_try.extend(
+                ALL_POSSIBLE_METRIC_RANGES
+                    .all
+                    .iter()
+                    .filter(|r| r.distance >= min_range && r.distance <= max_range),
+            );
         }
         if nautical {
-            ranges_to_try.extend(ALL_POSSIBLE_NAUTICAL_RANGES.all.iter().cloned());
+            ranges_to_try.extend(
+                ALL_POSSIBLE_NAUTICAL_RANGES
+                    .all
+                    .iter()
+                    .filter(|r| r.distance >= min_range && r.distance <= max_range),
+            );
         }
 
         log::info!("{key}: Trying all ranges between {min_range} and {max_range}");
@@ -304,7 +340,7 @@ impl RangeDetection {
             saved_range: 0,
             min_range,
             max_range,
-            ranges: Ranges::new_empty(),
+            ranges: Ranges::empty(),
             ranges_to_try: Ranges::new(ranges_to_try),
             index_to_try: 0,
         }
@@ -324,14 +360,17 @@ impl RangeDetection {
                 self.ranges_to_try.all.len(),
             );
             self.index_to_try += 1;
-            if range.value() >= self.min_range && range.value() <= self.max_range {
-                log::debug!(
-                    "{}: advance_to_next_index found range {} m",
-                    self.key,
-                    range.value()
-                );
-                return Some(range);
+            if range.is_marked() {
+                // This range has already been tried, skip it
+                log::debug!("{}: Skipping already tried range {}", self.key, range);
+                continue;
             }
+            log::debug!(
+                "{}: advance_to_next_index found range {} m",
+                self.key,
+                range.distance()
+            );
+            return Some(range);
         }
         None
     }
@@ -343,14 +382,19 @@ impl RangeDetection {
             if self.saved_range == 0 {
                 self.saved_range = range;
             }
+            let range = Range::initial(range);
 
             log::trace!("{}: reported range {} m", self.key, range);
-            if self.ranges.push(Range::initial(range)) {
+            if self.ranges.push(range) {
                 log::info!("{}: Found range {}", self.key, range);
             }
+            // Remove the range from the list of ranges to try
+            self.ranges_to_try.mark(&range);
+
+            log::trace!("{}: ranges to try: {}", self.key, self.ranges_to_try);
 
             if let Some(range) = self.advance_to_next_index() {
-                return RangeDetectionResult::NextRange(range.value());
+                return RangeDetectionResult::NextRange(range.distance());
             } else {
                 self.ranges = Ranges::new(self.ranges.all.clone()); // Sort by distance
                 log::info!("{}: Found supported ranges {}", self.key, self.ranges);

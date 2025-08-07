@@ -4,6 +4,7 @@ use enum_primitive_derive::Primitive;
 use log::info;
 use serde::ser::{SerializeMap, Serializer};
 use serde::Serialize;
+use std::str::FromStr;
 use std::time::{Duration, Instant};
 use std::{
     collections::HashMap,
@@ -248,7 +249,7 @@ impl RadarInfo {
             send_command_addr,
             legend: legend,
             message_tx,
-            ranges: Ranges::new_empty(),
+            ranges: Ranges::empty(),
             range_detection: None,
             controls,
             doppler,
@@ -518,6 +519,34 @@ struct Radars {
 
 pub struct Statistics {
     pub broken_packets: usize,
+}
+
+#[derive(Primitive, Debug, PartialEq)]
+pub(crate) enum Status {
+    Off = 0x00,
+    Standby = 0x01,
+    Transmit = 0x02,
+    SpinningUp = 0x05,
+}
+
+impl fmt::Display for Status {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
+    }
+}
+
+impl FromStr for Status {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Off" | "0" => Ok(Status::Off),
+            "Standby" | "1" => Ok(Status::Standby),
+            "Transmit" | "2" => Ok(Status::Transmit),
+            "SpinningUp" | "3" => Ok(Status::SpinningUp),
+            _ => Err(format!("Unknown status: {}", s)),
+        }
+    }
 }
 
 // The actual values are not arbitrary: these are the exact values as reported

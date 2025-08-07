@@ -1,7 +1,9 @@
 use tokio::net::UdpSocket;
 
+use std::str::FromStr;
+
 use crate::network::create_multicast_send;
-use crate::radar::{RadarError, RadarInfo};
+use crate::radar::{RadarError, RadarInfo, Status};
 use crate::settings::{ControlType, ControlValue, SharedControls};
 use crate::Session;
 
@@ -139,10 +141,15 @@ impl Command {
 
         match cv.id {
             ControlType::Status => {
+                let value = match Status::from_str(&cv.value).unwrap_or(Status::Standby) {
+                    Status::Transmit => 1,
+                    _ => 0,
+                };
+
                 cmd.extend_from_slice(&[0x00, 0xc1, 0x01]);
                 self.send(&cmd).await?;
                 cmd.clear();
-                cmd.extend_from_slice(&[0x01, 0xc1, value as u8 - 1]);
+                cmd.extend_from_slice(&[0x01, 0xc1, value]);
             }
 
             ControlType::Range => {

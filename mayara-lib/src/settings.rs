@@ -11,7 +11,7 @@ use std::{
 use thiserror::Error;
 
 use crate::{
-    radar::{range::Ranges, DopplerMode, Legend, RadarError},
+    radar::{range::Ranges, DopplerMode, Legend, RadarError, Status},
     Session, TargetMode,
 };
 
@@ -581,6 +581,15 @@ impl SharedControls {
                 ()
             })
     }
+
+    pub(crate) fn get_status(&self) -> Option<Status> {
+        let locked = self.controls.read().unwrap();
+        if let Some(control) = locked.controls.get(&ControlType::Status) {
+            return Status::from_str(&control.value()).ok();
+        }
+
+        None
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -882,8 +891,8 @@ impl Control {
         let mut values = Vec::new();
         let mut descriptions = HashMap::new();
         for range in ranges.all.iter() {
-            values.push(range.value());
-            descriptions.insert(range.value() as i32, format!("{}", range));
+            values.push(range.distance());
+            descriptions.insert(range.distance() as i32, format!("{}", range));
         }
 
         self.item.valid_values = Some(values);

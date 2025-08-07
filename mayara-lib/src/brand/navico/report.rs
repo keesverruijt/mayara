@@ -1,8 +1,7 @@
 use anyhow::{bail, Error};
-use enum_primitive_derive::Primitive;
+use std::io;
 use std::mem::transmute;
 use std::time::Duration;
-use std::{fmt, io};
 use tokio::net::UdpSocket;
 use tokio::sync::*;
 use tokio::time::{sleep, sleep_until, Instant};
@@ -18,8 +17,11 @@ use crate::Session;
 use super::command::Command;
 use super::Model;
 
+use crate::radar::Status;
+
 pub struct NavicoReportReceiver {
-    session: Session,
+    replay: bool,
+    transmit_after_range_detection: bool,
     info: RadarInfo,
     key: String,
     buf: Vec<u8>,
@@ -33,20 +35,6 @@ pub struct NavicoReportReceiver {
     report_request_timeout: Instant,
     report_request_interval: Duration,
     reported_unknown: [bool; 256],
-}
-
-#[derive(Primitive, Debug)]
-enum Status {
-    Off = 0x00,
-    Standby = 0x01,
-    Transmit = 0x02,
-    SpinningUp = 0x05,
-}
-
-impl fmt::Display for Status {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Debug::fmt(self, f)
-    }
 }
 
 #[derive(Debug)]
@@ -283,13 +271,14 @@ impl NavicoReportReceiver {
         let key = info.key();
 
         let args = session.read().unwrap().args.clone();
+        let replay = args.replay;
         log::debug!(
             "{}: Creating NavicoReportReceiver with args {:?}",
             key,
             args
         );
         // If we are in replay mode, we don't need a command sender, as we will not send any commands
-        let command_sender = if !args.replay {
+        let command_sender = if !replay {
             log::debug!("{}: Starting command sender", key);
             Some(Command::new(session.clone(), info.clone(), model.clone()))
         } else {
@@ -300,7 +289,8 @@ impl NavicoReportReceiver {
         let data_update_tx = info.controls.get_data_update_tx();
 
         NavicoReportReceiver {
-            session,
+            replay,
+            transmit_after_range_detection: false,
             key,
             info,
             buf: Vec::with_capacity(1000),
@@ -524,10 +514,23 @@ impl NavicoReportReceiver {
     // If range detection is in progress, go to the next range
     async fn process_range(&mut self, range: i32) -> Result<(), RadarError> {
         let range = range / 10;
-        if self.info.ranges.len() == 0
-            && self.info.range_detection.is_none()
-            && !self.session.read().unwrap().args.replay
-        {
+        if self.info.ranges.len() == 0 && self.info.range_detection.is_none() && !self.replay {
+            if let Some(status) = self.info.controls.get_status() {
+                if status == Status::Transmit {
+                    log::warn!(
+                        "{}: No ranges available, but radar is transmitting, standby during range detection",
+                        self.key
+                    );
+                    self.send_status(Status::Standby).await?;
+                    self.transmit_after_range_detection = true;
+                }
+            } else {
+                log::warn!(
+                    "{}: No ranges available and no radar status found, cannot start range detection",
+                    self.key
+                );
+                return Ok(());
+            }
             if let Some(control) = self.info.controls.get(&ControlType::Range) {
                 self.info.range_detection = Some(RangeDetection::new(
                     self.key.clone(),
@@ -553,6 +556,10 @@ impl NavicoReportReceiver {
                     self.radars.update(&self.info);
 
                     self.send_range(saved_range).await?;
+                    if self.transmit_after_range_detection {
+                        self.transmit_after_range_detection = false;
+                        self.send_status(Status::Transmit).await?;
+                    }
                 }
                 RangeDetectionResult::NextRange(r) => {
                     self.range_timeout = Some(Instant::now() + Duration::from_secs(2));
@@ -562,6 +569,16 @@ impl NavicoReportReceiver {
             }
         }
 
+        Ok(())
+    }
+
+    async fn send_status(&mut self, status: Status) -> Result<(), RadarError> {
+        let cv = ControlValue::new(ControlType::Status, (status as i32).to_string());
+        self.command_sender
+            .as_mut()
+            .unwrap() // Safe, as we only create a range detection when replay is false
+            .set_control(&cv, &self.info.controls)
+            .await?;
         Ok(())
     }
 
@@ -650,11 +667,16 @@ impl NavicoReportReceiver {
 
         log::debug!("{}: report {:?}", self.key, report);
 
-        let status: Result<Status, _> = report.status.try_into();
-        if status.is_err() {
-            bail!("{}: Unknown radar status {}", self.key, report.status);
-        }
-        self.set_value(&ControlType::Status, report.status as f32);
+        let status = match report.status {
+            0 => Status::Off,
+            1 => Status::Standby,
+            2 => Status::Transmit,
+            5 => Status::SpinningUp,
+            _ => {
+                bail!("{}: Unknown radar status {}", self.key, report.status);
+            }
+        };
+        self.set_value(&ControlType::Status, status as i32 as f32);
 
         Ok(())
     }
