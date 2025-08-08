@@ -1,5 +1,4 @@
 use atomic_float::AtomicF64;
-use chrono::format::Parsed;
 use futures_util::future::select_ok;
 use mdns_sd::{Error, IfKind, ServiceDaemon, ServiceEvent};
 use nmea_parser::*;
@@ -32,7 +31,7 @@ static SOG: AtomicF64 = AtomicF64::new(f64::NAN);
 
 pub(crate) fn get_heading_true() -> Option<f64> {
     let heading = HEADING_TRUE.load(Ordering::Acquire);
-    if heading != f64::NAN {
+    if !heading.is_nan() {
         return Some(heading);
     }
     return None;
@@ -79,7 +78,7 @@ pub(crate) fn set_position(lat: Option<f64>, lon: Option<f64>) {
 
 pub(crate) fn get_cog() -> Option<f64> {
     let cog = COG.load(Ordering::Acquire);
-    if cog != f64::NAN {
+    if !cog.is_nan() {
         return Some(cog);
     }
     return None;
@@ -95,7 +94,7 @@ pub(crate) fn set_cog(cog: Option<f64>) {
 
 pub(crate) fn get_sog() -> Option<f64> {
     let sog = SOG.load(Ordering::Acquire);
-    if sog != f64::NAN {
+    if !sog.is_nan() {
         return Some(sog);
     }
     return None;
@@ -113,8 +112,11 @@ pub(crate) fn set_sog(sog: Option<f64>) {
 const SIGNAL_K_SERVICE_NAME: &'static str = "_signalk-tcp._tcp.local.";
 const NMEA0183_SERVICE_NAME: &'static str = "_nmea-0183._tcp.local.";
 
-const SUBSCRIBE: &'static str =
-       "{\"context\": \"vessels.self\",\"subscribe\": [{\"path\": \"navigation.headingTrue\"},{\"path\": \"navigation.position\"},{\"path\": \"navigation.speedOverGround\"},{\"path\": \"navigation.courseOverGroundTrue\"}]}\r\n";
+const SUBSCRIBE: &'static str = "{\"context\": \"vessels.self\",
+         \"subscribe\": [{\"path\": \"navigation.headingTrue\"},
+                         {\"path\": \"navigation.position\"},
+                         {\"path\": \"navigation.speedOverGround\"},
+                         {\"path\": \"navigation.courseOverGroundTrue\"}]}\r\n";
 
 enum ConnectionType {
     Mdns,
