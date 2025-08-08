@@ -1,4 +1,5 @@
 use atomic_float::AtomicF64;
+use chrono::format::Parsed;
 use futures_util::future::select_ok;
 use mdns_sd::{Error, IfKind, ServiceDaemon, ServiceEvent};
 use nmea_parser::*;
@@ -19,20 +20,30 @@ use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::{
     radar::{GeoPosition, RadarError},
-    Session
+    Session,
 };
 
-pub(crate) static HEADING_TRUE_VALID: AtomicBool = AtomicBool::new(false);
-pub(crate) static POSITION_VALID: AtomicBool = AtomicBool::new(false);
-pub(crate) static HEADING_TRUE: AtomicF64 = AtomicF64::new(0.0);
-pub(crate) static POSITION_LAT: AtomicF64 = AtomicF64::new(0.0);
-pub(crate) static POSITION_LON: AtomicF64 = AtomicF64::new(0.0);
+static HEADING_TRUE: AtomicF64 = AtomicF64::new(f64::NAN);
+static POSITION_VALID: AtomicBool = AtomicBool::new(false);
+static POSITION_LAT: AtomicF64 = AtomicF64::new(f64::NAN);
+static POSITION_LON: AtomicF64 = AtomicF64::new(f64::NAN);
+static COG: AtomicF64 = AtomicF64::new(f64::NAN);
+static SOG: AtomicF64 = AtomicF64::new(f64::NAN);
 
 pub(crate) fn get_heading_true() -> Option<f64> {
-    if HEADING_TRUE_VALID.load(Ordering::Acquire) {
-        return Some(HEADING_TRUE.load(Ordering::Acquire));
+    let heading = HEADING_TRUE.load(Ordering::Acquire);
+    if heading != f64::NAN {
+        return Some(heading);
     }
     return None;
+}
+
+pub(crate) fn set_heading_true(heading: Option<f64>) {
+    if let Some(h) = heading {
+        HEADING_TRUE.store(h, Ordering::Release);
+    } else {
+        HEADING_TRUE.store(f64::NAN, Ordering::Release);
+    }
 }
 
 pub(crate) fn get_radar_position() -> Option<GeoPosition> {
@@ -55,12 +66,55 @@ pub(crate) fn get_position_i64() -> (Option<i64>, Option<i64>) {
     return (None, None);
 }
 
+pub(crate) fn set_position(lat: Option<f64>, lon: Option<f64>) {
+    if let (Some(lat), Some(lon)) = (lat, lon) {
+        POSITION_LAT.store(lat, Ordering::Release);
+        POSITION_LON.store(lon, Ordering::Release);
+        POSITION_VALID.store(true, Ordering::Release);
+    } else {
+        POSITION_VALID.store(false, Ordering::Release);
+        return;
+    }
+}
+
+pub(crate) fn get_cog() -> Option<f64> {
+    let cog = COG.load(Ordering::Acquire);
+    if cog != f64::NAN {
+        return Some(cog);
+    }
+    return None;
+}
+
+pub(crate) fn set_cog(cog: Option<f64>) {
+    if let Some(c) = cog {
+        COG.store(c, Ordering::Release);
+    } else {
+        COG.store(f64::NAN, Ordering::Release);
+    }
+}
+
+pub(crate) fn get_sog() -> Option<f64> {
+    let sog = SOG.load(Ordering::Acquire);
+    if sog != f64::NAN {
+        return Some(sog);
+    }
+    return None;
+}
+
+pub(crate) fn set_sog(sog: Option<f64>) {
+    if let Some(s) = sog {
+        SOG.store(s, Ordering::Release);
+    } else {
+        SOG.store(f64::NAN, Ordering::Release);
+    }
+}
+
 /// The hostname of the devices we are searching for.
 const SIGNAL_K_SERVICE_NAME: &'static str = "_signalk-tcp._tcp.local.";
 const NMEA0183_SERVICE_NAME: &'static str = "_nmea-0183._tcp.local.";
 
 const SUBSCRIBE: &'static str =
-       "{\"context\": \"vessels.self\",\"subscribe\": [{\"path\": \"navigation.headingTrue\"},{\"path\": \"navigation.position\"}]}\r\n";
+       "{\"context\": \"vessels.self\",\"subscribe\": [{\"path\": \"navigation.headingTrue\"},{\"path\": \"navigation.position\"},{\"path\": \"navigation.speedOverGround\"},{\"path\": \"navigation.courseOverGroundTrue\"}]}\r\n";
 
 enum ConnectionType {
     Mdns,
@@ -136,8 +190,9 @@ impl NavigationData {
     ) -> Result<(), Error> {
         log::debug!("{} run_loop (re)start", self.what);
         let mut rx_ip_change = rx_ip_change;
+        let navigation_address = self.session.read().unwrap().args.navigation_address.clone();
+
         loop {
-            let navigation_address = self.session.read().unwrap().args.navigation_address.clone();
             match self
                 .find_service(&subsys, &mut rx_ip_change, &navigation_address)
                 .await
@@ -212,7 +267,16 @@ impl NavigationData {
 
         if interface.is_some() {
             let _ = mdns.disable_interface(IfKind::All);
-            let navigation_address = self.session.read().unwrap().args.navigation_address.as_ref().unwrap().to_string().clone();
+            let navigation_address = self
+                .session
+                .read()
+                .unwrap()
+                .args
+                .navigation_address
+                .as_ref()
+                .unwrap()
+                .to_string()
+                .clone();
             let _ = mdns.enable_interface(IfKind::Name(navigation_address));
         }
         let tcp_locator = mdns.browse(self.service_name).expect(&format!(
@@ -471,34 +535,23 @@ impl NavigationData {
 
         match parser.parse_sentence(s) {
             Ok(ParsedMessage::Rmc(rmc)) => {
-                if let (Some(lat), Some(lon)) = (rmc.latitude, rmc.longitude) {
-                    POSITION_VALID.store(true, Ordering::Release);
-                    POSITION_LON.store(lat, Ordering::Release);
-                    POSITION_LAT.store(lon, Ordering::Release);
-                    log::trace!("{} parsed {s} => ({lat},{lon})", self.what);
-                } else {
-                    POSITION_VALID.store(false, Ordering::Release);
-                }
+                set_position(rmc.latitude, rmc.longitude);
             }
             Ok(ParsedMessage::Gll(gll)) => {
-                if let (Some(lat), Some(lon)) = (gll.latitude, gll.longitude) {
-                    POSITION_VALID.store(true, Ordering::Release);
-                    POSITION_LON.store(lat, Ordering::Release);
-                    POSITION_LAT.store(lon, Ordering::Release);
-                    log::trace!("{} parsed {s} => ({lat},{lon})", self.what);
-                } else {
-                    POSITION_VALID.store(false, Ordering::Release);
-                }
+                set_position(gll.latitude, gll.longitude);
             }
             Ok(ParsedMessage::Hdt(hdt)) => {
-                if let Some(heading) = hdt.heading_true {
-                    HEADING_TRUE_VALID.store(true, Ordering::Release);
-                    HEADING_TRUE.store(heading, Ordering::Release);
-                    log::trace!("{} parsed {s} => {heading}", self.what);
-                } else {
-                    HEADING_TRUE_VALID.store(false, Ordering::Release);
-                }
+                set_heading_true(hdt.heading_true);
             }
+            Ok(ParsedMessage::Vtg(vtg)) => {
+                set_cog(vtg.cog_true);
+                let sog = vtg
+                    .sog_kph
+                    .or_else(|| vtg.sog_knots.map(|k| k * 1.852))
+                    .map(|s| s * 3.6); // convert to m/s
+                set_sog(sog);
+            }
+
             Err(e) => match e {
                 ParseError::UnsupportedSentenceType(_) => {}
                 ParseError::CorruptedSentence(e2) => {
@@ -530,21 +583,20 @@ fn parse_signalk(s: &str) -> Result<(), RadarError> {
                 if let (Some(path), value) = (values["path"].as_str(), &values["value"]) {
                     match path {
                         "navigation.position" => {
-                            if let (Some(longitude), Some(latitude)) =
-                                (value["longitude"].as_f64(), value["latitude"].as_f64())
-                            {
-                                POSITION_VALID.store(true, Ordering::Release);
-                                POSITION_LON.store(longitude, Ordering::Release);
-                                POSITION_LAT.store(latitude, Ordering::Release);
-                                return Ok(());
-                            }
+                            set_position(value["longitude"].as_f64(), value["latitude"].as_f64());
+                            return Ok(());
                         }
                         "navigation.headingTrue" => {
-                            if let Some(heading) = value.as_f64() {
-                                HEADING_TRUE_VALID.store(true, Ordering::Release);
-                                HEADING_TRUE.store(heading, Ordering::Release);
-                                return Ok(());
-                            }
+                            set_heading_true(value.as_f64());
+                            return Ok(());
+                        }
+                        "navigation.speedOverGround" => {
+                            set_sog(value.as_f64());
+                            return Ok(());
+                        }
+                        "navigation.courseOverGroundTrue" => {
+                            set_cog(value.as_f64());
+                            return Ok(());
                         }
                         _ => {
                             return Err(RadarError::ParseJson(format!("Ignored path '{}'", path)));

@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use socket2::{Domain, Protocol, Type};
+use std::fmt;
 use std::net::SocketAddrV4;
 use std::sync::atomic::AtomicBool;
 use std::{
@@ -22,7 +23,7 @@ pub fn set_replay(replay: bool) {
     G_REPLAY.store(replay, std::sync::atomic::Ordering::Relaxed);
 }
 // This is like a SocketAddrV4 but with known layout
-#[derive(Deserialize, Debug, Copy, Clone)]
+#[derive(Deserialize, Copy, Clone)]
 #[repr(C)]
 pub struct NetworkSocketAddrV4 {
     addr: [u8; 4],
@@ -38,7 +39,27 @@ impl From<NetworkSocketAddrV4> for SocketAddrV4 {
     }
 }
 
-#[derive(Deserialize, Debug, Copy, Clone)]
+impl std::fmt::Display for NetworkSocketAddrV4 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}:{}",
+            Ipv4Addr::from(u32::from_be_bytes(self.addr)),
+            u16::from_be_bytes(self.port)
+        )
+    }
+}
+
+impl fmt::Debug for NetworkSocketAddrV4 {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_struct("NetworkSocketAddrV4")
+            .field("addr", &self.addr)
+            .field("port", &format_args!("{}", u16::from_be_bytes(self.port)))
+            .finish()
+    }
+}
+
+#[derive(Deserialize, Copy, Clone)]
 #[repr(C)]
 pub struct LittleEndianSocketAddrV4 {
     addr: [u8; 4],
@@ -51,6 +72,26 @@ impl From<LittleEndianSocketAddrV4> for SocketAddrV4 {
             u32::from_le_bytes(item.addr).into(),
             u16::from_le_bytes(item.port),
         )
+    }
+}
+
+impl std::fmt::Display for LittleEndianSocketAddrV4 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}:{}",
+            Ipv4Addr::from(u32::from_le_bytes(self.addr)),
+            u16::from_le_bytes(self.port)
+        )
+    }
+}
+
+impl fmt::Debug for LittleEndianSocketAddrV4 {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_struct("LittleEndianSocketAddrV4")
+            .field("addr", &self.addr)
+            .field("port", &format_args!("{}", u16::from_le_bytes(self.port)))
+            .finish()
     }
 }
 

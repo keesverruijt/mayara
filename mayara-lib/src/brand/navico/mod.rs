@@ -14,6 +14,7 @@ use crate::{Brand, Session};
 
 mod command;
 mod data;
+mod info;
 mod report;
 mod settings;
 
@@ -35,6 +36,9 @@ const RADAR_LINE_DATA_LENGTH: usize = NAVICO_SPOKE_LEN / NAVICO_PIXELS_PER_BYTE;
 
 const NAVICO_BEACON_ADDRESS: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(236, 6, 7, 5)), 6878);
+const NAVICO_INFO_ADDRESS: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(239, 238, 55, 73), 7527);
+const NAVICO_SPEED_ADDRESS_A: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(236, 6, 7, 20), 6690);
+const NAVICO_SPEED_ADDRESS_B: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(236, 6, 7, 15), 6005);
 
 /* NAVICO API SPOKES */
 /*
@@ -65,26 +69,26 @@ const NAVICO_ADDRESS_REQUEST_PACKET: [u8; 2] = [0x01, 0xB1];
 struct NavicoBeaconHeader {
     _id: u16,
     serial_no: [u8; 16],             // ASCII serial number, zero terminated
-    radar_addr: NetworkSocketAddrV4, // 0A 00 43 D9 01 01
+    radar_addr: NetworkSocketAddrV4, // 0A 00 43 D9 01 01 = DHCP address of radar
     _filler1: [u8; 12],              // 11000000
-    _addr1: NetworkSocketAddrV4,     // EC0608201970
+    _addr1: NetworkSocketAddrV4,     // EC0608201970 = 236.6.8.32 port 6512
     _filler2: [u8; 4],               // 11000000
-    _addr2: NetworkSocketAddrV4,     // EC0607161A26
+    _addr2: NetworkSocketAddrV4,     // EC0607161A26 = 236.6.8.22 port 6694
     _filler3: [u8; 10],              // 1F002001020010000000
-    _addr3: NetworkSocketAddrV4,     // EC0608211971
+    _addr3: NetworkSocketAddrV4,     // EC0608211971 = 236.6.8.33 port 6513
     _filler4: [u8; 4],               // 11000000
-    _addr4: NetworkSocketAddrV4,     // EC0608221972
+    _addr4: NetworkSocketAddrV4,     // EC0608221972 = 236.6.8.34 port 6514
 }
 
 #[derive(Deserialize, Debug, Copy, Clone)]
 #[repr(packed)]
 struct NavicoBeaconRadar {
     _filler1: [u8; 10],          // 10002001030010000000
-    data: NetworkSocketAddrV4,   // EC0608231973
+    data: NetworkSocketAddrV4,   // EC0608231973 = 236.6.8.35 port 6515
     _filler2: [u8; 4],           // 11000000
-    send: NetworkSocketAddrV4,   // EC0608241974
+    send: NetworkSocketAddrV4,   // EC0608241974 = 236.6.8.36 port 6516
     _filler3: [u8; 4],           // 12000000
-    report: NetworkSocketAddrV4, // EC0608231975
+    report: NetworkSocketAddrV4, // EC0608231975 = 236.6.7.35 port 6517
 }
 
 // Radars that have one internal radar: 3G, Halo 20, etc.
@@ -106,17 +110,17 @@ struct NavicoBeaconDual {
     /* We don't care about the rest: */
     /*
     _filler11: [u8; 10],           // 12002001030010000000
-    addr11: NetworkSocketAddrV4,        // EC0608231979
+    addr11: NetworkSocketAddrV4,        // EC0608231979 = 236.6.8.35 port 6521
     _filler12: [u8; 4],            // 11000000
-    addr12: NetworkSocketAddrV4,        // EC060827197A
+    addr12: NetworkSocketAddrV4,        // EC060827197A = 236.6.8.39 port 6522
     _filler13: [u8; 4],            // 12000000
-    addr13: NetworkSocketAddrV4,        // EC060823197B
+    addr13: NetworkSocketAddrV4,        // EC060823197B = 236.6.8.35 port 6523
     _filler14: [u8; 10],           // 12002002030010000000
-    addr14: NetworkSocketAddrV4,        // EC060825197C
+    addr14: NetworkSocketAddrV4,        // EC060825197C = 236.6.8.37 port 6524
     _filler15: [u8; 4],            // 11000000
-    addr15: NetworkSocketAddrV4,        // EC060828197D
+    addr15: NetworkSocketAddrV4,        // EC060828197D = 236.6.8.40 port 6525
     _filler16: [u8; 4],            // 12000000
-    addr16: NetworkSocketAddrV4,        // EC060825197E
+    addr16: NetworkSocketAddrV4,        // EC060825197E = 236.6.8.37 port 6526
     */
 }
 
@@ -255,6 +259,7 @@ impl NavicoLocatorState {
         if report.len() >= NAVICO_BEACON_DUAL_SIZE {
             match deserialize::<NavicoBeaconDual>(report) {
                 Ok(data) => {
+                    log::debug!("{} sent NavicoBeaconDual {:?}", from, data);
                     if let Some(serial_no) = c_string(&data.header.serial_no) {
                         let radar_addr: SocketAddrV4 = data.header.radar_addr.into();
 
@@ -315,6 +320,7 @@ impl NavicoLocatorState {
         } else if report.len() >= NAVICO_BEACON_SINGLE_SIZE {
             match deserialize::<NavicoBeaconSingle>(report) {
                 Ok(data) => {
+                    log::debug!("{} sent NavicoBeaconSingle {:?}", from, data);
                     if let Some(serial_no) = c_string(&data.header.serial_no) {
                         let radar_addr: SocketAddrV4 = data.header.radar_addr.into();
 
@@ -353,6 +359,8 @@ impl NavicoLocatorState {
         } else if report.len() == NAVICO_BEACON_BR24_SIZE {
             match deserialize::<BR24Beacon>(report) {
                 Ok(data) => {
+                    log::debug!("{} sent BR24Beacon {:?}", from, data);
+
                     if let Some(serial_no) = c_string(&data.serial_no) {
                         let radar_addr: SocketAddrV4 = data.radar_addr.into();
 
