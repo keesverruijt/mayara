@@ -521,12 +521,12 @@ pub struct Statistics {
     pub broken_packets: usize,
 }
 
-#[derive(Primitive, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum Status {
-    Off = 0x00,
-    Standby = 0x01,
-    Transmit = 0x02,
-    SpinningUp = 0x05,
+    Off,
+    Standby,
+    Transmit,
+    SpinningUp,
 }
 
 impl fmt::Display for Status {

@@ -165,7 +165,7 @@ impl Display for Range {
                     } else {
                         write!(f, "{} nm", v as f64 / NAUTICAL_MILE_F64)
                     }
-                } else if Self::near((v + 1), NAUTICAL_MILE / 2) {
+                } else if Self::near(v, NAUTICAL_MILE / 2) {
                     write!(f, "{}/2 nm", (v + 1) / (NAUTICAL_MILE / 2))
                 } else if Self::near(v, NAUTICAL_MILE / 4) {
                     write!(f, "{}/4 nm", (v + 1) / (NAUTICAL_MILE / 4))

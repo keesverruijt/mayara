@@ -849,17 +849,20 @@ impl NavicoReportReceiver {
 
         log::debug!("{}: report {:?}", self.key, report);
 
-        let status = match report.status {
+        self.set_status(report.status)
+    }
+
+    fn set_status(&mut self, status: u8) -> Result<(), Error> {
+        let status = match status {
             0 => Status::Off,
             1 => Status::Standby,
             2 => Status::Transmit,
             5 => Status::SpinningUp,
             _ => {
-                bail!("{}: Unknown radar status {}", self.key, report.status);
+                bail!("{}: Unknown radar status {}", self.key, status);
             }
         };
         self.set_value(&ControlType::Status, status as i32 as f32);
-
         Ok(())
     }
 
