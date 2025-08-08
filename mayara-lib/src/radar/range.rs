@@ -20,14 +20,10 @@ pub static ALL_POSSIBLE_NAUTICAL_RANGES: LazyLock<Ranges> = LazyLock::new(|| {
         Range::initial(57),                  // 1/32 nm
         Range::initial(115),                 // 1/16 nm
         Range::initial(231),                 // 1/8 nm
-        Range::initial(346),                 // 3/16 nm
-        Range::initial(462),                 // 1/4 nm
-        Range::initial(693),                 // 3/8 nm
+        Range::initial(463),                 // 1/4 nm
         Range::initial(926),                 // 1/2 nm
-        Range::initial(1156),                // 5/8 nm
-        Range::initial(1388),                // 3/4 nm
+        Range::initial(1389),                // 3/4 nm
         Range::initial(NAUTICAL_MILE),       // 1 nm
-        Range::initial(NAUTICAL_MILE + 462), // 1.25 nm
         Range::initial(NAUTICAL_MILE + 926), // 1.5 nm
         Range::initial(NAUTICAL_MILE * 2),   // 2 nm
         Range::initial(NAUTICAL_MILE * 3),   // 3 nm
@@ -106,11 +102,17 @@ impl Range {
     }
 
     fn near(a: i32, b: i32) -> bool {
-        return a >= b - 1 && a <= b + 1 || (b == 0 && a == 99);
+        return a % b == 0 || a % b == 1 || a % b == b - 1;
     }
 
     fn metric(v: i32) -> bool {
-        Self::near(v % 100, 0) || Self::near(v, 25) || Self::near(v, 50) || Self::near(v, 75)
+        if v <= 100 {
+            Self::near(v, 25)
+        } else if v <= 750 {
+            Self::near(v, 50)
+        } else {
+            Self::near(v, 500)
+        }
     }
 
     pub fn is_metric(&self) -> bool {
@@ -157,27 +159,24 @@ impl Display for Range {
                     write!(f, "{} m", v)
                 }
             } else {
-                if v >= NAUTICAL_MILE {
-                    if (v % NAUTICAL_MILE) == 0 {
-                        // If the value is a multiple of NAUTICAL_MILE, write it as nm
-                        write!(f, "{} nm", v / NAUTICAL_MILE)
+                if v >= NAUTICAL_MILE - 1 {
+                    if Self::near(v, NAUTICAL_MILE) {
+                        write!(f, "{} nm", (v + 1) / NAUTICAL_MILE)
                     } else {
                         write!(f, "{} nm", v as f64 / NAUTICAL_MILE_F64)
                     }
+                } else if Self::near((v + 1), NAUTICAL_MILE / 2) {
+                    write!(f, "{}/2 nm", (v + 1) / (NAUTICAL_MILE / 2))
+                } else if Self::near(v, NAUTICAL_MILE / 4) {
+                    write!(f, "{}/4 nm", (v + 1) / (NAUTICAL_MILE / 4))
+                } else if Self::near(v, NAUTICAL_MILE / 8) {
+                    write!(f, "{}/8 nm", (v + 1) / (NAUTICAL_MILE / 8))
+                } else if Self::near(v, NAUTICAL_MILE / 16) {
+                    write!(f, "{}/16 nm", (v + 1) / (NAUTICAL_MILE / 16))
+                } else if Self::near(v, NAUTICAL_MILE / 32) {
+                    write!(f, "{}/32 nm", (v + 1) / (NAUTICAL_MILE / 32))
                 } else {
-                    if v % (NAUTICAL_MILE / 2) == 0 {
-                        write!(f, "{}/2 nm", v / (NAUTICAL_MILE / 2))
-                    } else if v % (NAUTICAL_MILE / 4) == 0 {
-                        write!(f, "{}/4 nm", v / (NAUTICAL_MILE / 4))
-                    } else if v % (NAUTICAL_MILE / 8) == 0 {
-                        write!(f, "{}/8 nm", v / (NAUTICAL_MILE / 8))
-                    } else if v % (NAUTICAL_MILE / 16) == 0 {
-                        write!(f, "{}/16 nm", v / (NAUTICAL_MILE / 16))
-                    } else if v % (NAUTICAL_MILE / 32) == 0 {
-                        write!(f, "{}/32 nm", v / (NAUTICAL_MILE / 32))
-                    } else {
-                        write!(f, "{} nm", v as f64 / NAUTICAL_MILE_F64)
-                    }
+                    write!(f, "{} nm", v as f64 / NAUTICAL_MILE_F64)
                 }
             }
         }
