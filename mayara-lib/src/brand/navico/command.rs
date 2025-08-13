@@ -129,6 +129,8 @@ impl Command {
         cv: &ControlValue,
         controls: &SharedControls,
     ) -> Result<(), RadarError> {
+        log::debug!("set_control({:?},...)", cv);
+
         let value = cv
             .value
             .parse::<f32>()

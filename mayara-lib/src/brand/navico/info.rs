@@ -85,7 +85,8 @@ impl HaloSpeedPacket {
     }
 }
 
-enum SocketType {
+// This enum is an index into the SOCKET_ADDRESS array
+enum SocketIndex {
     HeadingAndNavigation,
     SpeedA,
     SpeedB,
@@ -180,7 +181,7 @@ impl Information {
             let bytes: &[u8] = unsafe { any_as_u8_slice(&heading_packet) };
             self.counter = self.counter.wrapping_add(1);
 
-            self.send(SocketType::HeadingAndNavigation as usize, bytes)
+            self.send(SocketIndex::HeadingAndNavigation as usize, bytes)
                 .await?;
         }
         Ok(())
@@ -207,7 +208,7 @@ impl Information {
             let bytes: &[u8] = unsafe { any_as_u8_slice(&heading_packet) };
             self.counter = self.counter.wrapping_add(1);
 
-            self.send(SocketType::HeadingAndNavigation as usize, bytes)
+            self.send(SocketIndex::HeadingAndNavigation as usize, bytes)
                 .await?;
         }
         Ok(())
@@ -227,8 +228,8 @@ impl Information {
 
             let bytes: &[u8] = unsafe { any_as_u8_slice(&speed_packet) };
 
-            self.send(SocketType::SpeedA as usize, bytes).await?;
-            self.send(SocketType::SpeedA as usize, bytes).await?;
+            self.send(SocketIndex::SpeedA as usize, bytes).await?;
+            self.send(SocketIndex::SpeedB as usize, bytes).await?;
         }
         Ok(())
     }

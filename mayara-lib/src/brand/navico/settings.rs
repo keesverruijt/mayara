@@ -108,7 +108,7 @@ pub fn new(session: Session, model: Option<&str>) -> SharedControls {
 pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_info: &RadarInfo) {
     controls.set_model_name(model.to_string());
 
-    let mut control = Control::new_string(ControlType::SerialNumber).read_only(true);
+    let mut control = Control::new_string(ControlType::SerialNumber);
     if let Some(serial_number) = radar_info.serial_no.as_ref() {
         control.set_string(serial_number.to_string());
     }
@@ -280,4 +280,6 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
             },
         ),
     );
+
+    log::debug!("update_when_model_known: {:?}", controls);
 }

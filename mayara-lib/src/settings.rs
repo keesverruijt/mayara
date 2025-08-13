@@ -54,7 +54,7 @@ impl Controls {
     pub(self) fn insert(&mut self, control_type: ControlType, value: Control) {
         let v = Control {
             item: ControlDefinition {
-                is_read_only: self.session.read().unwrap().args.replay,
+                is_read_only: self.session.read().unwrap().args.replay || value.item.is_read_only,
                 ..value.item
             },
             ..value
@@ -678,13 +678,9 @@ impl Control {
     }
 
     pub fn read_only(mut self, is_read_only: bool) -> Self {
-        self.set_read_only(is_read_only);
+        self.item.is_read_only = is_read_only;
 
         self
-    }
-
-    pub fn set_read_only(&mut self, is_read_only: bool) {
-        self.item.is_read_only = is_read_only;
     }
 
     pub fn set_destination(mut self, destination: ControlDestination) -> Self {
