@@ -294,6 +294,8 @@ function setControl(v) {
     }
 
     if (control.name == "Range") {
+      myr_range_control_id = v.id;
+
       let r = parseFloat(v.value);
       if (control.descriptions && control.descriptions[r]) {
         let unit = control.descriptions[r].split(/(\s+)/);
@@ -301,9 +303,14 @@ function setControl(v) {
         if (unit.length == 3) {
           let units = get_element_by_server_id(RANGE_UNIT_SELECT_ID);
           if (units) {
-            units.value = unit[2] == "nm" ? 1 : 0;
+            let new_value = unit[2] == "nm" ? 1 : 0;
+            if (units.value != new_value) {
+              // Only change if different
+              units.value = new_value;
+              handle_range_unit_change(new_value);
+              i.value = v.value;
+            }
           }
-          myr_range_control_id = v.id;
         }
       }
     }

@@ -18,39 +18,63 @@ import { render_webgl_alt } from "./render_webgl_alt.js";
 var webSocket;
 var RadarMessage;
 var renderer;
-var rangeDescriptions;
-var rangeDescriptionsFromControl;
 var noTransmitAngles;
 
-// Weird lengths so our range rings show nm
-rangeDescriptions = {
-  28: "1/64 nm",
-  57: "1/32 nm",
-  86: "3/64 nm",
-  115: "1/16 nm",
-  173: "3/32 nm",
-  231: "1/8 nm",
-  347: "3/16 nm",
-  463: "1/4 nm",
-  694: "3/8 nm",
-  926: "1/2 nm",
-  1041: "9/16 nm",
-  1389: "3/4 nm",
-  1852: "1 nm",
-  2083: "9/8 nm",
-  3704: "2 nm",
-  5556: "3 nm",
-  7408: "4 nm",
-  9260: "5 nm",
-  11112: "6 nm",
-  14816: "8 nm",
-  18520: "10 nm",
-  22224: "12 nm",
-  27780: "15 nm",
-  29632: "16 nm",
-  37040: "20 nm",
-  44448: "24 nm",
-};
+function divides_near(a, b) {
+  let remainder = a % b;
+  let r = remainder <= 1.0 || remainder >= b - 1;
+  console.log(
+    "divides_near: " + a + " % " + b + " = " + remainder + " -> " + r
+  );
+  return r;
+}
+
+function is_metric(v) {
+  if (v <= 100) {
+    return divides_near(v, 25);
+  } else if (v <= 750) {
+    return divides_near(v, 50);
+  }
+  return divides_near(v, 500);
+}
+
+const NAUTICAL_MILE = 1852.0;
+
+function formatRangeValue(metric, v) {
+  if (metric) {
+    // Metric
+    v = Math.round(v);
+    if (v >= 1000) {
+      return v / 1000 + " km";
+    } else {
+      return v + " m";
+    }
+  } else {
+    if (v >= NAUTICAL_MILE - 1) {
+      if (divides_near(v, NAUTICAL_MILE)) {
+        return Math.floor((v + 1) / NAUTICAL_MILE) + " nm";
+      } else {
+        return v / NAUTICAL_MILE + " nm";
+      }
+    } else if (divides_near(v, NAUTICAL_MILE / 2)) {
+      return Math.floor((v + 1) / (NAUTICAL_MILE / 2)) + "/2 nm";
+    } else if (divides_near(v, NAUTICAL_MILE / 4)) {
+      return Math.floor((v + 1) / (NAUTICAL_MILE / 4)) + "/4 nm";
+    } else if (divides_near(v, NAUTICAL_MILE / 8)) {
+      return Math.floor((v + 1) / (NAUTICAL_MILE / 8)) + "/8 nm";
+    } else if (divides_near(v, NAUTICAL_MILE / 16)) {
+      return Math.floor((v + 1) / (NAUTICAL_MILE / 16)) + "/16 nm";
+    } else if (divides_near(v, NAUTICAL_MILE / 32)) {
+      return Math.floor((v + 1) / (NAUTICAL_MILE / 32)) + "/32 nm";
+    } else if (divides_near(v, NAUTICAL_MILE / 64)) {
+      return Math.floor((v + 1) / (NAUTICAL_MILE / 64)) + "/64 nm";
+    } else if (divides_near(v, NAUTICAL_MILE / 128)) {
+      return Math.floor((v + 1) / (NAUTICAL_MILE / 128)) + "/128 nm";
+    } else {
+      return v / NAUTICAL_MILE + " nm";
+    }
+  }
+}
 
 const RANGE_SCALE = 0.9; // Factor by which we fill the (w,h) canvas with the outer radar range ring
 
@@ -196,9 +220,6 @@ function hexToRGBA(hex) {
 function controlUpdate(control, controlValue) {
   if (control.name == "Range") {
     let range = parseFloat(controlValue.value);
-    if (controlValue.descriptions) {
-      rangeDescriptionsFromControl = control.descriptions;
-    }
     renderer.setRange(range);
   }
   if (control.name.startsWith("No Transmit")) {
@@ -244,24 +265,7 @@ function drawBackground(obj, txt) {
     );
     obj.background_ctx.stroke();
     if (i > 0 && obj.range) {
-      let r = Math.trunc((obj.range * i) / 4);
-      let text = rangeDescriptionsFromControl
-        ? rangeDescriptionsFromControl[r]
-        : undefined;
-      if (text === undefined) {
-        let text = rangeDescriptions ? rangeDescriptions[r] : undefined;
-      }
-      if (text === undefined) {
-        if (r % 1852 == 0) {
-          text = r / 1852 + " nm";
-        } else if (r % 1852 == 926) {
-          text = r / 1852 + " nm";
-        } else if (r % 1000 == 0) {
-          text = r / 1000 + " km";
-        } else {
-          text = r + " m";
-        }
-      }
+      let text = formatRangeValue(is_metric(obj.range), (obj.range * i) / 4);
       obj.background_ctx.fillText(
         text,
         obj.center_x + (i * obj.beam_length * 1.41) / 8,
