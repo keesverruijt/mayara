@@ -176,7 +176,7 @@ pub struct RadarInfo {
     pub serial_no: Option<String>,       // Serial # for this radar
     pub which: Option<String>,           // "A", "B" or None
     pub pixel_values: u8,                // How many values per pixel, 0..220 or so
-    pub spokes: u16,                     // How many spokes per rotation
+    pub spokes_per_revolution: u16,      // How many spokes per rotation
     pub max_spoke_len: u16,              // Fixed for some radars, variable for others
     pub addr: SocketAddrV4,              // The IP address of the radar
     pub nic_addr: Ipv4Addr,              // IPv4 address of NIC via which radar can be reached
@@ -202,7 +202,7 @@ impl RadarInfo {
         serial_no: Option<&str>,
         which: Option<&str>,
         pixel_values: u8, // How many values per pixel, 0..220 or so
-        spokes: usize,
+        spokes_per_revolution: usize,
         max_spoke_len: usize,
         addr: SocketAddrV4,
         nic_addr: Ipv4Addr,
@@ -240,7 +240,7 @@ impl RadarInfo {
             serial_no: serial_no.map(String::from),
             which: which.map(String::from),
             pixel_values,
-            spokes: spokes as u16,
+            spokes_per_revolution: spokes_per_revolution as u16,
             max_spoke_len: max_spoke_len as u16,
             addr,
             nic_addr,
@@ -519,6 +519,35 @@ struct Radars {
 
 pub struct Statistics {
     pub broken_packets: usize,
+    pub missing_spokes: usize,  // this revolution
+    pub received_spokes: usize, // this revolution
+    pub total_rotations: usize, // total number of revolutions
+}
+
+impl Statistics {
+    pub fn new() -> Self {
+        Statistics {
+            broken_packets: 0,
+            missing_spokes: 0,
+            received_spokes: 0,
+            total_rotations: 0,
+        }
+    }
+
+    pub fn full_rotation(&mut self, key: &str) {
+        self.total_rotations += 1;
+        log::debug!(
+            "{}: Full rotation #{},  {} spokes received and {} missing spokes {} broken packets",
+            key,
+            self.total_rotations,
+            self.received_spokes,
+            self.missing_spokes,
+            self.broken_packets
+        );
+        self.received_spokes = 0;
+        self.missing_spokes = 0;
+        self.broken_packets = 0;
+    }
 }
 
 #[derive(Debug, PartialEq)]

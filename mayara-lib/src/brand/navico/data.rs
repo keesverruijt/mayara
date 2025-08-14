@@ -120,6 +120,7 @@ pub struct NavicoDataReceiver {
     doppler: DopplerMode,
     pixel_to_blob: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH],
     trails: TrailBuffer,
+    prev_angle: u16,
 }
 
 impl NavicoDataReceiver {
@@ -147,13 +148,14 @@ impl NavicoDataReceiver {
         NavicoDataReceiver {
             session,
             key,
-            statistics: Statistics { broken_packets: 0 },
+            statistics: Statistics::new(),
             info,
             sock: None,
             data_update_rx,
             doppler: DopplerMode::None,
             pixel_to_blob,
             trails,
+            prev_angle: 0,
         }
     }
 
@@ -306,8 +308,6 @@ impl NavicoDataReceiver {
     }
 
     fn process_frame(&mut self, data: &mut Vec<u8>) {
-        let mut prev_angle = 0;
-
         if data.len() < FRAME_HEADER_LENGTH + RADAR_LINE_LENGTH {
             log::warn!(
                 "UDP data frame with even less than one spoke, len {} dropped",
@@ -346,10 +346,18 @@ impl NavicoDataReceiver {
                 message
                     .spokes
                     .push(self.process_spoke(range, angle, heading, spoke_slice));
-                if angle < prev_angle {
+                if angle < self.prev_angle {
                     mark_full_rotation = true;
                 }
-                prev_angle = angle;
+                if ((self.prev_angle + 1) % NAVICO_SPOKES as u16) != angle {
+                    self.statistics.missing_spokes +=
+                        (angle + NAVICO_SPOKES as u16 - self.prev_angle - 1) as usize
+                            % NAVICO_SPOKES as usize;
+                    log::trace!("{}: Spoke angle {} is not consecutive to previous angle {}, new missing spokes {}",
+                        self.key, angle, self.prev_angle, self.statistics.missing_spokes);
+                }
+                self.statistics.received_spokes += 1;
+                self.prev_angle = angle;
             } else {
                 log::warn!("Invalid spoke: header {:02X?}", &header_slice);
                 self.statistics.broken_packets += 1;
@@ -361,6 +369,7 @@ impl NavicoDataReceiver {
         if mark_full_rotation {
             let ms = self.info.full_rotation();
             self.trails.set_rotation_speed(ms);
+            self.statistics.full_rotation(&self.key);
         }
 
         let mut bytes = Vec::new();
@@ -368,6 +377,9 @@ impl NavicoDataReceiver {
             .write_to_vec(&mut bytes)
             .expect("Cannot write RadarMessage to vec");
 
+        // Send the message to all receivers, normally the web client(s)
+        // We send raw bytes to avoid encoding overhead in each web client.
+        // This strategy will change when clients want different protocols.
         match self.info.message_tx.send(bytes) {
             Err(e) => {
                 log::trace!("{}: Dropping received spoke: {}", self.key, e);

@@ -23,7 +23,7 @@ struct GeoPositionPixels {
 pub struct TrailBuffer {
     session: Session,
     legend: Legend,
-    spokes: usize,
+    spokes_per_revolution: usize,
     max_spoke_len: usize,
     trail_size: i16,
     motion_true: bool,
@@ -46,12 +46,14 @@ pub struct TrailBuffer {
 impl TrailBuffer {
     pub fn new(session: Session, info: &RadarInfo) -> Self {
         let legend = info.legend.clone();
-        let spokes = info.spokes as usize;
+        let spokes_per_revolution = info.spokes_per_revolution as usize;
         let max_spoke_len = info.max_spoke_len as usize;
         let minimal_legend_value = info.legend.strong_return;
         let trail_size: i16 = (info.max_spoke_len as i16 * 2 + MARGIN_I16 * 2) as i16;
-        let cartesian_lookup =
-            PolarToCartesianLookup::new(info.spokes as usize, info.max_spoke_len as usize);
+        let cartesian_lookup = PolarToCartesianLookup::new(
+            info.spokes_per_revolution as usize,
+            info.max_spoke_len as usize,
+        );
 
         let targets = match session.read().unwrap().args.targets {
             TargetMode::Arpa => Some(TargetBuffer::new(session.clone(), info)),
@@ -61,7 +63,7 @@ impl TrailBuffer {
         TrailBuffer {
             session: session.clone(),
             legend,
-            spokes,
+            spokes_per_revolution,
             max_spoke_len,
             trail_size,
             motion_true: false,
@@ -74,7 +76,7 @@ impl TrailBuffer {
                 trail_size as usize,
             ))),
             true_trails_offset: PointInt { x: 0, y: 0 },
-            relative_trails: Box::new(vec![0; spokes * max_spoke_len]),
+            relative_trails: Box::new(vec![0; spokes_per_revolution * max_spoke_len]),
             targets,
             trail_length_ms: 0,
             rotation_speed_ms: 0,
@@ -587,7 +589,7 @@ impl TrailBuffer {
     fn zoom_relative_trails(&mut self, zoom_factor: f64) {
         let mut new_trail = vec![0; self.max_spoke_len];
         let mut index_prev = 0;
-        for spoke in 0..self.spokes {
+        for spoke in 0..self.spokes_per_revolution {
             {
                 let trail = &self.relative_trails
                     [spoke * self.max_spoke_len..(spoke + 1) * self.max_spoke_len];

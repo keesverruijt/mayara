@@ -1,6 +1,6 @@
 "use strict";
 
-export { RANGE_SCALE };
+export { RANGE_SCALE, formatRangeValue, is_metric };
 
 import {
   loadRadar,
@@ -135,14 +135,14 @@ function restart(id) {
 
 function radarLoaded(r) {
   let maxSpokeLen = r.maxSpokeLen;
-  let spokes = r.spokes;
+  let spokes_per_revolution = r.spokes_per_revolution;
   let prev_angle = -1;
 
   if (r === undefined || r.controls === undefined) {
     return;
   }
   renderer.setLegend(expandLegend(r.legend));
-  renderer.setSpokes(spokes, maxSpokeLen);
+  renderer.setSpokes(spokes_per_revolution, maxSpokeLen);
 
   webSocket = new WebSocket(r.streamUrl);
   webSocket.binaryType = "arraybuffer";
@@ -168,7 +168,11 @@ function radarLoaded(r) {
           if (prev_angle > -1) {
             let new_angle = spoke.angle;
             if (prev_angle > new_angle) {
-              for (let angle = prev_angle + 1; angle < spokes; angle++) {
+              for (
+                let angle = prev_angle + 1;
+                angle < spokes_per_revolution;
+                angle++
+              ) {
                 spoke.angle = angle;
                 renderer.drawSpoke(spoke);
               }
@@ -284,8 +288,8 @@ function drawBackground(obj, txt) {
           obj.center_x,
           obj.center_y,
           obj.beam_length * 2,
-          (2 * Math.PI * e[0]) / obj.spokes,
-          (2 * Math.PI * e[1]) / obj.spokes
+          (2 * Math.PI * e[0]) / obj.spokes_per_revolution,
+          (2 * Math.PI * e[1]) / obj.spokes_per_revolution
         );
         obj.background_ctx.fill();
       }

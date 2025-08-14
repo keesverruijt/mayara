@@ -140,7 +140,7 @@ impl RaymarineLocatorState {
                         }
                     }
 
-                    let (spokes, max_spoke_len) = match model {
+                    let (spokes_per_revolution, max_spoke_len) = match model {
                         Model::Quantum => (QUANTUM_SPOKES, QUANTUM_SPOKE_LEN),
                         Model::Eseries => (ESERIES_SPOKES, ESERIES_SPOKE_LEN),
                     };
@@ -154,7 +154,7 @@ impl RaymarineLocatorState {
                         None,
                         None,
                         16,
-                        spokes,
+                        spokes_per_revolution,
                         max_spoke_len,
                         radar_addr.into(),
                         from.clone(),
@@ -337,7 +337,9 @@ impl RadarLocatorState for RaymarineLocatorState {
 }
 
 #[derive(Clone)]
-struct RaymarineLocator {session: Session}
+struct RaymarineLocator {
+    session: Session,
+}
 
 #[async_trait]
 impl RadarLocator for RaymarineLocator {
@@ -355,7 +357,7 @@ impl RadarLocator for RaymarineLocator {
 }
 
 pub fn create_locator(session: Session) -> Box<dyn RadarLocator + Send> {
-    let locator = RaymarineLocator {session};
+    let locator = RaymarineLocator { session };
     Box::new(locator)
 }
 

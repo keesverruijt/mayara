@@ -1,6 +1,6 @@
 export { render_webgl_alt };
 
-import { RANGE_SCALE } from "./viewer.js";
+import { RANGE_SCALE, formatRangeValue, is_metric } from "./viewer.js";
 
 class render_webgl_alt {
   // The constructor gets two canvases, the real drawing one and one for background data
@@ -113,16 +113,16 @@ class render_webgl_alt {
     if (h < 0) {
       h += 360;
     }
-    angle += Math.round(h / (360 / this.spokes)); // add heading
-    angle = angle % this.spokes;
+    angle += Math.round(h / (360 / this.spokes_per_revolution)); // add heading
+    angle = angle % this.spokes_per_revolution;
     return angle;
   }
 
   // This is called as soon as it is clear what the number of spokes and their max length is
   // Some brand vary the spoke length with data or range, but a promise is made about the
   // max length.
-  setSpokes(spokes, max_spoke_len) {
-    this.spokes = spokes;
+  setSpokes(spokes_per_revolution, max_spoke_len) {
+    this.spokes_per_revolution = spokes_per_revolution;
     this.max_spoke_len = max_spoke_len;
 
     //build positions
@@ -131,11 +131,11 @@ class render_webgl_alt {
     const cx = 0;
     const cy = 0;
     const maxRadius = 1;
-    const angleShift = (2 * Math.PI) / this.spokes / 2;
+    const angleShift = (2 * Math.PI) / this.spokes_per_revolution / 2;
     const radiusShift = 0.0; // (1 / this.max_spoke_len)/2
-    for (let a = 0; a < this.spokes; a++) {
+    for (let a = 0; a < this.spokes_per_revolution; a++) {
       for (let r = 0; r < this.max_spoke_len; r++) {
-        const angle = a * ((2 * Math.PI) / this.spokes) + angleShift;
+        const angle = a * ((2 * Math.PI) / this.spokes_per_revolution) + angleShift;
         const radius = r * (maxRadius / this.max_spoke_len);
         const x1 = cx + (radius + radiusShift) * Math.cos(angle);
         const y1 = cy + (radius + radiusShift) * Math.sin(angle);
@@ -171,8 +171,8 @@ class render_webgl_alt {
 
   // A new spoke has been received.
   // The spoke object contains:
-  // - angle: the angle [0, max_spokes> relative to the front of the boat, clockwise.
-  // - bearing: optional angle [0, max_spokes> relative to true north.
+  // - angle: the angle [0, spokes_per_revolution> relative to the front of the boat, clockwise.
+  // - bearing: optional angle [0, spokes_per_revolution> relative to true north.
   // - range: actual range for furthest pixel, this can be (very) different from the
   //          official range passed via range().
   // - data: spoke data from closest to furthest from radome. Each byte value can be
@@ -191,7 +191,7 @@ class render_webgl_alt {
       ? spoke.bearing
       : this.#angleToBearing(spoke.angle);
     let ba = spokeBearing + 1;
-    if (ba > this.spokes - 1) {
+    if (ba > this.spokes_per_revolution - 1) {
       ba = 0;
     }
     // draw current spoke
@@ -317,7 +317,11 @@ class render_webgl_alt {
 
     this.background_ctx.fillStyle = "lightgreen";
     this.background_ctx.fillText("Beamlength " + this.beam_length, 5, 40);
-    this.background_ctx.fillText("Range " + this.range, 5, 60);
+    this.background_ctx.fillText(
+      "Range " + formatRangeValue(is_metric(this.range), this.range),
+      5,
+      60
+    );
     this.background_ctx.fillText("Spoke " + this.actual_range, 5, 80);
   }
 }

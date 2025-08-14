@@ -31,8 +31,8 @@ impl Polar {
         Polar { angle, r, time }
     }
 
-    pub fn angle_in_rad(&self, spokes: f64) -> f64 {
-        self.angle as f64 * PI / 180. / spokes
+    pub fn angle_in_rad(&self, spokes_per_revolution: f64) -> f64 {
+        self.angle as f64 * PI / 180. / spokes_per_revolution
     }
 
     // Is the polar angle between start and end, where
@@ -91,7 +91,7 @@ pub struct KalmanFilter {
     r: Matrix2x2,
     k: Matrix4x2,
     i: Matrix4x4,
-    pub spokes: f64,
+    pub spokes_per_revolution: f64,
 }
 
 impl KalmanFilter {
@@ -100,7 +100,7 @@ impl KalmanFilter {
     // f is the state transformation function Xk <- Xk-1
     // Ai,j is jacobian matrix dfi / dxj
 
-    pub fn new(spokes: usize) -> Self {
+    pub fn new(spokes_per_revolution: usize) -> Self {
         let mut f = KalmanFilter {
             a: Matrix4x4::identity(),
             at: Matrix4x4::identity(),
@@ -113,7 +113,7 @@ impl KalmanFilter {
             r: Matrix2x2::zeros(),
             k: Matrix4x2::zeros(),
             i: Matrix4x4::identity(),
-            spokes: spokes as f64,
+            spokes_per_revolution: spokes_per_revolution as f64,
         };
         f.reset_filter();
         f
@@ -134,7 +134,7 @@ impl KalmanFilter {
 
         // Observation matrix, jacobian of observation function h
         // dhi / dvj
-        // angle = atan2 (lat,lon) * self.spokes / (2 * pi) + v1
+        // angle = atan2 (lat,lon) * self.spokes_per_revolution / (2 * pi) + v1
         // r = sqrt(x * x + y * y) + v2
         // v is measurement noise
         self.h = Matrix2x4::zeros();
@@ -203,7 +203,7 @@ impl KalmanFilter {
         let q_sum: f64 = local_position.pos.lon * local_position.pos.lon
             + local_position.pos.lat * local_position.pos.lat;
 
-        let c: f64 = self.spokes / (2. * PI);
+        let c: f64 = self.spokes_per_revolution / (2. * PI);
         self.h[(0, 0)] = -c * local_position.pos.lon / q_sum;
         self.h[(0, 1)] = c * local_position.pos.lat / q_sum;
 
@@ -214,11 +214,11 @@ impl KalmanFilter {
         self.ht = self.h.transpose();
 
         let mut a = (pol.angle - expected.angle) as f64; // Z is  difference between measured and expected
-        if a > self.spokes / 2. {
-            a -= self.spokes;
+        if a > self.spokes_per_revolution / 2. {
+            a -= self.spokes_per_revolution;
         }
-        if a < -self.spokes / 2. {
-            a += self.spokes;
+        if a < -self.spokes_per_revolution / 2. {
+            a += self.spokes_per_revolution;
         }
         let b = (pol.r - expected.r) as f64;
         let z = SMatrix::<f64, 2, 1>::new(a, b);

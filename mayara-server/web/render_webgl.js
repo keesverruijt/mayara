@@ -1,6 +1,6 @@
 export { render_webgl };
 
-import { RANGE_SCALE } from "./viewer.js";
+import { RANGE_SCALE, formatRangeValue, is_metric } from "./viewer.js";
 
 class render_webgl {
   // The constructor gets two canvases, the real drawing one and one for background data
@@ -72,10 +72,10 @@ class render_webgl {
   // This is called as soon as it is clear what the number of spokes and their max length is
   // Some brand vary the spoke length with data or range, but a promise is made about the
   // max length.
-  setSpokes(spokes, max_spoke_len) {
-    this.spokes = spokes;
+  setSpokes(spokes_per_revolution, max_spoke_len) {
+    this.spokes_per_revolution = spokes_per_revolution;
     this.max_spoke_len = max_spoke_len;
-    this.data = loadTexture(this.gl, spokes, max_spoke_len);
+    this.data = loadTexture(this.gl, spokes_per_revolution, max_spoke_len);
   }
 
   setRange(range) {
@@ -87,10 +87,8 @@ class render_webgl {
   // The index is the byte value in the spoke.
   // Each entry contains a four byte array of colors and alpha (x,y,z,a).
   setLegend(l) {
-    // Create a Uint8Array to hold RGBA data for the color table
     const colorTableData = new Uint8Array(256 * 4); // RGBA for each index
 
-    // Fill the array with example color data (you would replace this with your actual RGBA data)
     for (let i = 0; i < l.length; i++) {
       colorTableData[i * 4] = l[i][0]; // Red channel
       colorTableData[i * 4 + 1] = l[i][1];
@@ -103,8 +101,8 @@ class render_webgl {
 
   // A new spoke has been received.
   // The spoke object contains:
-  // - angle: the angle [0, max_spokes> relative to the front of the boat, clockwise.
-  // - bearing: optional angle [0, max_spokes> relative to true north.
+  // - angle: the angle [0, spokes_per_revolution> relative to the front of the boat, clockwise.
+  // - bearing: optional angle [0, spokes_per_revolution> relative to true north.
   // - range: actual range for furthest pixel, this can be (very) different from the
   //          official range passed via range().
   // - data: spoke data from closest to furthest from radome. Each byte value can be
@@ -131,11 +129,16 @@ class render_webgl {
   // A number of spokes has been received and now is a good time to render
   // them to the screen. Usually every 14-32 spokes.
   render() {
-    if (!this.data || !this.spokes) {
+    if (!this.data || !this.spokes_per_revolution) {
       return;
     }
     let gl = this.gl;
-    updateTexture(gl, this.data, this.spokes, this.max_spoke_len);
+    updateTexture(
+      gl,
+      this.data,
+      this.spokes_per_revolution,
+      this.max_spoke_len
+    );
     draw(gl);
   }
 
@@ -220,7 +223,11 @@ class render_webgl {
 
     this.background_ctx.fillStyle = "lightgreen";
     this.background_ctx.fillText("Beamlength " + this.beam_length, 5, 40);
-    this.background_ctx.fillText("Range " + this.range, 5, 60);
+    this.background_ctx.fillText(
+      "Range " + formatRangeValue(is_metric(this.range), this.range),
+      5,
+      60
+    );
     this.background_ctx.fillText("Spoke " + this.actual_range, 5, 80);
   }
 }
@@ -302,20 +309,20 @@ function draw(gl) {
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
 
-function loadTexture(gl, spokes, max_spoke_len) {
-  let data = new Uint8Array(spokes * max_spoke_len);
+function loadTexture(gl, spokes_per_revolution, max_spoke_len) {
+  let data = new Uint8Array(spokes_per_revolution * max_spoke_len);
 
   return data;
 }
 
-function updateTexture(gl, data, spokes, max_spoke_len) {
+function updateTexture(gl, data, spokes_per_revolution, max_spoke_len) {
   gl.activeTexture(gl.TEXTURE0);
   gl.texImage2D(
     gl.TEXTURE_2D,
     0,
     gl.R8,
     max_spoke_len,
-    spokes,
+    spokes_per_revolution,
     0,
     gl.RED,
     gl.UNSIGNED_BYTE,

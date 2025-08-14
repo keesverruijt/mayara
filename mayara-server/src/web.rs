@@ -115,7 +115,7 @@ impl Web {
 struct RadarApi {
     id: String,
     name: String,
-    spokes: u16,
+    spokes_per_revolution: u16,
     max_spoke_len: u16,
     stream_url: String,
     control_url: String,
@@ -127,7 +127,7 @@ impl RadarApi {
     fn new(
         id: String,
         name: String,
-        spokes: u16,
+        spokes_per_revolution: u16,
         max_spoke_len: u16,
         stream_url: String,
         control_url: String,
@@ -137,7 +137,7 @@ impl RadarApi {
         RadarApi {
             id: id,
             name: name,
-            spokes,
+            spokes_per_revolution,
             max_spoke_len,
             stream_url,
             control_url,
@@ -149,7 +149,7 @@ impl RadarApi {
 
 //
 // Signal K radar API says this returns something like:
-//    {"radar-0":{"id":"radar-0","name":"Navico","spokes":2048,"maxSpokeLen":1024,"streamUrl":"http://localhost:3001/v1/api/stream/radar-0"}}
+//    {"radar-0":{"id":"radar-0","name":"Navico","spokes_per_revolution":2048,"maxSpokeLen":1024,"streamUrl":"http://localhost:3001/v1/api/stream/radar-0"}}
 //
 #[debug_handler]
 async fn get_radars(
@@ -194,7 +194,7 @@ async fn get_radars(
         let v = RadarApi::new(
             id.to_owned(),
             name,
-            info.spokes,
+            info.spokes_per_revolution,
             info.max_spoke_len,
             stream_url,
             control_url,

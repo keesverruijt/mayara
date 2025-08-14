@@ -230,9 +230,10 @@ pub struct TargetBuffer {
     course_samples: u16,
 
     // If we have just received angle <n>
-    // then we look for refreshed targets in <n + spokes/4> .. <n + spokes / 2>
+    // then we look for refreshed targets in <n + spokes_per_revolution/4> .. <n +
+    // spokes_per_revolution / 2>
     scanned_angle: i32,
-    // and we scan for new targets at <n + 3/4 * spokes> (SCAN_FOR_NEW_PERCENTAGE)
+    // and we scan for new targets at <n + 3/4 * spokes_per_revolution> (SCAN_FOR_NEW_PERCENTAGE)
     refreshed_angle: i32,
 }
 
@@ -243,8 +244,8 @@ const SCAN_FOR_NEW_PERCENTAGE: i32 = 75;
 #[derive(Debug, Clone)]
 pub(self) struct TargetSetup {
     radar_id: usize,
-    spokes: i32,
-    spokes_f64: f64,
+    spokes_per_revolution: i32,
+    spokes_per_revolution_f64: f64,
     spoke_len: i32,
     have_doppler: bool,
     pixels_per_meter: f64,
@@ -329,11 +330,11 @@ impl HistorySpoke {
 }
 
 impl HistorySpokes {
-    fn new(session: Session, spokes: i32, spoke_len: i32) -> Self {
+    fn new(session: Session, spokes_per_revolution: i32, spoke_len: i32) -> Self {
         let stationary = session.read().unwrap().args.stationary;
         log::debug!(
             "creating HistorySpokes ({} x {}) stationary: {}",
-            spokes,
+            spokes_per_revolution,
             spoke_len,
             stationary
         );
@@ -344,11 +345,11 @@ impl HistorySpokes {
                     0,
                     GeoPosition::new(0., 0.)
                 );
-                spokes as usize
+                spokes_per_revolution as usize
             ]),
             stationary_layer: if stationary {
                 Some(Box::new(Array2::<u8>::zeros((
-                    spokes as usize,
+                    spokes_per_revolution as usize,
                     spoke_len as usize,
                 ))))
             } else {
@@ -755,15 +756,15 @@ impl HistorySpokes {
 impl TargetSetup {
     pub fn polar2pos(&self, pol: &Polar, own_ship: &ExtendedPosition) -> ExtendedPosition {
         // The "own_ship" in the function call can be the position at an earlier time than the current position
-        // converts in a radar image angular data r ( 0 - max_spoke_len ) and angle (0 - max_spokes) to position (lat, lon)
+        // converts in a radar image angular data r ( 0 - max_spoke_len ) and angle (0 - spokes_per_revolution) to position (lat, lon)
         // based on the own ship position own_ship
         let mut pos: ExtendedPosition = own_ship.clone();
         // should be revised, use Mercator formula PositionBearingDistanceMercator()  TODO
         pos.pos.lat += (pol.r as f64 / self.pixels_per_meter)  // Scale to fraction of distance from radar
-                                       * pol.angle_in_rad(self.spokes_f64).cos()
+                                       * pol.angle_in_rad(self.spokes_per_revolution_f64).cos()
             / METERS_PER_DEGREE_LATITUDE;
         pos.pos.lon += (pol.r as f64 / self.pixels_per_meter)  // Scale to fraction of distance to radar
-                                       * pol.angle_in_rad(self.spokes_f64).sin()
+                                       * pol.angle_in_rad(self.spokes_per_revolution_f64).sin()
             / meters_per_degree_longitude(&own_ship.pos.lat);
         pos
     }
@@ -777,35 +778,36 @@ impl TargetSetup {
             * METERS_PER_DEGREE_LATITUDE
             * self.pixels_per_meter
             + 1.) as i32;
-        let mut angle = f64::atan2(dif_lon, dif_lat) * self.spokes_f64 / (2. * PI) + 1.; // + 1 to minimize rounding errors
+        let mut angle =
+            f64::atan2(dif_lon, dif_lat) * self.spokes_per_revolution_f64 / (2. * PI) + 1.; // + 1 to minimize rounding errors
         if angle < 0. {
-            angle += self.spokes_f64;
+            angle += self.spokes_per_revolution_f64;
         }
         return Polar::new(angle as i32, r, p.time);
     }
 
     pub fn mod_spokes(&self, angle: i32) -> i32 {
-        (angle + self.spokes) % self.spokes
+        (angle + self.spokes_per_revolution) % self.spokes_per_revolution
     }
 
     /// Number of sweeps that a next scan of the target may have moved, 1/10th of circle
     pub fn scan_margin(&self) -> i32 {
-        self.spokes / 10
+        self.spokes_per_revolution / 10
     }
 }
 
 impl TargetBuffer {
     pub fn new(session: Session, info: &RadarInfo) -> Self {
         let stationary = session.read().unwrap().args.stationary;
-        let spokes = info.spokes as i32;
+        let spokes_per_revolution = info.spokes_per_revolution as i32;
         let spoke_len = info.max_spoke_len as i32;
 
         TargetBuffer {
             session: session.clone(),
             setup: TargetSetup {
                 radar_id: info.id,
-                spokes,
-                spokes_f64: spokes as f64,
+                spokes_per_revolution,
+                spokes_per_revolution_f64: spokes_per_revolution as f64,
                 spoke_len,
                 have_doppler: info.doppler,
                 pixels_per_meter: 0.0,
@@ -816,7 +818,7 @@ impl TargetBuffer {
             next_target_id: 0,
             arpa_via_doppler: false,
 
-            history: HistorySpokes::new(session.clone(), spokes, spoke_len),
+            history: HistorySpokes::new(session.clone(), spokes_per_revolution, spoke_len),
             targets: Arc::new(RwLock::new(HashMap::new())),
             m_clear_contours: false,
             m_auto_learn_state: 0,
@@ -845,7 +847,7 @@ impl TargetBuffer {
     fn reset_history(&mut self) {
         self.history = HistorySpokes::new(
             self.session.clone(),
-            self.setup.spokes,
+            self.setup.spokes_per_revolution,
             self.setup.spoke_len,
         );
     }
@@ -924,7 +926,7 @@ impl TargetBuffer {
             target_pos,
             GeoPosition::new(0., 0.),
             id,
-            self.setup.spokes as usize,
+            self.setup.spokes_per_revolution as usize,
             status,
             self.setup.have_doppler,
         );
@@ -1233,7 +1235,7 @@ impl TargetBuffer {
 
     fn sample_course(&mut self, bearing: &Option<u32>) {
         let hdt = bearing
-            .map(|x| x as f64 / self.setup.spokes_f64)
+            .map(|x| x as f64 / self.setup.spokes_per_revolution_f64)
             .or_else(|| navdata::get_heading_true());
 
         if let Some(mut hdt) = hdt {
@@ -1270,7 +1272,7 @@ impl TargetBuffer {
             epos,
             own_pos,
             uid,
-            self.setup.spokes as usize,
+            self.setup.spokes_per_revolution as usize,
             status,
             *doppler == Doppler::AnyDoppler,
         );
@@ -1282,14 +1284,14 @@ impl TargetBuffer {
     /// Work on the targets when spoke `angle` has just been processed.
     /// We look for targets a while back, so one quarter rotation ago.
     fn detect_doppler_arpa(&mut self, angle: usize) {
-        let end_angle = self
-            .setup
-            .mod_spokes(angle as i32 + SCAN_FOR_NEW_PERCENTAGE * self.setup.spokes / 100);
+        let end_angle = self.setup.mod_spokes(
+            angle as i32 + SCAN_FOR_NEW_PERCENTAGE * self.setup.spokes_per_revolution / 100,
+        );
 
         if self.scanned_angle == -1 {
-            self.scanned_angle = self
-                .setup
-                .mod_spokes(angle as i32 + REFRESH_END_PERCENTAGE * self.setup.spokes / 100);
+            self.scanned_angle = self.setup.mod_spokes(
+                angle as i32 + REFRESH_END_PERCENTAGE * self.setup.spokes_per_revolution / 100,
+            );
         }
 
         let mut angle = self.scanned_angle;
@@ -1321,14 +1323,14 @@ impl TargetBuffer {
     /// Work on the targets when spoke `angle` has just been processed.
     /// Refresh older targets from 3 quarters to 2 quarters before what is just received.
     fn refresh_targets(&mut self, angle: usize) {
-        let end_angle = self
-            .setup
-            .mod_spokes(angle as i32 + REFRESH_END_PERCENTAGE * self.setup.spokes / 100);
+        let end_angle = self.setup.mod_spokes(
+            angle as i32 + REFRESH_END_PERCENTAGE * self.setup.spokes_per_revolution / 100,
+        );
 
         if self.refreshed_angle == -1 {
-            self.refreshed_angle = self
-                .setup
-                .mod_spokes(angle as i32 + REFRESH_START_PERCENTAGE * self.setup.spokes / 100);
+            self.refreshed_angle = self.setup.mod_spokes(
+                angle as i32 + REFRESH_START_PERCENTAGE * self.setup.spokes_per_revolution / 100,
+            );
         }
 
         self.refresh_all_arpa_targets(self.refreshed_angle, end_angle);
@@ -1451,7 +1453,7 @@ impl ArpaTarget {
         position: ExtendedPosition,
         radar_pos: GeoPosition,
         uid: usize,
-        spokes: usize,
+        spokes_per_revolution: usize,
         m_status: TargetStatus,
         have_doppler: bool,
     ) -> Self {
@@ -1471,7 +1473,7 @@ impl ArpaTarget {
             m_refreshed: RefreshState::NotFound,
             m_target_id: uid,
             m_transferred_target: false,
-            m_kalman: KalmanFilter::new(spokes),
+            m_kalman: KalmanFilter::new(spokes_per_revolution),
             contour: Contour::new(),
             m_total_pix: 0,
             m_approaching_pix: 0,
@@ -1636,7 +1638,8 @@ impl ArpaTarget {
                                                         // now set the polar to expected angular position from the expected local position
 
         pol.angle = setup.mod_spokes(
-            (f64::atan2(x_local.pos.lon, x_local.pos.lat) * setup.spokes_f64 / (2. * PI)) as i32,
+            (f64::atan2(x_local.pos.lon, x_local.pos.lat) * setup.spokes_per_revolution_f64
+                / (2. * PI)) as i32,
         );
         pol.r = ((x_local.pos.lat * x_local.pos.lat + x_local.pos.lon * x_local.pos.lon).sqrt()
             * setup.pixels_per_meter) as i32;
