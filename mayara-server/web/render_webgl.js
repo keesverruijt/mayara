@@ -72,10 +72,10 @@ class render_webgl {
   // This is called as soon as it is clear what the number of spokes and their max length is
   // Some brand vary the spoke length with data or range, but a promise is made about the
   // max length.
-  setSpokes(spokes_per_revolution, max_spoke_len) {
-    this.spokes_per_revolution = spokes_per_revolution;
+  setSpokes(spokesPerRevolution, max_spoke_len) {
+    this.spokesPerRevolution = spokesPerRevolution;
     this.max_spoke_len = max_spoke_len;
-    this.data = loadTexture(this.gl, spokes_per_revolution, max_spoke_len);
+    this.data = loadTexture(this.gl, spokesPerRevolution, max_spoke_len);
   }
 
   setRange(range) {
@@ -101,8 +101,8 @@ class render_webgl {
 
   // A new spoke has been received.
   // The spoke object contains:
-  // - angle: the angle [0, spokes_per_revolution> relative to the front of the boat, clockwise.
-  // - bearing: optional angle [0, spokes_per_revolution> relative to true north.
+  // - angle: the angle [0, spokesPerRevolution> relative to the front of the boat, clockwise.
+  // - bearing: optional angle [0, spokesPerRevolution> relative to true north.
   // - range: actual range for furthest pixel, this can be (very) different from the
   //          official range passed via range().
   // - data: spoke data from closest to furthest from radome. Each byte value can be
@@ -129,16 +129,11 @@ class render_webgl {
   // A number of spokes has been received and now is a good time to render
   // them to the screen. Usually every 14-32 spokes.
   render() {
-    if (!this.data || !this.spokes_per_revolution) {
+    if (!this.data || !this.spokesPerRevolution) {
       return;
     }
     let gl = this.gl;
-    updateTexture(
-      gl,
-      this.data,
-      this.spokes_per_revolution,
-      this.max_spoke_len
-    );
+    updateTexture(gl, this.data, this.spokesPerRevolution, this.max_spoke_len);
     draw(gl);
   }
 
@@ -309,20 +304,20 @@ function draw(gl) {
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
 
-function loadTexture(gl, spokes_per_revolution, max_spoke_len) {
-  let data = new Uint8Array(spokes_per_revolution * max_spoke_len);
+function loadTexture(gl, spokesPerRevolution, max_spoke_len) {
+  let data = new Uint8Array(spokesPerRevolution * max_spoke_len);
 
   return data;
 }
 
-function updateTexture(gl, data, spokes_per_revolution, max_spoke_len) {
+function updateTexture(gl, data, spokesPerRevolution, max_spoke_len) {
   gl.activeTexture(gl.TEXTURE0);
   gl.texImage2D(
     gl.TEXTURE_2D,
     0,
     gl.R8,
     max_spoke_len,
-    spokes_per_revolution,
+    spokesPerRevolution,
     0,
     gl.RED,
     gl.UNSIGNED_BYTE,

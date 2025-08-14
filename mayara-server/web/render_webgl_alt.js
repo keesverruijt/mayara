@@ -113,16 +113,16 @@ class render_webgl_alt {
     if (h < 0) {
       h += 360;
     }
-    angle += Math.round(h / (360 / this.spokes_per_revolution)); // add heading
-    angle = angle % this.spokes_per_revolution;
+    angle += Math.round(h / (360 / this.spokesPerRevolution)); // add heading
+    angle = angle % this.spokesPerRevolution;
     return angle;
   }
 
   // This is called as soon as it is clear what the number of spokes and their max length is
   // Some brand vary the spoke length with data or range, but a promise is made about the
   // max length.
-  setSpokes(spokes_per_revolution, max_spoke_len) {
-    this.spokes_per_revolution = spokes_per_revolution;
+  setSpokes(spokesPerRevolution, max_spoke_len) {
+    this.spokesPerRevolution = spokesPerRevolution;
     this.max_spoke_len = max_spoke_len;
 
     //build positions
@@ -131,11 +131,12 @@ class render_webgl_alt {
     const cx = 0;
     const cy = 0;
     const maxRadius = 1;
-    const angleShift = (2 * Math.PI) / this.spokes_per_revolution / 2;
+    const angleShift = (2 * Math.PI) / this.spokesPerRevolution / 2;
     const radiusShift = 0.0; // (1 / this.max_spoke_len)/2
-    for (let a = 0; a < this.spokes_per_revolution; a++) {
+    for (let a = 0; a < this.spokesPerRevolution; a++) {
       for (let r = 0; r < this.max_spoke_len; r++) {
-        const angle = a * ((2 * Math.PI) / this.spokes_per_revolution) + angleShift;
+        const angle =
+          a * ((2 * Math.PI) / this.spokesPerRevolution) + angleShift;
         const radius = r * (maxRadius / this.max_spoke_len);
         const x1 = cx + (radius + radiusShift) * Math.cos(angle);
         const y1 = cy + (radius + radiusShift) * Math.sin(angle);
@@ -171,8 +172,8 @@ class render_webgl_alt {
 
   // A new spoke has been received.
   // The spoke object contains:
-  // - angle: the angle [0, spokes_per_revolution> relative to the front of the boat, clockwise.
-  // - bearing: optional angle [0, spokes_per_revolution> relative to true north.
+  // - angle: the angle [0, spokesPerRevolution> relative to the front of the boat, clockwise.
+  // - bearing: optional angle [0, spokesPerRevolution> relative to true north.
   // - range: actual range for furthest pixel, this can be (very) different from the
   //          official range passed via range().
   // - data: spoke data from closest to furthest from radome. Each byte value can be
@@ -191,7 +192,7 @@ class render_webgl_alt {
       ? spoke.bearing
       : this.#angleToBearing(spoke.angle);
     let ba = spokeBearing + 1;
-    if (ba > this.spokes_per_revolution - 1) {
+    if (ba > this.spokesPerRevolution - 1) {
       ba = 0;
     }
     // draw current spoke

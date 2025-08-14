@@ -15,8 +15,8 @@ class render_2d {
   // This is called as soon as it is clear what the number of spokes and their max length is
   // Some brand vary the spoke length with data or range, but a promise is made about the
   // max length.
-  setSpokes(spokes_per_revolution, max_spoke_len) {
-    this.spokes_per_revolution = spokes_per_revolution;
+  setSpokes(spokesPerRevolution, max_spoke_len) {
+    this.spokesPerRevolution = spokesPerRevolution;
     this.max_spoke_len = max_spoke_len;
   }
 
@@ -65,16 +65,19 @@ class render_2d {
 
   // A new spoke has been received.
   // The spoke object contains:
-  // - angle: the angle [0, spokes_per_revolution> relative to the front of the boat, clockwise.
-  // - bearing: optional angle [0, spokes_per_revolution> relative to true north.
+  // - angle: the angle [0, spokesPerRevolution> relative to the front of the boat, clockwise.
+  // - bearing: optional angle [0, spokesPerRevolution> relative to true north.
   // - range: actual range for furthest pixel, this can be (very) different from the
   //          official range passed via range().
   // - data: spoke data from closest to furthest from radome. Each byte value can be
   //         looked up in the legend.
   drawSpoke(spoke) {
     let a =
-      (2 * Math.PI * ((spoke.angle + (this.spokes_per_revolution * 3) / 4) % this.spokes_per_revolution)) /
-      this.spokes_per_revolution;
+      (2 *
+        Math.PI *
+        ((spoke.angle + (this.spokesPerRevolution * 3) / 4) %
+          this.spokesPerRevolution)) /
+      this.spokesPerRevolution;
     let pixels_per_item = (this.beam_length * RANGE_SCALE) / spoke.data.length;
     if (this.range) {
       pixels_per_item = (pixels_per_item * spoke.range) / this.range;
@@ -95,7 +98,7 @@ class render_2d {
 
     let pattern = this.ctx.createPattern(this.pattern, "repeat-x");
 
-    let arc_angle = (2 * Math.PI) / this.spokes_per_revolution;
+    let arc_angle = (2 * Math.PI) / this.spokesPerRevolution;
 
     this.ctx.setTransform(c, s, -s, c, this.center_x, this.center_y);
     this.ctx.fillStyle = pattern;

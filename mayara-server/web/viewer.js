@@ -18,7 +18,7 @@ import { render_webgl_alt } from "./render_webgl_alt.js";
 var webSocket;
 var RadarMessage;
 var renderer;
-var noTransmitAngles;
+var noTransmitAngles = Array();
 
 function divides_near(a, b) {
   let remainder = a % b;
@@ -135,14 +135,14 @@ function restart(id) {
 
 function radarLoaded(r) {
   let maxSpokeLen = r.maxSpokeLen;
-  let spokes_per_revolution = r.spokes_per_revolution;
+  let spokesPerRevolution = r.spokesPerRevolution;
   let prev_angle = -1;
 
   if (r === undefined || r.controls === undefined) {
     return;
   }
   renderer.setLegend(expandLegend(r.legend));
-  renderer.setSpokes(spokes_per_revolution, maxSpokeLen);
+  renderer.setSpokes(spokesPerRevolution, maxSpokeLen);
 
   webSocket = new WebSocket(r.streamUrl);
   webSocket.binaryType = "arraybuffer";
@@ -163,28 +163,36 @@ function radarLoaded(r) {
         for (let i = 0; i < message.spokes.length; i++) {
           let spoke = message.spokes[i];
 
-          // The number of spokes actually sent is usually lower than the stated angles,
-          // fill out the spokes between prev_angle and spoke.angle by repeating the spoke X times.
-          if (prev_angle > -1) {
-            let new_angle = spoke.angle;
-            if (prev_angle > new_angle) {
+          // The number of spokes actually sent can be lower than the stated angles,
+          // fill out the spokes between prev_angle and spoke.angle by generating a blankish spoke.
+          if (
+            prev_angle > -1 &&
+            (prev_angle + 1) % spokesPerRevolution != spoke.angle
+          ) {
+            prev_angle = (prev_angle + 1) % spokesPerRevolution;
+            let empty_spoke = {
+              angle: prev_angle,
+              bearing: spoke.bearing,
+              range: spoke.range,
+              data: new Uint8Array(maxSpokeLen).fill(1),
+            };
+            if (prev_angle > spoke.angle) {
               for (
                 let angle = prev_angle + 1;
-                angle < spokes_per_revolution;
+                angle < spokesPerRevolution;
                 angle++
               ) {
-                spoke.angle = angle;
-                renderer.drawSpoke(spoke);
+                empty_spoke.angle = angle;
+                renderer.drawSpoke(empty_spoke);
               }
-              prev_angle = 0;
+              prev_angle = -1; // Reset to -1 so we can start at 0 again
             }
-            if (prev_angle < new_angle) {
-              for (let angle = prev_angle + 1; angle < new_angle; angle++) {
-                spoke.angle = angle;
-                renderer.drawSpoke(spoke);
+            if (prev_angle < spoke.angle) {
+              for (let angle = prev_angle + 1; angle < spoke.angle; angle++) {
+                empty_spoke.angle = angle;
+                renderer.drawSpoke(empty_spoke);
               }
             }
-            spoke.angle = new_angle;
           }
           renderer.drawSpoke(spoke);
           prev_angle = spoke.angle;
@@ -288,8 +296,8 @@ function drawBackground(obj, txt) {
           obj.center_x,
           obj.center_y,
           obj.beam_length * 2,
-          (2 * Math.PI * e[0]) / obj.spokes_per_revolution,
-          (2 * Math.PI * e[1]) / obj.spokes_per_revolution
+          (2 * Math.PI * e[0]) / obj.spokesPerRevolution,
+          (2 * Math.PI * e[1]) / obj.spokesPerRevolution
         );
         obj.background_ctx.fill();
       }
