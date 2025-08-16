@@ -172,7 +172,7 @@ impl Locator {
             let sockets = self.create_listen_sockets(&listen_addresses, &mut interface_state);
             let mut set = JoinSet::new();
             if sockets.is_err() {
-                if self.session.read().unwrap().args.interface.is_some() {
+                if self.args.interface.is_some() {
                     return Err(sockets.err().unwrap());
                 }
                 log::debug!("No NIC addresses found");
@@ -257,7 +257,7 @@ impl Locator {
                                         break;
                                     }
                                     RadarError::Timeout => {
-                                        if !self.session.read().unwrap().args.replay {
+                                        if !self.args.replay {
                                             let _ = send_beacon_requests(
                                                 &beacon_messages,
                                                 &interface_state.active_nic_addresses,
@@ -315,7 +315,7 @@ impl Locator {
         let brands = &mut interface_state.interface_api.brands;
         brands.clear();
 
-        let args = self.session.read().unwrap().args.clone();
+        let args = &self.args;
 
         #[cfg(feature = "navico")]
         if args.brand.unwrap_or(Brand::Navico) == Brand::Navico {
@@ -346,8 +346,8 @@ impl Locator {
         listen_addresses: &Vec<LocatorAddress>,
         interface_state: &mut InterfaceState,
     ) -> Result<Vec<LocatorSocket>, RadarError> {
-        let only_interface = &self.session.read().unwrap().args.interface;
-        let avoid_wifi = !self.session.read().unwrap().args.allow_wifi;
+        let only_interface = &self.args.interface;
+        let avoid_wifi = !self.args.allow_wifi;
 
         let if_api = &mut interface_state.interface_api.interfaces;
         if_api.clear();
@@ -462,11 +462,11 @@ impl Locator {
                                 );
                             }
                         }
-                        if self.session.read().unwrap().args.interface.is_some()
+                        if self.args.interface.is_some()
                             && interface_state.active_nic_addresses.len() == 0
                         {
                             return Err(RadarError::InterfaceNoV4(
-                                self.session.read().unwrap().args.interface.clone().unwrap(),
+                                self.args.interface.clone().unwrap(),
                             ));
                         }
                     }
@@ -496,11 +496,10 @@ impl Locator {
                 }
                 interface_state.first_loop = false;
 
-                if self.session.read().unwrap().args.interface.is_some()
-                    && interface_state.active_nic_addresses.len() == 0
+                if self.args.interface.is_some() && interface_state.active_nic_addresses.len() == 0
                 {
                     return Err(RadarError::InterfaceNotFound(
-                        self.session.read().unwrap().args.interface.clone().unwrap(),
+                        self.args.interface.clone().unwrap(),
                     ));
                 }
 
