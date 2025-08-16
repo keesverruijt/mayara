@@ -1,7 +1,6 @@
 use anyhow::{bail, Error};
 use async_trait::async_trait;
 use bincode::deserialize;
-use log::{log_enabled, trace};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -29,43 +28,45 @@ const QUANTUM_SPOKE_LEN: usize = 252;
 
 const RAYMARINE_BEACON_ADDRESS: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(224, 0, 0, 1)), 5800);
+const RAYMARINE_QUANTUM_WIFI_ADDRESS: SocketAddr =
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(232, 1, 1, 1)), 5800);
 
 #[derive(Deserialize, Debug, Copy, Clone)]
 #[repr(packed)]
 struct RaymarineBeacon36 {
-    beacon_type: u32,                // 0: always 0
-    link_id: u32,                    // 4
-    subtype: u32,                    // byte 8
-    _field5: u32,                    // 12
-    _field6: u32,                    // 16
+    beacon_type: [u8; 4],            // 0: always 0
+    link_id: [u8; 4],                // 4
+    subtype: [u8; 4],                // 8
+    _field5: [u8; 4],                // 12
+    _field6: [u8; 4],                // 16
     data: LittleEndianSocketAddrV4,  // 20
-    _empty1: u16,                    // 26
+    _fill1: [u8; 2],                 // 26
     radar: LittleEndianSocketAddrV4, // 28
-    _empty2: u16,                    // 34
+    _fill2: [u8; 2],                 // 34
 }
 
 #[derive(Deserialize, Debug, Copy, Clone)]
 #[repr(packed)]
 struct RaymarineBeacon56 {
-    beacon_type: u32,     // 0: always 1
-    subtype: u32,         // 4
-    link_id: u32,         // 8
-    _field4: u32,         // 12
-    _field5: u32,         // 16
+    beacon_type: [u8; 4], // 0: always 1
+    subtype: [u8; 4],     // 4
+    link_id: [u8; 4],     // 8
+    _field4: [u8; 4],     // 12
+    _field5: [u8; 4],     // 16
     model_name: [u8; 32], // 20: String like "QuantumRadar" when subtype = 0x66
-    _field7: u32,         // 52
+    _field7: [u8; 4],     // 52
 }
 
 #[derive(Copy, Clone, Debug)]
 pub enum Model {
-    Eseries,
+    HD,
     Quantum,
 }
 
 impl fmt::Display for Model {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let s = match self {
-            Model::Eseries => "RD/HD/Eseries",
+            Model::HD => "HD",
             Model::Quantum => "Quantum",
         };
         write!(f, "{}", s)
@@ -76,7 +77,7 @@ impl Model {
     pub fn new(s: &str) -> Self {
         match s {
             "Quantum" => Model::Quantum,
-            _ => Model::Eseries,
+            _ => Model::HD,
         }
     }
 }
@@ -110,39 +111,67 @@ impl RaymarineLocatorState {
     ) -> Result<Option<RadarInfo>, Error> {
         match deserialize::<RaymarineBeacon36>(report) {
             Ok(data) => {
-                if data.beacon_type != 0 {
+                log::debug!(
+                    "{}: Raymarine 36 report: {:02X?} len {}",
+                    from,
+                    report,
+                    report.len()
+                );
+
+                let beacon_type = u32::from_le_bytes(data.beacon_type);
+                if beacon_type != 0 {
+                    log::warn!(
+                        "{}: Raymarine 36 report: unexpected beacon type {}",
+                        from,
+                        beacon_type
+                    );
                     return Ok(None);
                 }
 
-                let link_id = data.link_id;
+                let link_id = u32::from_le_bytes(data.link_id);
 
                 if let Some(info) = self.ids.get(&link_id) {
-                    log::debug!(
+                    log::trace!(
                         "{}: link {} report: {:02X?} len {}",
                         from,
                         link_id,
                         report,
                         report.len()
                     );
-                    log::debug!("{}: data {:?}", from, data);
+                    log::trace!("{}: data {:?}", from, data);
 
                     let model = info.model;
+                    let subtype = u32::from_le_bytes(data.subtype);
                     match model {
                         Model::Quantum => {
-                            if data.subtype != 0x28 {
+                            if subtype != 0x28 {
+                                log::warn!(
+                                    "{}: Raymarine 36 report: unexpected subtype {} for Quantum",
+                                    from,
+                                    subtype
+                                );
                                 return Ok(None);
                             }
                         }
-                        Model::Eseries => {
-                            if data.subtype != 0x01 {
+                        Model::HD => {
+                            if subtype != 0x01 {
+                                log::warn!(
+                                    "{}: Raymarine 36 report: unexpected subtype {} for HD",
+                                    from,
+                                    subtype
+                                );
                                 return Ok(None);
                             }
                         }
                     }
+                    let doppler = match model {
+                        Model::Quantum => true, // Quantum supports Doppler
+                        Model::HD => false,     // HD does not support Doppler
+                    };
 
                     let (spokes_per_revolution, max_spoke_len) = match model {
                         Model::Quantum => (QUANTUM_SPOKES, QUANTUM_SPOKE_LEN),
-                        Model::Eseries => (ESERIES_SPOKES, ESERIES_SPOKE_LEN),
+                        Model::HD => (ESERIES_SPOKES, ESERIES_SPOKE_LEN),
                     };
 
                     let radar_addr: SocketAddrV4 = data.data.into();
@@ -162,7 +191,7 @@ impl RaymarineLocatorState {
                         radar_addr.into(),
                         radar_send.into(),
                         settings::new(self.session.clone(), info.model_name.as_deref()),
-                        true, // TODO: Only for Quantum2
+                        doppler,
                     );
 
                     return Ok(Some(location_info));
@@ -178,13 +207,27 @@ impl RaymarineLocatorState {
     fn process_beacon_56_report(&mut self, report: &[u8], from: &Ipv4Addr) -> Result<(), Error> {
         match deserialize::<RaymarineBeacon56>(report) {
             Ok(data) => {
-                if data.beacon_type != 0x01 {
+                let beacon_type = u32::from_le_bytes(data.beacon_type);
+                if beacon_type != 0x01 {
+                    log::warn!(
+                        "{}: Raymarine 56 report: unexpected beacon type {}",
+                        from,
+                        beacon_type
+                    );
                     return Ok(());
                 }
 
-                let link_id = data.link_id;
+                let link_id = u32::from_le_bytes(data.link_id);
+                let subtype = u32::from_le_bytes(data.subtype);
 
-                match data.subtype {
+                log::debug!(
+                    "{}: Raymarine report len {} subtype {:02x}",
+                    from,
+                    report.len(),
+                    subtype
+                );
+
+                match subtype {
                     0x66 => {
                         let model = Model::Quantum;
                         let model_name: Option<String> =
@@ -212,7 +255,7 @@ impl RaymarineLocatorState {
                         self.ids.insert(link_id, RadarState { model_name, model });
                     }
                     0x01 => {
-                        let model = Model::Eseries;
+                        let model = Model::HD;
                         let model_name = Some(model.to_string());
                         log::debug!(
                             "{}: Located via report: {:02X?} len {}",
@@ -224,7 +267,15 @@ impl RaymarineLocatorState {
                         log::debug!("{}: link_id: {:?}", from, link_id);
                         self.ids.insert(link_id, RadarState { model_name, model });
                     }
-                    _ => {}
+                    0x4d => {
+                        // This is some sort of Wireless version (Quantum_W3)
+                    }
+                    0x11 => {
+                        // Request from an MFD, ignore it
+                    }
+                    _ => {
+                        // log::warn!("{}: Raymarine 56 report: unknown subtype {}", from, subtype);
+                    }
                 }
             }
             Err(e) => {
@@ -245,7 +296,7 @@ impl RaymarineLocatorState {
             // Load the model name afresh, it may have been modified from persisted data
             let model = match info.controls.model_name() {
                 Some(s) => Model::new(&s),
-                None => Model::Eseries,
+                None => Model::HD,
             };
             let info2 = info.clone();
             settings::update_when_model_known(&mut info.controls, model, &info2);
@@ -294,15 +345,13 @@ impl RadarLocatorState for RaymarineLocatorState {
             return Ok(());
         }
 
-        if log_enabled!(log::Level::Trace) {
-            trace!(
-                "{}: Raymarine report: {:02X?} len {}",
-                from,
-                report,
-                report.len()
-            );
-            trace!("{}: printable:     {}", from, PrintableSlice::new(report));
-        }
+        log::trace!(
+            "{}: Raymarine report: {:02X?} len {}",
+            from,
+            report,
+            report.len()
+        );
+        log::trace!("{}: printable:     {}", from, PrintableSlice::new(report));
 
         match report.len() {
             36 => {
@@ -325,7 +374,13 @@ impl RadarLocatorState for RaymarineLocatorState {
                     log::error!("{}: Error processing beacon: {}", from, e);
                 }
             },
-            _ => {}
+            _ => {
+                log::warn!(
+                    "{}: Unknown Raymarine report length: {}",
+                    from,
+                    report.len()
+                );
+            }
         }
 
         Ok(())
@@ -347,9 +402,9 @@ impl RadarLocator for RaymarineLocator {
         if !addresses.iter().any(|i| i.id == LocatorId::Raymarine) {
             addresses.push(LocatorAddress::new(
                 LocatorId::Raymarine,
-                &RAYMARINE_BEACON_ADDRESS,
+                &RAYMARINE_QUANTUM_WIFI_ADDRESS,
                 Brand::Raymarine,
-                vec![], // The Raymarine radars send the beacon reports by themselves, no polling needed
+                vec![&RAYMARINE_MFD_BEACON], // Same beacon for all Raymarine radars, no need to send a specific HD one.
                 Box::new(RaymarineLocatorState::new(self.session.clone())),
             ));
         }
@@ -358,6 +413,37 @@ impl RadarLocator for RaymarineLocator {
 
 pub fn create_locator(session: Session) -> Box<dyn RadarLocator + Send> {
     let locator = RaymarineLocator { session };
+    Box::new(locator)
+}
+
+#[derive(Clone)]
+struct RaymarineHDLocator {
+    session: Session,
+}
+
+const RAYMARINE_MFD_BEACON: [u8; 56] = [
+    0x01, 0x00, 0x00, 0x00, 0x11, 0x00, 0x00, 0x00, 0x38, 0x8c, 0x81, 0xd4, 0x6a, 0x01, 0x0e, 0x83,
+    0x6c, 0x03, 0x12, 0xc6, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01, 0x00,
+];
+
+impl RadarLocator for RaymarineHDLocator {
+    fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
+        if !addresses.iter().any(|i| i.id == LocatorId::GenBR24) {
+            addresses.push(LocatorAddress::new(
+                LocatorId::GenBR24,
+                &RAYMARINE_BEACON_ADDRESS,
+                Brand::Raymarine,
+                vec![],
+                Box::new(RaymarineLocatorState::new(self.session.clone())),
+            ));
+        }
+    }
+}
+
+pub fn create_hd_locator(session: Session) -> Box<dyn RadarLocator + Send> {
+    let locator = RaymarineHDLocator { session };
     Box::new(locator)
 }
 
