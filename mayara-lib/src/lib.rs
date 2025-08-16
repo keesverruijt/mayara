@@ -223,6 +223,7 @@ impl Session {
         self.inner.write()
     }
 
+    #[cfg(test)]
     pub fn new_fake() -> Self {
         // This does not actually start anything - only use for testing
         Self::new_base(Cli::parse_from(["my_program"]))
@@ -243,18 +244,14 @@ impl Session {
     pub async fn new(subsystem: &SubsystemHandle, args: Cli) -> Self {
         let session = Self::new_base(args);
 
-        let mut navdata = navdata::NavigationData::new(session.clone());
+        let radars = SharedRadars::new(session.clone());
 
-        let radars = Some(SharedRadars::new(session.clone()));
+        session.write().unwrap().radars = Some(radars.clone());
 
-        session.write().unwrap().radars = radars;
-
-        let locator = Locator::new(
-            session.clone(),
-            session.write().unwrap().radars.clone().unwrap(),
-        );
+        let locator = Locator::new(session.clone(), radars);
 
         let (tx_ip_change, rx_ip_change) = mpsc::channel(1);
+        let mut navdata = navdata::NavigationData::new(session.clone());
 
         subsystem.start(SubsystemBuilder::new("NavData", |a| async move {
             navdata.run(a, rx_ip_change).await
@@ -272,6 +269,11 @@ impl Session {
         Self {
             inner: self.inner.clone(),
         }
+    }
+
+    pub fn args(&self) -> Cli {
+        let args = { self.read().unwrap().args.clone() };
+        args
     }
 }
 

@@ -12,6 +12,7 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
 
+use clap::Parser;
 use miette::Result;
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use serde::Serialize;
@@ -27,7 +28,7 @@ use crate::brand::navico;
 use crate::brand::raymarine;
 
 use crate::radar::{RadarError, SharedRadars};
-use crate::{network, Brand, InterfaceApi, InterfaceId, RadarInterfaceApi, Session};
+use crate::{network, Brand, Cli, InterfaceApi, InterfaceId, RadarInterfaceApi, Session};
 
 const LOCATOR_PACKET_BUFFER_LEN: usize = 300; // Long enough for any location packet
 
@@ -120,11 +121,17 @@ enum ResultType {
 pub struct Locator {
     pub session: Session,
     pub radars: SharedRadars,
+    pub args: Cli,
 }
 
 impl Locator {
     pub fn new(session: Session, radars: SharedRadars) -> Self {
-        Locator { session, radars }
+        let args = session.clone().args(); // session.args();
+        Locator {
+            session,
+            radars,
+            args,
+        }
     }
 
     pub async fn run(
