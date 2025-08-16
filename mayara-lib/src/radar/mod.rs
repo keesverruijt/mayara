@@ -408,7 +408,8 @@ impl SharedRadars {
                 new_info.id = max_id + 1;
             }
 
-            info!(
+            log::info!("key '{}' info {:?}", &new_info.key, new_info);
+            log::info!(
                 "Found radar: key '{}' id {} name '{}'",
                 &new_info.key,
                 new_info.id,

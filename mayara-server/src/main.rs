@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
         warn!("Replay mode activated, this does the following:");
         warn!(" * A circle is drawn at the last two pixels in each spoke");
         warn!(" * Timestamp on each spoke is as if received now");
-        warn!(" * Any 4G/HALO secondary radar B is ignored and not reported");
+        warn!(" * Any dual range of the radar is ignored and not reported");
     }
     if args.fake_errors {
         warn!("Fake error mode activated, this does the following:");

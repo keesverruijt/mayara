@@ -8,17 +8,15 @@ use crate::{
 
 use super::Model;
 
-pub fn new(session: Session, model: Option<&str>) -> SharedControls {
+pub fn new(session: Session, model: Model) -> SharedControls {
     let mut controls = HashMap::new();
 
-    controls.insert(
-        ControlType::UserName,
-        Control::new_string(ControlType::UserName).read_only(false),
-    );
+    let mut control = Control::new_string(ControlType::UserName);
+    control.set_string(model.to_string());
+    controls.insert(ControlType::UserName, control.read_only(false));
+
     let mut control = Control::new_string(ControlType::ModelName);
-    if model.is_some() {
-        control.set_string(model.unwrap().to_string());
-    }
+    control.set_string(model.to_string());
     controls.insert(ControlType::ModelName, control);
 
     controls.insert(

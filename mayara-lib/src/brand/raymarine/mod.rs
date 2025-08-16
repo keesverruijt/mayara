@@ -18,18 +18,29 @@ use crate::{Brand, Session};
 // mod report;
 mod settings;
 
-const ESERIES_SPOKES: usize = 2048;
+const HD_SPOKES_PER_REVOLUTION: usize = 2048;
 
 // Length of a spoke in pixels. Every pixel is 4 bits (one nibble.)
-const ESERIES_SPOKE_LEN: usize = 1024;
+const HD_SPOKE_LEN: usize = 1024;
 
-const QUANTUM_SPOKES: usize = 250;
+const QUANTUM_SPOKES_PER_REVOLUTION: usize = 250;
 const QUANTUM_SPOKE_LEN: usize = 252;
 
 const RAYMARINE_BEACON_ADDRESS: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(224, 0, 0, 1)), 5800);
 const RAYMARINE_QUANTUM_WIFI_ADDRESS: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(232, 1, 1, 1)), 5800);
+
+/*
+Let's take a look at what Raymarine radars send in their beacons.
+First of all, it looks as if all ethernet devices send a beacon of length 56 bytes,
+and that they also send a beacon of length 36 bytes.
+
+The observation so far is that the 56 byte beacon contains a 4 byte "link_id" field,
+which the next 36 byte beacon also contains.
+
+We put them in a map for now, but probably we only need to store the last one.
+ */
 
 #[derive(Deserialize, Debug, Copy, Clone)]
 #[repr(packed)]
@@ -111,13 +122,6 @@ impl RaymarineLocatorState {
     ) -> Result<Option<RadarInfo>, Error> {
         match deserialize::<RaymarineBeacon36>(report) {
             Ok(data) => {
-                log::debug!(
-                    "{}: Raymarine 36 report: {:02X?} len {}",
-                    from,
-                    report,
-                    report.len()
-                );
-
                 let beacon_type = u32::from_le_bytes(data.beacon_type);
                 if beacon_type != 0 {
                     log::warn!(
@@ -131,12 +135,12 @@ impl RaymarineLocatorState {
                 let link_id = u32::from_le_bytes(data.link_id);
 
                 if let Some(info) = self.ids.get(&link_id) {
-                    log::trace!(
-                        "{}: link {} report: {:02X?} len {}",
+                    log::debug!(
+                        "{}: link {:08X} report: {:02X?} model {}",
                         from,
                         link_id,
                         report,
-                        report.len()
+                        info.model
                     );
                     log::trace!("{}: data {:?}", from, data);
 
@@ -170,8 +174,8 @@ impl RaymarineLocatorState {
                     };
 
                     let (spokes_per_revolution, max_spoke_len) = match model {
-                        Model::Quantum => (QUANTUM_SPOKES, QUANTUM_SPOKE_LEN),
-                        Model::HD => (ESERIES_SPOKES, ESERIES_SPOKE_LEN),
+                        Model::Quantum => (QUANTUM_SPOKES_PER_REVOLUTION, QUANTUM_SPOKE_LEN),
+                        Model::HD => (HD_SPOKES_PER_REVOLUTION, HD_SPOKE_LEN),
                     };
 
                     let radar_addr: SocketAddrV4 = data.data.into();
@@ -190,11 +194,18 @@ impl RaymarineLocatorState {
                         radar_addr.into(),
                         radar_addr.into(),
                         radar_send.into(),
-                        settings::new(self.session.clone(), info.model_name.as_deref()),
+                        settings::new(self.session.clone(), info.model),
                         doppler,
                     );
 
                     return Ok(Some(location_info));
+                } else {
+                    log::trace!(
+                        "{}: Raymarine 36 report: link_id {:08X} not found in ids: {:02X?}",
+                        from,
+                        link_id,
+                        report
+                    );
                 }
             }
             Err(e) => {
@@ -220,52 +231,74 @@ impl RaymarineLocatorState {
                 let link_id = u32::from_le_bytes(data.link_id);
                 let subtype = u32::from_le_bytes(data.subtype);
 
-                log::debug!(
-                    "{}: Raymarine report len {} subtype {:02x}",
-                    from,
-                    report.len(),
-                    subtype
-                );
-
                 match subtype {
                     0x66 => {
                         let model = Model::Quantum;
                         let model_name: Option<String> =
                             c_string(&data.model_name).map(String::from);
-                        log::debug!(
-                            "{}: Located via report: {:02X?} len {}",
-                            from,
-                            report,
-                            report.len()
-                        );
-                        log::debug!(
-                            "{}: Located via report: {} len {}",
-                            from,
-                            PrintableSlice::new(report),
-                            report.len()
-                        );
-                        log::debug!(
-                            "{}: link_id {} model_name: {:?} model {}",
-                            from,
-                            link_id,
-                            model_name,
-                            model
-                        );
-                        log::debug!("{}: data {:?}", from, data);
-                        self.ids.insert(link_id, RadarState { model_name, model });
+
+                        if self
+                            .ids
+                            .insert(
+                                link_id,
+                                RadarState {
+                                    model_name: model_name.clone(),
+                                    model,
+                                },
+                            )
+                            .is_none()
+                        {
+                            log::debug!(
+                                "{}: Quantum located via report: {:02X?} len {}",
+                                from,
+                                report,
+                                report.len()
+                            );
+                            log::debug!(
+                                "{}: Quantum located via report: {} len {}",
+                                from,
+                                PrintableSlice::new(report),
+                                report.len()
+                            );
+                            log::debug!(
+                                "{}: link_id {:08X} model_name: {:?} model {}",
+                                from,
+                                link_id,
+                                model_name,
+                                model
+                            );
+                            log::debug!("{}: data {:?}", from, data);
+                        }
                     }
                     0x01 => {
                         let model = Model::HD;
                         let model_name = Some(model.to_string());
-                        log::debug!(
-                            "{}: Located via report: {:02X?} len {}",
-                            from,
-                            report,
-                            report.len()
-                        );
-                        log::debug!("{}: model_name: {:?} model {}", from, model_name, model);
-                        log::debug!("{}: link_id: {:?}", from, link_id);
-                        self.ids.insert(link_id, RadarState { model_name, model });
+
+                        if self
+                            .ids
+                            .insert(
+                                link_id,
+                                RadarState {
+                                    model_name: model_name.clone(),
+                                    model,
+                                },
+                            )
+                            .is_none()
+                        {
+                            log::debug!(
+                                "{}: HD located via report: {:02X?} len {}",
+                                from,
+                                report,
+                                report.len()
+                            );
+                            log::debug!(
+                                "{}: link_id: {:08X} model_name: {:?} model {}",
+                                from,
+                                link_id,
+                                model_name,
+                                model
+                            );
+                        }
                     }
                     0x4d => {
                         // This is some sort of Wireless version (Quantum_W3)
@@ -375,7 +408,7 @@ impl RadarLocatorState for RaymarineLocatorState {
                 }
             },
             _ => {
-                log::warn!(
+                log::trace!(
                     "{}: Unknown Raymarine report length: {}",
                     from,
                     report.len()
@@ -392,12 +425,12 @@ impl RadarLocatorState for RaymarineLocatorState {
 }
 
 #[derive(Clone)]
-struct RaymarineLocator {
+struct RaymarineWifiLocator {
     session: Session,
 }
 
 #[async_trait]
-impl RadarLocator for RaymarineLocator {
+impl RadarLocator for RaymarineWifiLocator {
     fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
         if !addresses.iter().any(|i| i.id == LocatorId::Raymarine) {
             addresses.push(LocatorAddress::new(
@@ -411,13 +444,13 @@ impl RadarLocator for RaymarineLocator {
     }
 }
 
-pub fn create_locator(session: Session) -> Box<dyn RadarLocator + Send> {
-    let locator = RaymarineLocator { session };
+pub fn create_wireless_locator(session: Session) -> Box<dyn RadarLocator + Send> {
+    let locator = RaymarineWifiLocator { session };
     Box::new(locator)
 }
 
 #[derive(Clone)]
-struct RaymarineHDLocator {
+struct RaymarineWiredLocator {
     session: Session,
 }
 
@@ -428,7 +461,7 @@ const RAYMARINE_MFD_BEACON: [u8; 56] = [
     0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01, 0x00,
 ];
 
-impl RadarLocator for RaymarineHDLocator {
+impl RadarLocator for RaymarineWiredLocator {
     fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
         if !addresses.iter().any(|i| i.id == LocatorId::GenBR24) {
             addresses.push(LocatorAddress::new(
@@ -442,8 +475,8 @@ impl RadarLocator for RaymarineHDLocator {
     }
 }
 
-pub fn create_hd_locator(session: Session) -> Box<dyn RadarLocator + Send> {
-    let locator = RaymarineHDLocator { session };
+pub fn create_wired_locator(session: Session) -> Box<dyn RadarLocator + Send> {
+    let locator = RaymarineWiredLocator { session };
     Box::new(locator)
 }
 
