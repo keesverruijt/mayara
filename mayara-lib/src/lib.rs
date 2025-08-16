@@ -229,7 +229,6 @@ impl Session {
     }
 
     fn new_base(args: Cli) -> Self {
-        // This does not actually start anything - only use for testing
         let (tx_interface_request, _) = broadcast::channel(10);
         let selfref = Session {
             inner: Arc::new(RwLock::new(SessionInner {
@@ -242,17 +241,17 @@ impl Session {
     }
 
     pub async fn new(subsystem: &SubsystemHandle, args: Cli) -> Self {
-        let selfref = Self::new_base(args);
+        let session = Self::new_base(args);
 
-        let mut navdata = navdata::NavigationData::new(selfref.clone());
+        let mut navdata = navdata::NavigationData::new(session.clone());
 
-        let radars = Some(SharedRadars::new(selfref.clone()));
+        let radars = Some(SharedRadars::new(session.clone()));
 
-        selfref.write().unwrap().radars = radars;
+        session.write().unwrap().radars = radars;
 
         let locator = Locator::new(
-            selfref.clone(),
-            selfref.write().unwrap().radars.clone().unwrap(),
+            session.clone(),
+            session.write().unwrap().radars.clone().unwrap(),
         );
 
         let (tx_ip_change, rx_ip_change) = mpsc::channel(1);
@@ -260,13 +259,13 @@ impl Session {
         subsystem.start(SubsystemBuilder::new("NavData", |a| async move {
             navdata.run(a, rx_ip_change).await
         }));
-        let tx_interface_request = selfref.write().unwrap().tx_interface_request.clone();
+        let tx_interface_request = session.write().unwrap().tx_interface_request.clone();
 
         subsystem.start(SubsystemBuilder::new("Locator", |a| {
             locator.run(a, tx_ip_change, tx_interface_request)
         }));
 
-        selfref
+        session
     }
 
     pub fn clone(&self) -> Self {

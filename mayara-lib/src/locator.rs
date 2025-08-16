@@ -250,12 +250,13 @@ impl Locator {
                                         break;
                                     }
                                     RadarError::Timeout => {
-                                        let _ = send_beacon_requests(
-                                            self.session.clone(),
-                                            &beacon_messages,
-                                            &interface_state.active_nic_addresses,
-                                        )
-                                        .await;
+                                        if !self.session.read().unwrap().args.replay {
+                                            let _ = send_beacon_requests(
+                                                &beacon_messages,
+                                                &interface_state.active_nic_addresses,
+                                            )
+                                            .await;
+                                        }
                                         set.spawn(async move {
                                             sleep(Duration::from_secs(20)).await;
                                             Err(RadarError::Timeout)
@@ -537,20 +538,17 @@ fn spawn_receive(set: &mut JoinSet<Result<ResultType, RadarError>>, socket: Loca
 }
 
 async fn send_beacon_requests(
-    session: Session,
     beacon_messages: &Vec<(SocketAddr, Vec<&[u8]>)>,
     interface_addresses: &Vec<Ipv4Addr>,
 ) -> io::Result<()> {
-    if !session.read().unwrap().args.replay {
-        for x in beacon_messages {
-            for beacon_request in &x.1 {
-                if let Err(e) = send_beacon_request(interface_addresses, &x.0, beacon_request).await
-                {
-                    log::warn!("Failed to send beacon request to {}: {}", x.0, e);
-                }
+    for x in beacon_messages {
+        for beacon_request in &x.1 {
+            if let Err(e) = send_beacon_request(interface_addresses, &x.0, beacon_request).await {
+                log::warn!("Failed to send beacon request to {}: {}", x.0, e);
             }
         }
-    };
+    }
+
     Ok(())
 }
 
