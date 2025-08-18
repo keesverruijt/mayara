@@ -240,7 +240,7 @@ impl Ranges {
         Self::new(r)
     }
 
-    fn push(&mut self, range: Range) -> bool {
+    pub fn push(&mut self, range: Range) -> bool {
         if self.all.iter().any(|r| r.distance == range.distance) {
             // If the range already exists, do not add it again
             return false;
@@ -269,12 +269,20 @@ impl Ranges {
         false
     }
 
-    pub fn get_distance(&self, index: usize) -> Option<&Range> {
-        self.all.get(index)
+    pub fn get_distance(&self, index: usize) -> i32 {
+        if let Some(range) = self.all.get(index) {
+            range.distance
+        } else {
+            0 // Return 0 if the index is out of bounds
+        }
     }
 
     pub fn len(&self) -> usize {
         self.all.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.all.is_empty()
     }
 }
 

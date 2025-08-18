@@ -13,9 +13,9 @@ use crate::radar::{RadarInfo, SharedRadars};
 use crate::util::{c_string, PrintableSlice};
 use crate::{Brand, Session};
 
-// mod command;
+mod command;
 // mod data;
-// mod report;
+mod report;
 mod settings;
 
 const HD_SPOKES_PER_REVOLUTION: usize = 2048;
@@ -347,20 +347,23 @@ impl RaymarineLocatorState {
             }
 
             // let data_name = info.key() + " data";
-            // let report_name = info.key() + " reports";
-            // let info_clone = info.clone();
-            // let (tx_data, rx_data) = mpsc::channel(10);
+            let report_name = info.key() + " reports";
+            let info_clone = info.clone();
             // let data_receiver = data::RaymarineDataReceiver::new(self.session.clone(), info, rx_data, args.replay);
-            // let report_receiver =
-            //     report::RaymarineReportReceiver::new(self.session.clone(), info_clone, radars.clone(), model, tx_data);
+            let report_receiver = report::RaymarineReportReceiver::new(
+                self.session.clone(),
+                info_clone,
+                radars.clone(),
+                model,
+            );
 
             // subsys.start(SubsystemBuilder::new(
             //     data_name,
             //     move |s: SubsystemHandle| data_receiver.run(s),
             // ));
-            // subsys.start(SubsystemBuilder::new(report_name, |s| {
-            //     report_receiver.run(s)
-            // }));
+            subsys.start(SubsystemBuilder::new(report_name, |s| {
+                report_receiver.run(s)
+            }));
         }
     }
 }
