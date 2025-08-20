@@ -20,12 +20,6 @@ pub fn new(session: Session, model: Model) -> SharedControls {
     controls.insert(ControlType::ModelName, control);
 
     controls.insert(
-        ControlType::AntennaHeight,
-        Control::new_numeric(ControlType::AntennaHeight, 0., 9900.)
-            .wire_scale_factor(99000., false) // we report cm but network has mm
-            .unit("cm"),
-    );
-    controls.insert(
         ControlType::BearingAlignment,
         Control::new_numeric(ControlType::BearingAlignment, -180., 180.)
             .unit("Deg")
@@ -72,6 +66,26 @@ pub fn new(session: Session, model: Model) -> SharedControls {
 
     controls.insert(ControlType::Status, control);
 
+    match model {
+        Model::Quantum => {
+            controls.insert(
+                ControlType::Mode,
+                Control::new_list(
+                    ControlType::Mode,
+                    &["Harbor", "Coastal", "Offshore", "Weather"],
+                ),
+            );
+            controls.insert(
+                ControlType::TargetExpansion,
+                Control::new_list(ControlType::TargetExpansion, &["Off", "On"]),
+            );
+            controls.insert(
+                ControlType::MainBangSuppression,
+                Control::new_list(ControlType::MainBangSuppression, &["Off", "On"]),
+            );
+        }
+        Model::RD => {}
+    }
     SharedControls::new(session, controls)
 }
 
@@ -106,15 +120,7 @@ pub fn update_when_model_known(
     }
 
     match model {
-        Model::Quantum => {
-            controls.insert(
-                ControlType::Mode,
-                Control::new_list(
-                    ControlType::Mode,
-                    &["Harbor", "Coastal", "Offshore", "Weather"],
-                ),
-            );
-        }
+        Model::Quantum => {}
         _ => {}
     }
 

@@ -39,6 +39,44 @@ pub struct RaymarineReportReceiver {
 
 #[derive(Debug, Copy, Clone)]
 #[repr(packed)]
+struct RMRadarReport {
+    _id: [u8; 4],            // 0x010001  // 0-3
+    ranges: [u8; 4 * 11],    // 4 - 47
+    _fieldx_1: [u8; 4 * 33], // 48 -
+
+    status: u8, // 2 - warmup, 1 - transmit, 0 - standby, 6 - shutting down (warmup time - countdown), 3 - shutdown  // 180
+    _fieldx_2: [u8; 3], // 181
+    warmup_time: u8, // 184
+    signal_strength: u8, // number of bars   // 185
+
+    _fieldx_3: [u8; 7], // 186
+    range_id: u8,       // 193
+    _fieldx_4: [u8; 2], // 194
+    auto_gain: u8,      // 196
+    _fieldx_5: [u8; 3], // 197
+    gain: [u8; 4],      // 200
+    auto_sea: u8,       // 0 - disabled; 1 - harbour, 2 - offshore, 3 - coastal   // 204
+    _fieldx_6: [u8; 3], // 205
+    sea_value: u8,      // 208
+    rain_enabled: u8,   // 209
+    _fieldx_7: [u8; 3], // 210
+    rain_value: u8,     // 213
+    ftc_enabled: u8,    // 214
+    _fieldx_8: [u8; 3], // 215
+    ftc_value: u8,      // 218
+    auto_tune: u8,
+    _fieldx_9: [u8; 3],
+    tune: u8,
+    bearing_offset: [u8; 2], // degrees * 10; left - negative, right - positive
+    interference_rejection: u8,
+    _fieldx_10: [u8; 3],
+    target_expansion: u8,
+    _fieldx_11: [u8; 13],
+    mbs_enabled: u8, // Main Bang Suppression enabled if 1
+}
+
+#[derive(Debug, Copy, Clone)]
+#[repr(packed)]
 struct QuantumControls {
     gain_auto: u8,       // @ 0
     gain: u8,            // @ 1
@@ -53,7 +91,7 @@ struct QuantumControls {
 #[derive(Debug, Copy, Clone)]
 #[repr(packed)]
 struct QuantumRadarReport {
-    id: [u8; 4],                    // @0 0x280002
+    _id: [u8; 4],                   // @0 0x280002
     status: u8,                     // @4 0 - standby ; 1 - transmitting
     _something_1: [u8; 9],          // @5
     bearing_offset: [u8; 2],        // @14
@@ -322,9 +360,9 @@ impl RaymarineReportReceiver {
                 Status::Standby // Default to Standby if unknown
             }
         };
+        self.set_value(&ControlType::Status, status as i32 as f32);
 
-        // self.info.ranges.is_empty()
-        if true {
+        if self.info.ranges.is_empty() {
             let mut ranges = Ranges::empty();
 
             for i in (0..report.ranges.len()).step_by(4) {
@@ -337,27 +375,50 @@ impl RaymarineReportReceiver {
             self.info.ranges = Ranges::new(ranges.all);
             log::info!("{}: Ranges initialized: {}", self.key, self.info.ranges);
         }
-
-        self.set_value(&ControlType::Status, status as i32 as f32);
         self.set_value(
             &ControlType::Range,
             self.info.ranges.get_distance(report.range_index as usize) as f32,
         );
-        self.set_value_auto(
-            &ControlType::Gain,
-            report.controls[0].gain as f32,
-            report.controls[0].gain_auto,
+
+        let mode = report.mode as usize;
+        if mode <= 3 {
+            self.set_value(&ControlType::Mode, mode as f32);
+            self.set_value_auto(
+                &ControlType::Gain,
+                report.controls[mode].gain as f32,
+                report.controls[mode].gain_auto,
+            );
+            self.set_value_auto(
+                &ControlType::ColorGain,
+                report.controls[mode].color_gain as f32,
+                report.controls[mode].color_gain_auto,
+            );
+            self.set_value_auto(
+                &ControlType::SeaState,
+                report.controls[mode].sea as f32,
+                report.controls[mode].sea_auto,
+            );
+            self.set_value_auto(
+                &ControlType::Rain,
+                report.controls[mode].rain as f32,
+                report.controls[mode].rain_auto,
+            );
+        } else {
+            log::warn!("{}: Unknown mode {}", self.key, report.mode);
+        }
+        self.set_value(
+            &ControlType::TargetExpansion,
+            report.target_expansion as f32,
         );
-        self.set_value_auto(
-            &ControlType::SeaState,
-            report.controls[0].sea as f32,
-            report.controls[0].sea_auto,
+        self.set_value(
+            &ControlType::InterferenceRejection,
+            report.interference_rejection as f32,
         );
-        self.set_value_auto(
-            &ControlType::Rain,
-            report.controls[0].rain as f32,
-            report.controls[0].rain_auto,
+        self.set_value(
+            &ControlType::BearingAlignment,
+            i16::from_le_bytes(report.bearing_offset) as f32,
         );
+        self.set_value(&ControlType::MainBangSuppression, report.mbs_enabled as f32);
 
         Ok(())
     }

@@ -18,10 +18,10 @@ mod command;
 mod report;
 mod settings;
 
-const HD_SPOKES_PER_REVOLUTION: usize = 2048;
+const RD_SPOKES_PER_REVOLUTION: usize = 2048;
 
 // Length of a spoke in pixels. Every pixel is 4 bits (one nibble.)
-const HD_SPOKE_LEN: usize = 1024;
+const RD_SPOKE_LEN: usize = 1024;
 
 const QUANTUM_SPOKES_PER_REVOLUTION: usize = 250;
 const QUANTUM_SPOKE_LEN: usize = 252;
@@ -70,14 +70,14 @@ struct RaymarineBeacon56 {
 
 #[derive(Copy, Clone, Debug)]
 pub enum Model {
-    HD,
+    RD,
     Quantum,
 }
 
 impl fmt::Display for Model {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let s = match self {
-            Model::HD => "HD",
+            Model::RD => "RD",
             Model::Quantum => "Quantum",
         };
         write!(f, "{}", s)
@@ -88,7 +88,7 @@ impl Model {
     pub fn new(s: &str) -> Self {
         match s {
             "Quantum" => Model::Quantum,
-            _ => Model::HD,
+            _ => Model::RD,
         }
     }
 }
@@ -157,10 +157,10 @@ impl RaymarineLocatorState {
                                 return Ok(None);
                             }
                         }
-                        Model::HD => {
+                        Model::RD => {
                             if subtype != 0x01 {
                                 log::warn!(
-                                    "{}: Raymarine 36 report: unexpected subtype {} for HD",
+                                    "{}: Raymarine 36 report: unexpected subtype {} for RD",
                                     from,
                                     subtype
                                 );
@@ -169,13 +169,13 @@ impl RaymarineLocatorState {
                         }
                     }
                     let doppler = match model {
-                        Model::Quantum => true, // Quantum supports Doppler
-                        Model::HD => false,     // HD does not support Doppler
+                        Model::Quantum => true, // Quantum supports Doppler TODO: Q24D only!
+                        Model::RD => false,     // RD does not support Doppler
                     };
 
                     let (spokes_per_revolution, max_spoke_len) = match model {
                         Model::Quantum => (QUANTUM_SPOKES_PER_REVOLUTION, QUANTUM_SPOKE_LEN),
-                        Model::HD => (HD_SPOKES_PER_REVOLUTION, HD_SPOKE_LEN),
+                        Model::RD => (RD_SPOKES_PER_REVOLUTION, RD_SPOKE_LEN),
                     };
 
                     let radar_addr: SocketAddrV4 = data.data.into();
@@ -271,7 +271,7 @@ impl RaymarineLocatorState {
                         }
                     }
                     0x01 => {
-                        let model = Model::HD;
+                        let model = Model::RD;
                         let model_name = Some(model.to_string());
 
                         if self
@@ -286,7 +286,7 @@ impl RaymarineLocatorState {
                             .is_none()
                         {
                             log::debug!(
-                                "{}: HD located via report: {:02X?} len {}",
+                                "{}: RD located via report: {:02X?} len {}",
                                 from,
                                 report,
                                 report.len()
@@ -329,7 +329,7 @@ impl RaymarineLocatorState {
             // Load the model name afresh, it may have been modified from persisted data
             let model = match info.controls.model_name() {
                 Some(s) => Model::new(&s),
-                None => Model::HD,
+                None => Model::RD,
             };
             let info2 = info.clone();
             settings::update_when_model_known(&mut info.controls, model, &info2);
@@ -440,7 +440,7 @@ impl RadarLocator for RaymarineWifiLocator {
                 LocatorId::Raymarine,
                 &RAYMARINE_QUANTUM_WIFI_ADDRESS,
                 Brand::Raymarine,
-                vec![&RAYMARINE_MFD_BEACON], // Same beacon for all Raymarine radars, no need to send a specific HD one.
+                vec![&RAYMARINE_MFD_BEACON], // Same beacon for all Raymarine radars, no need to send a specific RD one.
                 Box::new(RaymarineLocatorState::new(self.session.clone())),
             ));
         }

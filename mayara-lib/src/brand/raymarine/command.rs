@@ -11,8 +11,8 @@ use crate::Session;
 
 use super::Model;
 
-mod hd;
 mod quantum;
+mod rd;
 
 pub struct Command {
     key: String,
@@ -127,7 +127,7 @@ impl Command {
         }
 
         match self.model {
-            Model::HD => hd::set_control(self, cv, value, controls).await,
+            Model::RD => rd::set_control(self, cv, value, controls).await,
             Model::Quantum => quantum::set_control(self, cv, value, controls).await,
         }
     }
