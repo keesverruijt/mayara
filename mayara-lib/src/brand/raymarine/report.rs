@@ -1,5 +1,6 @@
 use anyhow::{bail, Error};
 use enum_primitive_derive::Primitive;
+use std::collections::HashMap;
 use std::mem::transmute;
 use std::time::Duration;
 use std::{fmt, io};
@@ -34,7 +35,7 @@ pub struct RaymarineReportReceiver {
     control_update_rx: broadcast::Receiver<ControlUpdate>,
     info_request_timeout: Instant,
     report_request_timeout: Instant,
-    reported_unknown: [bool; 256],
+    reported_unknown: HashMap<u32, bool>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -163,7 +164,7 @@ impl RaymarineReportReceiver {
             report_request_timeout: now,
             data_update_tx,
             control_update_rx,
-            reported_unknown: [false; 256],
+            reported_unknown: HashMap::new(),
         }
     }
 
@@ -338,8 +339,9 @@ impl RaymarineReportReceiver {
             let report = QuantumRadarReport::transmute(data)?;
             log::debug!("{}: Quantum report {:?}", self.key, report);
             self.process_quantum_report(report).await?;
-        } else {
+        } else if self.reported_unknown.get(&id).is_none() {
             log::warn!("{}: Unknown report ID {:08X?}", self.key, id);
+            self.reported_unknown.insert(id, true);
         }
 
         Ok(())
