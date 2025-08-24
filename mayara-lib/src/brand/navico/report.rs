@@ -857,7 +857,7 @@ impl NavicoReportReceiver {
             0 => Status::Off,
             1 => Status::Standby,
             2 => Status::Transmit,
-            5 => Status::SpinningUp,
+            5 => Status::Preparing,
             _ => {
                 bail!("{}: Unknown radar status {}", self.key, status);
             }
@@ -873,7 +873,7 @@ impl NavicoReportReceiver {
 
         let mode = report.mode as i32;
         let range = i32::from_le_bytes(report.range);
-        let gain_auto = report.gain_auto;
+        let gain_auto: u8 = report.gain_auto;
         let gain = report.gain as i32;
         let sea_auto = report.sea_auto;
         let sea = i32::from_le_bytes(report.sea);

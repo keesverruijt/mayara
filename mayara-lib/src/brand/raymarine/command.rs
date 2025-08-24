@@ -81,18 +81,6 @@ impl Command {
         r as u8
     }
 
-    fn mod_deci_degrees(a: i32) -> i32 {
-        (a + 7200) % 3600
-    }
-
-    fn generate_fake_error(v: i32) -> Result<(), RadarError> {
-        match v {
-            11 => Err(RadarError::CannotSetControlType(ControlType::Rain)),
-            12 => Err(RadarError::CannotSetControlType(ControlType::Status)),
-            _ => Err(RadarError::NoSuchRadar("FakeRadarKey".to_string())),
-        }
-    }
-
     async fn send_no_transmit_cmd(
         &mut self,
         value_start: i16,

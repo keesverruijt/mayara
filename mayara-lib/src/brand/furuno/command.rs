@@ -1,11 +1,12 @@
 use enum_primitive_derive::Primitive;
 use std::fmt::Write;
+use std::str::FromStr;
 use tokio::io::{AsyncWriteExt, WriteHalf};
 use tokio::net::TcpStream;
 
 use super::CommandMode;
 use crate::radar::range::Ranges;
-use crate::radar::{RadarError, RadarInfo};
+use crate::radar::{RadarError, RadarInfo, Status};
 use crate::settings::{ControlType, ControlValue, SharedControls};
 
 const RADAR_A: i32 = 0;
@@ -162,6 +163,11 @@ impl Command {
 
         let id: CommandId = match cv.id {
             ControlType::Status => {
+                let value = match Status::from_str(&cv.value).unwrap_or(Status::Standby) {
+                    Status::Transmit => 2,
+                    _ => 1,
+                };
+
                 cmd.push(value); // status
                 cmd.push(0);
                 cmd.push(0); // WatchMan on/off

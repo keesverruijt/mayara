@@ -13,7 +13,7 @@ use tokio_graceful_shutdown::SubsystemHandle;
 use super::command::CommandId;
 use super::settings;
 use super::RadarModel;
-use crate::radar::{RadarError, RadarInfo};
+use crate::radar::{RadarError, RadarInfo, Status};
 use crate::settings::{ControlType, ControlUpdate};
 use crate::Session;
 
@@ -350,7 +350,15 @@ impl FurunoReportReceiver {
                 if numbers.len() < 1 {
                     bail!("No arguments for Status command");
                 }
-                self.set_value(&ControlType::Status, numbers[0]);
+                let generic_state = match numbers[0] {
+                    0. => Status::Preparing,
+                    1. => Status::Standby,
+                    2. => Status::Transmit,
+                    3. => Status::Off,
+                    _ => Status::Off,
+                };
+                // TODO check values with generic values [1 = Standby, 2 = Transmit but the others...]
+                self.set_value(&ControlType::Status, generic_state as i32 as f32);
             }
             CommandId::Gain => {
                 if numbers.len() < 5 {

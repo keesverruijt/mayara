@@ -216,7 +216,7 @@ pub(super) fn process_quantum_report(receiver: &mut RaymarineReportReceiver, dat
     let status = match report.status {
         0x00 => Status::Standby,
         0x01 => Status::Transmit,
-        0x02 => Status::SpinningUp,
+        0x02 => Status::Preparing,
         0x03 => Status::Off,
         _ => {
             log::warn!("{}: Unknown status {}", receiver.key, report.status);

@@ -36,14 +36,6 @@ pub fn new(session: Session) -> SharedControls {
             .unit("RPM"),
     );
 
-    let mut control = Control::new_list(
-        ControlType::Status,
-        &["WarmingUp", "Standby", "Transmit", "NoConnection"],
-    )
-    .send_always();
-    control.set_valid_values([1, 2].to_vec());
-    controls.insert(ControlType::Status, control);
-
     if log::log_enabled!(log::Level::Debug) {
         controls.insert(
             ControlType::Spokes,

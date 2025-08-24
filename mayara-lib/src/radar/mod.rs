@@ -1,7 +1,6 @@
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use enum_primitive_derive::Primitive;
-use log::info;
 use protobuf::Message;
 use serde::ser::{SerializeMap, Serializer};
 use serde::Serialize;
@@ -330,7 +329,14 @@ impl RadarInfo {
         }
     }
 
-    pub fn broadcast_radar_message(&self, message: RadarMessage) {
+    pub(crate) fn set_ranges(&mut self, ranges: Ranges) -> Result<(), RadarError> {
+        self.controls
+            .set_valid_ranges(&ControlType::Range, &ranges)?;
+        self.ranges = ranges;
+        Ok(())
+    }
+
+    pub(crate) fn broadcast_radar_message(&self, message: RadarMessage) {
         let mut bytes = Vec::new();
         message
             .write_to_vec(&mut bytes)
@@ -609,7 +615,7 @@ pub(crate) enum Status {
     Off,
     Standby,
     Transmit,
-    SpinningUp,
+    Preparing,
 }
 
 impl fmt::Display for Status {
@@ -626,7 +632,7 @@ impl FromStr for Status {
             "Off" | "0" => Ok(Status::Off),
             "Standby" | "1" => Ok(Status::Standby),
             "Transmit" | "2" => Ok(Status::Transmit),
-            "SpinningUp" | "3" => Ok(Status::SpinningUp),
+            "Preparing" | "3" => Ok(Status::Preparing),
             _ => Err(format!("Unknown status: {}", s)),
         }
     }

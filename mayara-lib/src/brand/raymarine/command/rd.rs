@@ -1,4 +1,6 @@
-use crate::radar::RadarError;
+use std::str::FromStr;
+
+use crate::radar::{RadarError, Status};
 use crate::settings::{ControlType, ControlValue, SharedControls};
 
 use super::Command;
@@ -34,7 +36,11 @@ pub async fn set_control(
 
     match cv.id {
         ControlType::Status => {
-            cmd.extend_from_slice(&[0x01, 0x80, 0x01, 0x00, value as u8 - 1, 0x00, 0x00, 0x00]);
+            let value = match Status::from_str(&cv.value).unwrap_or(Status::Standby) {
+                Status::Transmit => 1,
+                _ => 0,
+            };
+            cmd.extend_from_slice(&[0x01, 0x80, 0x01, 0x00, value, 0x00, 0x00, 0x00]);
         }
 
         ControlType::Range => {

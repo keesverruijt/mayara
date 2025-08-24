@@ -61,19 +61,13 @@ pub fn new(session: Session, model: BaseModel) -> SharedControls {
             .read_only(true)
             .unit("RPM"),
     );
-
-    let mut control = Control::new_list(
-        ControlType::Status,
-        &["Off", "Standby", "Transmit", "", "", "SpinningUp"],
-    )
-    .send_always();
-    control.set_valid_values([1, 2].to_vec()); // Only allow setting to Standby (index 1) and Transmit (index 2)
-
-    controls.insert(ControlType::Status, control);
-
     controls.insert(
         ControlType::OperatingHours,
         Control::new_numeric(ControlType::OperatingHours, 0., 99999.).read_only(true),
+    );
+    controls.insert(
+        ControlType::MainBangSuppression,
+        Control::new_list(ControlType::MainBangSuppression, &["Off", "On"]),
     );
 
     match model {
@@ -88,10 +82,6 @@ pub fn new(session: Session, model: BaseModel) -> SharedControls {
             controls.insert(
                 ControlType::TargetExpansion,
                 Control::new_list(ControlType::TargetExpansion, &["Off", "On"]),
-            );
-            controls.insert(
-                ControlType::MainBangSuppression,
-                Control::new_list(ControlType::MainBangSuppression, &["Off", "On"]),
             );
         }
         BaseModel::RD => {
@@ -111,6 +101,12 @@ pub fn new(session: Session, model: BaseModel) -> SharedControls {
                 ControlType::WarmupTime,
                 Control::new_numeric(ControlType::WarmupTime, 0., 255.)
                     .has_enabled()
+                    .read_only(true),
+            );
+            controls.insert(
+                ControlType::Tune,
+                Control::new_auto(ControlType::Tune, 0., 255., HAS_AUTO_NOT_ADJUSTABLE)
+                    .wire_scale_factor(255., false)
                     .read_only(true),
             );
         }

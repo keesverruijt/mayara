@@ -81,16 +81,6 @@ pub fn new(session: Session, model: Option<&str>) -> SharedControls {
         Control::new_string(ControlType::FirmwareVersion),
     );
 
-    // TODO: This needs unified handling regardless of brand.
-    let mut control = Control::new_list(
-        ControlType::Status,
-        &["Off", "Standby", "Transmit", "SpinningUp"],
-    )
-    .send_always();
-    control.set_valid_values([1, 2].to_vec()); // Only allow setting to Standby (index 1) and Transmit (index 2)
-
-    controls.insert(ControlType::Status, control);
-
     controls.insert(
         ControlType::SideLobeSuppression,
         Control::new_auto(

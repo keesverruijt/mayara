@@ -179,7 +179,16 @@ impl SharedControls {
     // Create a new set of controls, for a radar.
     // There is only one set that is shared amongst the various threads and
     // structs, hence the word Shared.
-    pub fn new(session: Session, controls: HashMap<ControlType, Control>) -> Self {
+    pub fn new(session: Session, mut controls: HashMap<ControlType, Control>) -> Self {
+        // All radars must have the same Status control
+        let mut control = Control::new_list(
+            ControlType::Status,
+            &["Off", "Standby", "Transmit", "Preparing"],
+        )
+        .send_always();
+        control.set_valid_values([1, 2].to_vec()); // Only allow setting to Standby (index 1) and Transmit (index 2)
+        controls.insert(ControlType::Status, control);
+
         SharedControls {
             controls: Arc::new(RwLock::new(Controls::new_base(session, controls))),
         }

@@ -71,12 +71,21 @@ pub(super) fn pixel_to_blob(legend: &Legend) -> [[u8; BYTE_LOOKUP_LENGTH]; LOOKU
     lookup
 }
 
+#[derive(PartialEq, PartialOrd, Debug)]
+enum ReceiverState {
+    Initial,
+    InfoRequestReceived,
+    FixedRequestReceived,
+    StatusRequestReceived,
+}
+
 pub(crate) struct RaymarineReportReceiver {
     replay: bool,
     info: RadarInfo,
     key: String,
     report_socket: Option<UdpSocket>,
     radars: SharedRadars,
+    state: ReceiverState,
     model: Option<RaymarineModel>,
     command_sender: Option<Command>,
     data_update_tx: broadcast::Sender<DataUpdate>,
@@ -121,6 +130,7 @@ impl RaymarineReportReceiver {
             info,
             report_socket: None,
             radars,
+            state: ReceiverState::Initial,
             model: None, // We don't know this yet, it will be set when we receive the first info report
             command_sender,
             info_request_timeout: now,
@@ -377,5 +387,11 @@ impl RaymarineReportReceiver {
             }
         }
         Ok(())
+    }
+
+    fn set_ranges(&mut self, ranges: Ranges) {
+        if self.info.set_ranges(ranges).is_ok() {
+            self.radars.update(&self.info);
+        }
     }
 }
