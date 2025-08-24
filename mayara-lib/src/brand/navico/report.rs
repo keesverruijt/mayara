@@ -935,7 +935,7 @@ impl NavicoReportReceiver {
                         model,
                         &info2,
                     );
-                    self.info.set_legend(model == Model::HALO);
+                    self.info.set_doppler(model == Model::HALO);
 
                     self.radars.update(&self.info);
 

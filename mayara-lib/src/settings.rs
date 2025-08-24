@@ -409,6 +409,34 @@ impl SharedControls {
         }
     }
 
+    pub fn set_wire_range(
+        &self,
+        control_type: &ControlType,
+        min: f32,
+        max: f32,
+    ) -> Result<Option<()>, ControlError> {
+        let control = {
+            let mut locked = self.controls.write().unwrap();
+            if let Some(control) = locked.controls.get_mut(control_type) {
+                Ok(control.set_wire_range(min, max)?.map(|_| control.clone()))
+            } else {
+                Err(ControlError::NotSupported(*control_type))
+            }
+        }?;
+
+        // If the control changed, control.set returned Some(control)
+        if let Some(control) = control {
+            self.send_to_all_clients(&control);
+            Ok(Some(()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    //
+    // Set a control from a wire value, so apply all transformations
+    // to convert it to a user visible value
+    //
     pub fn set(
         &self,
         control_type: &ControlType,
@@ -924,6 +952,10 @@ impl Control {
         self.auto = Some(auto);
     }
 
+    ///
+    /// Set a control from a wire value, so apply all transformations
+    /// to convert it to a user visible value
+    ///
     /// Set the control to a (maybe new) value + auto state
     ///
     /// Return Ok(Some(())) when the value changed or it always needs
@@ -937,15 +969,21 @@ impl Control {
         enabled: Option<bool>,
     ) -> Result<Option<()>, ControlError> {
         // SCALE MAPPING
+        if let Some(wire_offset) = self.item.wire_offset {
+            if wire_offset > 0.0 {
+                value -= wire_offset;
+            }
+        }
         if let (Some(wire_scale_factor), Some(max_value)) =
             (self.item.wire_scale_factor, self.item.max_value)
         {
-            // One of the _only_ reasons we use f32 is because Navico wire format for some things is
+            // One of the reasons we use f32 is because Navico wire format for some things is
             // tenths of degrees. To make things uniform we map these to a float with .1 precision.
             if wire_scale_factor != max_value {
                 log::trace!("{} map value {}", self.item.control_type, value);
                 value = value * max_value / wire_scale_factor;
 
+                // TODO! Not sure about the following line
                 auto_value = auto_value.map(|v| v * max_value / wire_scale_factor);
                 log::trace!("{} map value to scaled {}", self.item.control_type, value);
             }
@@ -1030,6 +1068,23 @@ impl Control {
         } else {
             None
         }
+    }
+
+    /// Set the control's wire offset and scale
+    ///
+    /// Return Ok(Some(())) when the value changed or it always needs
+    /// to be broadcast to listeners.
+    ///
+    pub fn set_wire_range(&mut self, min: f32, max: f32) -> Result<Option<()>, ControlError> {
+        if Some(min) != self.item.wire_offset || Some(max) != self.item.wire_scale_factor {
+            self.item.wire_offset = if min != 0.0 { Some(min) } else { None };
+            self.item.wire_scale_factor = Some(max - min);
+
+            if let Some(value) = self.value {
+                return self.set(value, None, None, None);
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -1132,6 +1187,7 @@ impl ControlDefinition {}
 // as shown in the radar page for HALO on NOS MFDs.
 pub enum ControlType {
     Status,
+    WarmupTime,
     Range,
     Mode,
     // AllAuto,
@@ -1165,6 +1221,7 @@ pub enum ControlType {
     LocalInterferenceRejection,
     ScanSpeed,
     SideLobeSuppression,
+    Tune,
     // TuneCoarse,
     // TuneFine,
     // ColorGain,
@@ -1188,6 +1245,8 @@ pub enum ControlType {
     BearingAlignment,
     // Orientation,
     RotationSpeed,
+    MagnetronCurrent,
+    SignalStrength,
     OperatingHours,
     ModelName,
     FirmwareVersion,
@@ -1220,6 +1279,7 @@ impl Display for ControlType {
             ControlType::InterferenceRejection => "Interference rejection",
             ControlType::LocalInterferenceRejection => "Local interference rejection",
             // ControlType::MainBangSize => "Main bang size",
+            ControlType::MagnetronCurrent => "Magnetron current",
             ControlType::MainBangSuppression => "Main bang suppression",
             ControlType::Mode => "Mode",
             ControlType::ModelName => "Model name",
@@ -1245,6 +1305,7 @@ impl Display for ControlType {
             ControlType::SideLobeSuppression => "Side lobe suppression",
             // ControlType::Stc => "Sensitivity Time Control",
             // ControlType::StcCurve => "STC curve",
+            ControlType::SignalStrength => "Signal strength",
             ControlType::Status => "Status",
             ControlType::TargetBoost => "Target boost",
             ControlType::TargetExpansion => "Target expansion",
@@ -1253,10 +1314,11 @@ impl Display for ControlType {
             // ControlType::TimedIdle => "Time idle",
             // ControlType::TimedRun => "Timed run",
             ControlType::TrailsMotion => "Target trails motion",
-            // ControlType::TuneCoarse => "Coarse tune",
+            ControlType::Tune => "Tune",
             // ControlType::TuneFine => "Fine tune",
             ControlType::Spokes => "Spokes",
             ControlType::UserName => "Custom name",
+            ControlType::WarmupTime => "Warmup time",
         };
 
         write!(f, "{}", s)

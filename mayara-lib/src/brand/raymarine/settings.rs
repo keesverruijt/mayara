@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 
 use crate::{
+    brand::raymarine::RaymarineModel,
     radar::{RadarInfo, NAUTICAL_MILE_F64},
     settings::{Control, ControlType, SharedControls, HAS_AUTO_NOT_ADJUSTABLE},
     Session,
 };
 
-use super::Model;
+use super::BaseModel;
 
-pub fn new(session: Session, model: Model) -> SharedControls {
+pub fn new(session: Session, model: BaseModel) -> SharedControls {
     let mut controls = HashMap::new();
 
     let mut control = Control::new_string(ControlType::UserName);
@@ -39,22 +40,26 @@ pub fn new(session: Session, model: Model) -> SharedControls {
         ),
     );
 
-    controls.insert(
-        ControlType::Rain,
-        Control::new_numeric(ControlType::Rain, 0., 100.).wire_scale_factor(100., false),
-    );
+    let mut control =
+        Control::new_numeric(ControlType::Rain, 0., 100.).wire_scale_factor(100., false);
+    if model == BaseModel::RD {
+        control = control.has_enabled();
+    }
+    controls.insert(ControlType::Rain, control);
+
+    let mut control =
+        Control::new_numeric(ControlType::Ftc, 0., 100.).wire_scale_factor(100., false);
+    if model == BaseModel::RD {
+        control = control.has_enabled();
+    }
+    controls.insert(ControlType::Ftc, control);
 
     controls.insert(
         ControlType::RotationSpeed,
         Control::new_numeric(ControlType::RotationSpeed, 0., 99.)
-            .wire_scale_factor(990., true)
+            .wire_scale_factor(990., true) // 0.1 RPM
             .read_only(true)
             .unit("RPM"),
-    );
-
-    controls.insert(
-        ControlType::FirmwareVersion,
-        Control::new_string(ControlType::FirmwareVersion),
     );
 
     let mut control = Control::new_list(
@@ -66,8 +71,13 @@ pub fn new(session: Session, model: Model) -> SharedControls {
 
     controls.insert(ControlType::Status, control);
 
+    controls.insert(
+        ControlType::OperatingHours,
+        Control::new_numeric(ControlType::OperatingHours, 0., 99999.).read_only(true),
+    );
+
     match model {
-        Model::Quantum => {
+        BaseModel::Quantum => {
             controls.insert(
                 ControlType::Mode,
                 Control::new_list(
@@ -84,17 +94,36 @@ pub fn new(session: Session, model: Model) -> SharedControls {
                 Control::new_list(ControlType::MainBangSuppression, &["Off", "On"]),
             );
         }
-        Model::RD => {}
+        BaseModel::RD => {
+            controls.insert(
+                ControlType::MagnetronCurrent,
+                Control::new_numeric(ControlType::MagnetronCurrent, 0., 65535.).read_only(true),
+            );
+            controls.insert(
+                ControlType::DisplayTiming,
+                Control::new_numeric(ControlType::DisplayTiming, 0., 255.).read_only(true),
+            );
+            controls.insert(
+                ControlType::SignalStrength,
+                Control::new_numeric(ControlType::SignalStrength, 0., 255.).read_only(true),
+            );
+            controls.insert(
+                ControlType::WarmupTime,
+                Control::new_numeric(ControlType::WarmupTime, 0., 255.)
+                    .has_enabled()
+                    .read_only(true),
+            );
+        }
     }
     SharedControls::new(session, controls)
 }
 
 pub fn update_when_model_known(
     controls: &mut SharedControls,
-    model: Model,
+    model: &RaymarineModel,
     radar_info: &RadarInfo,
 ) {
-    controls.set_model_name(model.to_string());
+    controls.set_model_name(model.name.to_string());
 
     let mut control = Control::new_string(ControlType::SerialNumber);
     if let Some(serial_number) = radar_info.serial_no.as_ref() {
@@ -105,23 +134,18 @@ pub fn update_when_model_known(
     // Update the UserName; it had to be present at start so it could be loaded from
     // config. Override it if it is still the 'Raymarine ... ' name.
     if controls.user_name() == radar_info.key() {
-        let mut user_name = model.to_string();
+        let mut user_name = model.name.to_string();
         if radar_info.serial_no.is_some() {
             let mut serial = radar_info.serial_no.clone().unwrap();
 
             user_name.push(' ');
-            user_name.push_str(&serial.split_off(7));
+            user_name.push_str(&serial);
         }
         if radar_info.which.is_some() {
             user_name.push(' ');
             user_name.push_str(&radar_info.which.as_ref().unwrap());
         }
         controls.set_user_name(user_name);
-    }
-
-    match model {
-        Model::Quantum => {}
-        _ => {}
     }
 
     let max_value = 36. * NAUTICAL_MILE_F64 as f32;

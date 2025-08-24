@@ -14,7 +14,6 @@ use crate::util::{c_string, PrintableSlice};
 use crate::{Brand, Session};
 
 mod command;
-// mod data;
 mod report;
 mod settings;
 
@@ -26,10 +25,76 @@ const RD_SPOKE_LEN: usize = 1024;
 const QUANTUM_SPOKES_PER_REVOLUTION: usize = 250;
 const QUANTUM_SPOKE_LEN: usize = 252;
 
+const NON_HD_PIXEL_VALUES: u8 = 16; // Old radars have one nibble
+const HD_PIXEL_VALUES_RAW: u16 = 256; // New radars have one byte pixels
+const HD_PIXEL_VALUES: u8 = 128; // ... but we drop the last bit so we have space for other data
+
 const RAYMARINE_BEACON_ADDRESS: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(224, 0, 0, 1)), 5800);
 const RAYMARINE_QUANTUM_WIFI_ADDRESS: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(232, 1, 1, 1)), 5800);
+
+#[derive(Clone, Debug)]
+struct RaymarineModel {
+    model: BaseModel,
+    hd: bool,      // true if HD = 256 bits per pixel
+    doppler: bool, // true if Doppler is supported
+    name: &'static str,
+}
+
+impl RaymarineModel {
+    fn new_eseries() -> Self {
+        RaymarineModel {
+            model: BaseModel::RD,
+            hd: false,
+            doppler: false,
+            name: "E series Classic",
+        }
+    }
+
+    fn try_into(model: &str) -> Option<Self> {
+        let (model, hd, doppler, name) = match model {
+            // All "E" strings derived from the raymarine.app.box.com EU declaration of conformity documents
+            // Quantum models, believed working
+            "E70210" => (BaseModel::Quantum, true, false, "Quantum Q24"),
+            "E70344" => (BaseModel::Quantum, true, false, "Quantum Q24C"),
+            "E70498" => (BaseModel::Quantum, true, true, "Quantum Q24D"),
+            // Cyclone and Cyclone Pro models, untested, assume works as Quantum
+            // Probably supports higher resulution though...
+            "E70620" => (BaseModel::Quantum, true, true, "Cyclone"),
+            "E70621" => (BaseModel::Quantum, true, true, "Cyclone Pro"),
+            // Magnum, untested, assume works as RD
+            "E70484" => (BaseModel::RD, true, false, "Magnum 4kW"),
+            "E70487" => (BaseModel::RD, true, false, "Magnum 12kW"),
+            // Open Array HD and SHD, introduced circa 2007
+            "E52069" => (BaseModel::RD, true, false, "Open Array HD 4kW"),
+            "E92160" => (BaseModel::RD, true, false, "Open Array HD 12kW"),
+            "E52081" => (BaseModel::RD, true, false, "Open Array SHD 4kW"),
+            "E52082" => (BaseModel::RD, true, false, "Open Array SHD 12kW"),
+            // And the actual RD models, introduced circa 2004
+            "E92142" => (BaseModel::RD, true, false, "RD418HD"),
+            "E92143" => (BaseModel::RD, true, false, "RD424HD"),
+            "E92130" => (BaseModel::RD, true, false, "RD418D"),
+            "E92132" => (BaseModel::RD, true, false, "RD424D"),
+
+            _ => return None,
+        };
+        Some(RaymarineModel {
+            model,
+            hd,
+            doppler,
+            name,
+        })
+    }
+}
+
+fn hd_to_pixel_values(hd: bool) -> u8 {
+    if hd {
+        HD_PIXEL_VALUES
+    } else {
+        NON_HD_PIXEL_VALUES
+    }
+}
 
 /*
 Let's take a look at what Raymarine radars send in their beacons.
@@ -45,15 +110,15 @@ We put them in a map for now, but probably we only need to store the last one.
 #[derive(Deserialize, Debug, Copy, Clone)]
 #[repr(packed)]
 struct RaymarineBeacon36 {
-    beacon_type: [u8; 4],            // 0: always 0
-    link_id: [u8; 4],                // 4
-    subtype: [u8; 4],                // 8
-    _field5: [u8; 4],                // 12
-    _field6: [u8; 4],                // 16
-    data: LittleEndianSocketAddrV4,  // 20
-    _fill1: [u8; 2],                 // 26
-    radar: LittleEndianSocketAddrV4, // 28
-    _fill2: [u8; 2],                 // 34
+    beacon_type: [u8; 4],              // 0: always 0
+    link_id: [u8; 4],                  // 4
+    subtype: [u8; 4],                  // 8
+    _field5: [u8; 4],                  // 12
+    _field6: [u8; 4],                  // 16
+    report: LittleEndianSocketAddrV4,  // 20
+    _align1: [u8; 2],                  // 26
+    command: LittleEndianSocketAddrV4, // 28
+    _align2: [u8; 2],                  // 34
 }
 
 #[derive(Deserialize, Debug, Copy, Clone)]
@@ -68,28 +133,19 @@ struct RaymarineBeacon56 {
     _field7: [u8; 4],     // 52
 }
 
-#[derive(Copy, Clone, Debug)]
-pub enum Model {
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum BaseModel {
     RD,
     Quantum,
 }
 
-impl fmt::Display for Model {
+impl fmt::Display for BaseModel {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let s = match self {
-            Model::RD => "RD",
-            Model::Quantum => "Quantum",
+            BaseModel::RD => "RD",
+            BaseModel::Quantum => "Quantum",
         };
         write!(f, "{}", s)
-    }
-}
-
-impl Model {
-    pub fn new(s: &str) -> Self {
-        match s {
-            "Quantum" => Model::Quantum,
-            _ => Model::RD,
-        }
     }
 }
 
@@ -98,7 +154,7 @@ type LinkId = u32;
 #[derive(Clone)]
 struct RadarState {
     model_name: Option<String>,
-    model: Model,
+    model: BaseModel,
 }
 
 #[derive(Clone)]
@@ -146,8 +202,9 @@ impl RaymarineLocatorState {
 
                     let model = info.model;
                     let subtype = u32::from_le_bytes(data.subtype);
+
                     match model {
-                        Model::Quantum => {
+                        BaseModel::Quantum => {
                             if subtype != 0x28 {
                                 log::warn!(
                                     "{}: Raymarine 36 report: unexpected subtype {} for Quantum",
@@ -157,29 +214,33 @@ impl RaymarineLocatorState {
                                 return Ok(None);
                             }
                         }
-                        Model::RD => {
-                            if subtype != 0x01 {
-                                log::warn!(
-                                    "{}: Raymarine 36 report: unexpected subtype {} for RD",
-                                    from,
-                                    subtype
-                                );
-                                return Ok(None);
+                        BaseModel::RD => {
+                            match subtype {
+                                0x01 => {} // Continue
+                                8 | 21 | 26 | 27 | 30 | 35 => {
+                                    // Known unknowns
+                                    return Ok(None);
+                                }
+                                _ => {
+                                    log::warn!(
+                                        "{}: Raymarine 36 report: unexpected subtype {} for RD",
+                                        from,
+                                        subtype
+                                    );
+                                    return Ok(None);
+                                }
                             }
                         }
                     }
-                    let doppler = match model {
-                        Model::Quantum => true, // Quantum supports Doppler TODO: Q24D only!
-                        Model::RD => false,     // RD does not support Doppler
-                    };
+                    let doppler = false; // Improved later when model is known better
 
                     let (spokes_per_revolution, max_spoke_len) = match model {
-                        Model::Quantum => (QUANTUM_SPOKES_PER_REVOLUTION, QUANTUM_SPOKE_LEN),
-                        Model::RD => (RD_SPOKES_PER_REVOLUTION, RD_SPOKE_LEN),
+                        BaseModel::Quantum => (QUANTUM_SPOKES_PER_REVOLUTION, QUANTUM_SPOKE_LEN),
+                        BaseModel::RD => (RD_SPOKES_PER_REVOLUTION, RD_SPOKE_LEN),
                     };
 
-                    let radar_addr: SocketAddrV4 = data.data.into();
-                    let radar_send: SocketAddrV4 = data.radar.into();
+                    let radar_addr: SocketAddrV4 = data.report.into();
+                    let radar_send: SocketAddrV4 = data.command.into();
                     let location_info: RadarInfo = RadarInfo::new(
                         self.session.clone(),
                         LocatorId::Raymarine,
@@ -233,7 +294,7 @@ impl RaymarineLocatorState {
 
                 match subtype {
                     0x66 => {
-                        let model = Model::Quantum;
+                        let model = BaseModel::Quantum;
                         let model_name: Option<String> =
                             c_string(&data.model_name).map(String::from);
 
@@ -271,7 +332,7 @@ impl RaymarineLocatorState {
                         }
                     }
                     0x01 => {
-                        let model = Model::RD;
+                        let model = BaseModel::RD;
                         let model_name = Some(model.to_string());
 
                         if self
@@ -326,17 +387,6 @@ impl RaymarineLocatorState {
         if let Some(mut info) = radars.located(info) {
             // It's new, start the RadarProcessor thread
 
-            // Load the model name afresh, it may have been modified from persisted data
-            let model = match info.controls.model_name() {
-                Some(s) => Model::new(&s),
-                None => Model::RD,
-            };
-            let info2 = info.clone();
-            settings::update_when_model_known(&mut info.controls, model, &info2);
-            let doppler_supported = false;
-            info.set_legend(doppler_supported);
-            radars.update(&info);
-
             // Clone everything moved into future twice or more
             if self.session.read().unwrap().args.output {
                 let info_clone2 = info.clone();
@@ -354,7 +404,6 @@ impl RaymarineLocatorState {
                 self.session.clone(),
                 info_clone,
                 radars.clone(),
-                model,
             );
 
             // subsys.start(SubsystemBuilder::new(

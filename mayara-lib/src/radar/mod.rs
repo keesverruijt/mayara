@@ -2,6 +2,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use enum_primitive_derive::Primitive;
 use log::info;
+use protobuf::Message;
 use serde::ser::{SerializeMap, Serializer};
 use serde::Serialize;
 use std::str::FromStr;
@@ -16,11 +17,13 @@ use thiserror::Error;
 use tokio_graceful_shutdown::SubsystemHandle;
 
 pub(crate) mod range;
+pub(crate) mod spoke;
 pub(crate) mod target;
 pub(crate) mod trail;
 
 use crate::config::Persistence;
 use crate::locator::LocatorId;
+use crate::protos::RadarMessage::RadarMessage;
 use crate::settings::{ControlError, ControlType, ControlUpdate, ControlValue, SharedControls};
 use crate::{Brand, Session, TargetMode};
 use range::{RangeDetection, Ranges};
@@ -30,6 +33,8 @@ pub(crate) const NAUTICAL_MILE_F64: f64 = 1852.; // 1 nautical mile in meters
 
 // A "native to radar" bearing, usually [0..2048] or [0..4096] or [0..8192]
 pub(crate) type SpokeBearing = u16;
+
+pub(crate) const BYTE_LOOKUP_LENGTH: usize = (u8::MAX as usize) + 1;
 
 #[derive(Error, Debug)]
 pub enum RadarError {
@@ -269,8 +274,37 @@ impl RadarInfo {
         self.key.to_owned()
     }
 
-    pub fn set_legend(&mut self, doppler: bool) {
-        self.legend = default_legend(self.session.clone(), doppler, self.pixel_values);
+    pub fn set_doppler(&mut self, doppler: bool) {
+        if doppler != self.doppler {
+            self.legend = default_legend(self.session.clone(), doppler, self.pixel_values);
+        }
+        self.doppler = doppler;
+    }
+
+    pub fn set_pixel_values(&mut self, pixel_values: u8) {
+        if pixel_values != self.pixel_values {
+            self.legend = default_legend(self.session.clone(), self.doppler, pixel_values);
+        }
+        self.pixel_values = pixel_values;
+    }
+
+    pub fn set_rotation_length(&mut self, millis: u32) -> u32 {
+        let diff = millis as f64;
+        let rpm = format!("{:.0}", (600_000. / diff));
+
+        log::debug!(
+            "{}: rotation speed elapsed {} = {} RPM",
+            self.key,
+            diff,
+            rpm
+        );
+
+        if diff < 10000. && diff > 300. {
+            let _ = self.controls.set_string(&ControlType::RotationSpeed, rpm);
+            diff as u32
+        } else {
+            0
+        }
     }
 
     pub fn full_rotation(&mut self) -> u32 {
@@ -293,6 +327,25 @@ impl RadarInfo {
             diff as u32
         } else {
             0
+        }
+    }
+
+    pub fn broadcast_radar_message(&self, message: RadarMessage) {
+        let mut bytes = Vec::new();
+        message
+            .write_to_vec(&mut bytes)
+            .expect("Cannot write RadarMessage to vec");
+
+        // Send the message to all receivers, normally the web client(s)
+        // We send raw bytes to avoid encoding overhead in each web client.
+        // This strategy will change when clients want different protocols.
+        match self.message_tx.send(bytes) {
+            Err(e) => {
+                log::trace!("{}: Dropping received spoke: {}", self.key, e);
+            }
+            Ok(count) => {
+                log::trace!("{}: sent to {} receivers", self.key, count);
+            }
         }
     }
 
@@ -611,6 +664,10 @@ fn default_legend(session: Session, doppler: bool, pixel_values: u8) -> Legend {
     let mut pixel_values = pixel_values;
     if pixel_values > 255 - 32 - 2 {
         pixel_values = 255 - 32 - 2;
+    }
+
+    if pixel_values == 0 {
+        return legend;
     }
 
     let pixels_with_color = pixel_values - 1;

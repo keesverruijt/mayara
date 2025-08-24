@@ -278,7 +278,7 @@ function setControl(v) {
       i.style.display = display;
     }
 
-    if (control.hasEnabled && "enabled" in v) {
+    if ("enabled" in v) {
       let checkbox = i.parentNode.querySelector(".myr_enabled");
       if (checkbox) {
         checkbox.checked = v.enabled;
@@ -359,7 +359,7 @@ function buildControls() {
     if (v["hasAuto"]) {
       van.add(get_element_by_server_id(k).parentNode, AutoButton(k));
     }
-    if (v["hasEnabled"]) {
+    if (v["hasEnabled"] && !v["isReadOnly"]) {
       van.add(get_element_by_server_id(k).parentNode, EnabledButton(k));
     }
   }

@@ -411,7 +411,7 @@ impl NavicoLocatorState {
             if model != Model::Unknown {
                 let info2 = info.clone();
                 settings::update_when_model_known(&mut info.controls, model, &info2);
-                info.set_legend(model == Model::HALO);
+                info.set_doppler(model == Model::HALO);
                 radars.update(&info);
             }
 
@@ -428,7 +428,7 @@ impl NavicoLocatorState {
                 }));
             }
 
-            let data_receiver = data::NavicoDataReceiver::new(self.session.clone(), info);
+            let data_receiver = data::NavicoDataReceiver::new(&self.session, info);
             let report_receiver = report::NavicoReportReceiver::new(
                 self.session.clone(),
                 info_clone,

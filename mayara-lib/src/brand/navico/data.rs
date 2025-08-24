@@ -1,7 +1,6 @@
 use bincode::deserialize;
 use protobuf::Message;
 use serde::Deserialize;
-use std::f64::consts::PI;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{io, time::Duration};
 use tokio::net::UdpSocket;
@@ -12,15 +11,13 @@ use trail::TrailBuffer;
 use crate::brand::navico::NAVICO_SPOKE_LEN;
 use crate::locator::LocatorId;
 use crate::network::create_udp_multicast_listen;
-use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
-use crate::settings::{ControlType, DataUpdate};
+use crate::radar::spoke::{to_protobuf_spoke, GenericSpoke};
+use crate::settings::DataUpdate;
 use crate::util::PrintableSpoke;
 use crate::{radar::*, Session};
 
 use super::{NAVICO_SPOKES, NAVICO_SPOKES_RAW, RADAR_LINE_DATA_LENGTH, SPOKES_PER_FRAME};
-
-const BYTE_LOOKUP_LENGTH: usize = (u8::MAX as usize) + 1;
 
 /*
  Heading on radar. Observed in field:
@@ -99,7 +96,7 @@ const FRAME_HEADER_LENGTH: usize = size_of::<FrameHeader>();
 const RADAR_LINE_HEADER_LENGTH: usize = size_of::<Br4gHeader>();
 const RADAR_LINE_LENGTH: usize = size_of::<RadarLine>();
 
-// The LookupSpokEnum is an index into an array, really
+// The LookupSpokeEnum is an index into an array, really
 enum LookupSpokeEnum {
     LowNormal = 0,
     LowBoth = 1,
@@ -111,7 +108,6 @@ enum LookupSpokeEnum {
 const LOOKUP_SPOKE_LENGTH: usize = (LookupSpokeEnum::HighApproaching as usize) + 1;
 
 pub struct NavicoDataReceiver {
-    session: Session,
     key: String,
     statistics: Statistics,
     info: RadarInfo,
@@ -121,23 +117,18 @@ pub struct NavicoDataReceiver {
     pixel_to_blob: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH],
     trails: TrailBuffer,
     prev_angle: u16,
+    replay: bool,
 }
 
 impl NavicoDataReceiver {
-    pub fn new(session: Session, info: RadarInfo) -> NavicoDataReceiver {
+    pub fn new(session: &Session, info: RadarInfo) -> NavicoDataReceiver {
         let key = info.key();
 
         let data_update_rx = info.controls.data_update_subscribe();
 
         let pixel_to_blob = Self::pixel_to_blob(&info.legend);
-        let mut trails = TrailBuffer::new(session.clone(), &info);
-
-        if let Some(control) = info.controls.get(&ControlType::DopplerTrailsOnly) {
-            if let Some(value) = control.value {
-                let value = value > 0.;
-                trails.set_doppler_trail_only(value);
-            }
-        }
+        let trails = TrailBuffer::new(session.clone(), &info);
+        let replay = session.read().unwrap().args.replay;
 
         log::debug!(
             "{}: Creating NavicoDataReceiver with pixel_to_blob {:?}",
@@ -146,7 +137,6 @@ impl NavicoDataReceiver {
         );
 
         NavicoDataReceiver {
-            session,
             key,
             statistics: Statistics::new(),
             info,
@@ -156,6 +146,7 @@ impl NavicoDataReceiver {
             pixel_to_blob,
             trails,
             prev_angle: 0,
+            replay,
         }
     }
 
@@ -316,22 +307,27 @@ impl NavicoDataReceiver {
             return;
         }
 
-        let mut scanlines_in_packet = (data.len() - FRAME_HEADER_LENGTH) / RADAR_LINE_LENGTH;
-        if scanlines_in_packet != 32 {
+        let mut spokes_in_frame = (data.len() - FRAME_HEADER_LENGTH) / RADAR_LINE_LENGTH;
+        if spokes_in_frame != 32 {
             self.statistics.broken_packets += 1;
-            if scanlines_in_packet > 32 {
-                scanlines_in_packet = 32;
+            if spokes_in_frame > 32 {
+                spokes_in_frame = 32;
             }
         }
 
-        log::trace!("Received UDP frame with {} spokes", &scanlines_in_packet);
+        log::trace!("Received UDP frame with {} spokes", &spokes_in_frame);
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .ok();
 
         let mut mark_full_rotation = false;
         let mut message = RadarMessage::new();
         message.radar = self.info.id as u32;
 
         let mut offset: usize = FRAME_HEADER_LENGTH;
-        for scanline in 0..scanlines_in_packet {
+        for scanline in 0..spokes_in_frame {
             let header_slice = &data[offset..offset + RADAR_LINE_HEADER_LENGTH];
             let spoke_slice = &data[offset + RADAR_LINE_HEADER_LENGTH
                 ..offset + RADAR_LINE_HEADER_LENGTH + RADAR_LINE_DATA_LENGTH];
@@ -343,9 +339,17 @@ impl NavicoDataReceiver {
                     scanline,
                     PrintableSpoke::new(spoke_slice)
                 );
-                message
-                    .spokes
-                    .push(self.process_spoke(range, angle, heading, spoke_slice));
+                let mut spoke = to_protobuf_spoke(
+                    &self.info,
+                    range,
+                    angle,
+                    heading,
+                    now,
+                    self.process_spoke(spoke_slice),
+                );
+                self.trails.update_trails(&mut spoke, &self.info.legend);
+                message.spokes.push(spoke);
+
                 if angle < self.prev_angle {
                     mark_full_rotation = true;
                 }
@@ -372,22 +376,7 @@ impl NavicoDataReceiver {
             self.statistics.full_rotation(&self.key);
         }
 
-        let mut bytes = Vec::new();
-        message
-            .write_to_vec(&mut bytes)
-            .expect("Cannot write RadarMessage to vec");
-
-        // Send the message to all receivers, normally the web client(s)
-        // We send raw bytes to avoid encoding overhead in each web client.
-        // This strategy will change when clients want different protocols.
-        match self.info.message_tx.send(bytes) {
-            Err(e) => {
-                log::trace!("{}: Dropping received spoke: {}", self.key, e);
-            }
-            Ok(count) => {
-                log::trace!("{}: sent to {} receivers", self.key, count);
-            }
-        }
+        self.info.broadcast_radar_message(message);
     }
 
     fn validate_header(
@@ -480,13 +469,7 @@ impl NavicoDataReceiver {
         Some((range, angle, heading))
     }
 
-    fn process_spoke(
-        &mut self,
-        range: u32,
-        angle: SpokeBearing,
-        heading: Option<u16>,
-        spoke: &[u8],
-    ) -> Spoke {
+    fn process_spoke(&self, spoke: &[u8]) -> GenericSpoke {
         let pixel_to_blob = &self.pixel_to_blob;
 
         // Convert the spoke data to bytes
@@ -508,7 +491,7 @@ impl NavicoDataReceiver {
             generic_spoke.push(pixel_to_blob[high_nibble_index][pixel]);
         }
 
-        if self.session.read().unwrap().args.replay {
+        if self.replay {
             // Generate circle at extreme range
             let pixel = 0xff as usize;
             generic_spoke.pop();
@@ -517,39 +500,6 @@ impl NavicoDataReceiver {
             generic_spoke.push(pixel_to_blob[high_nibble_index][pixel]);
         }
 
-        log::trace!(
-            "Spoke {}/{:?}/{} len {}",
-            range,
-            heading,
-            angle,
-            generic_spoke.len()
-        );
-
-        let heading = if heading.is_some() {
-            heading.map(|h| (((h / 2) + angle) % (NAVICO_SPOKES as u16)) as u32)
-        } else {
-            let heading = crate::navdata::get_heading_true();
-            heading.map(|h| {
-                (((h * NAVICO_SPOKES as f64 / (2. * PI)) as u16 + angle) % (NAVICO_SPOKES as u16))
-                    as u32
-            })
-        };
-        let time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .ok();
-
-        let mut spoke = Spoke::new();
-        spoke.range = range;
-        spoke.angle = angle as u32;
-        spoke.bearing = heading;
-
-        (spoke.lat, spoke.lon) = crate::navdata::get_position_i64();
-        spoke.time = time;
-        spoke.data = generic_spoke;
-
-        self.trails.update_trails(&mut spoke, &self.info.legend);
-
-        spoke
+        generic_spoke
     }
 }

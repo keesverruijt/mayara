@@ -60,6 +60,14 @@ impl TrailBuffer {
             _ => None,
         };
 
+        let mut minimal_legend_value = 0;
+        if let Some(control) = info.controls.get(&ControlType::DopplerTrailsOnly) {
+            if let Some(value) = control.value {
+                let value = value > 0.;
+                minimal_legend_value = Self::compute_minimal_legend_value(&legend, value);
+            }
+        }
+
         TrailBuffer {
             session: session.clone(),
             legend,
@@ -619,11 +627,15 @@ impl TrailBuffer {
         self.relative_trails.fill(0);
     }
 
-    pub fn set_doppler_trail_only(&mut self, v: bool) {
-        self.minimal_legend_value = if v {
-            self.legend.doppler_approaching
+    fn compute_minimal_legend_value(legend: &Legend, doppler_only: bool) -> u8 {
+        if doppler_only {
+            legend.doppler_approaching
         } else {
-            self.legend.strong_return
-        };
+            legend.strong_return
+        }
+    }
+
+    pub fn set_doppler_trail_only(&mut self, v: bool) {
+        self.minimal_legend_value = Self::compute_minimal_legend_value(&self.legend, v);
     }
 }

@@ -1,15 +1,12 @@
-use std::cmp::{max, min};
-
-use log::{debug, trace};
 use tokio::net::UdpSocket;
 
 use crate::network::create_multicast_send;
 use crate::radar::range::Ranges;
 use crate::radar::{RadarError, RadarInfo};
-use crate::settings::{ControlType, ControlValue, Controls, SharedControls};
+use crate::settings::{ControlType, ControlValue, SharedControls};
 use crate::Session;
 
-use super::Model;
+use super::BaseModel;
 
 mod quantum;
 mod rd;
@@ -17,19 +14,17 @@ mod rd;
 pub struct Command {
     key: String,
     info: RadarInfo,
-    model: Model,
+    model: BaseModel,
     sock: Option<UdpSocket>,
-    fake_errors: bool,
 }
 
 impl Command {
-    pub fn new(session: Session, info: RadarInfo, model: Model) -> Self {
+    pub fn new(info: RadarInfo, model: BaseModel) -> Self {
         Command {
             key: info.key(),
             info,
             model,
             sock: None,
-            fake_errors: session.read().unwrap().args.fake_errors,
         }
     }
 
@@ -40,18 +35,23 @@ impl Command {
     async fn start_socket(&mut self) -> Result<(), RadarError> {
         match create_multicast_send(&self.info.send_command_addr, &self.info.nic_addr) {
             Ok(sock) => {
-                debug!(
+                log::debug!(
                     "{} {} via {}: sending commands",
-                    self.key, &self.info.send_command_addr, &self.info.nic_addr
+                    self.key,
+                    &self.info.send_command_addr,
+                    &self.info.nic_addr
                 );
                 self.sock = Some(sock);
 
                 Ok(())
             }
             Err(e) => {
-                debug!(
+                log::debug!(
                     "{} {} via {}: create multicast failed: {}",
-                    self.key, &self.info.send_command_addr, &self.info.nic_addr, e
+                    self.key,
+                    &self.info.send_command_addr,
+                    &self.info.nic_addr,
+                    e
                 );
                 Err(RadarError::Io(e))
             }
@@ -64,7 +64,7 @@ impl Command {
         }
         if let Some(sock) = &self.sock {
             sock.send(message).await.map_err(RadarError::Io)?;
-            trace!("{}: sent {:02X?}", self.key, message);
+            log::trace!("{}: sent {:02X?}", self.key, message);
         }
 
         Ok(())
@@ -122,13 +122,9 @@ impl Command {
             .parse::<f32>()
             .map_err(|_| RadarError::MissingValue(cv.id))?;
 
-        if self.fake_errors && cv.id == ControlType::Rain && value > 10. {
-            return Self::generate_fake_error(value as i32);
-        }
-
         match self.model {
-            Model::RD => rd::set_control(self, cv, value, controls).await,
-            Model::Quantum => quantum::set_control(self, cv, value, controls).await,
+            BaseModel::RD => rd::set_control(self, cv, value, controls).await,
+            BaseModel::Quantum => quantum::set_control(self, cv, value, controls).await,
         }
     }
 
