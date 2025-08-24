@@ -1,7 +1,6 @@
 use anyhow::{bail, Error};
 use std::collections::HashMap;
 use std::io;
-use std::mem::transmute;
 use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::sync::broadcast;
@@ -10,15 +9,14 @@ use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::brand::raymarine::RaymarineModel;
 use crate::network::create_udp_multicast_listen;
-use crate::radar::range::{Range, Ranges};
+use crate::radar::range::Ranges;
 use crate::radar::trail::TrailBuffer;
-use crate::radar::{Legend, RadarError, RadarInfo, SharedRadars, Status, BYTE_LOOKUP_LENGTH};
+use crate::radar::{Legend, RadarError, RadarInfo, SharedRadars, Statistics, BYTE_LOOKUP_LENGTH};
 use crate::settings::{ControlType, ControlUpdate, DataUpdate};
 use crate::Session;
 
 // use super::command::Command;
 use super::command::Command;
-use super::BaseModel;
 
 mod quantum;
 mod rd;
@@ -95,9 +93,11 @@ pub(crate) struct RaymarineReportReceiver {
     reported_unknown: HashMap<u32, bool>,
 
     // For data (spokes)
+    statistics: Statistics,
     range_meters: u32,
     pixel_to_blob: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH],
     trails: TrailBuffer,
+    prev_angle: u16,
 }
 
 impl RaymarineReportReceiver {
@@ -138,9 +138,11 @@ impl RaymarineReportReceiver {
             data_update_tx,
             control_update_rx,
             reported_unknown: HashMap::new(),
+            statistics: Statistics::new(),
             range_meters: 0,
             pixel_to_blob,
             trails,
+            prev_angle: 0,
         }
     }
 

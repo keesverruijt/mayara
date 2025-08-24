@@ -70,6 +70,8 @@ const SPOKE_HEADER_1_LENGTH: usize = size_of::<SpokeHeader1>();
 const SPOKE_DATA_LENGTH: usize = size_of::<SpokeHeader3>();
 
 pub(crate) fn process_frame(receiver: &mut RaymarineReportReceiver, data: &[u8]) {
+    let mut mark_full_rotation = false;
+
     if receiver.state != ReceiverState::StatusRequestReceived {
         log::trace!("{}: Skip scan: not all reports seen", receiver.key);
         return;
@@ -226,15 +228,43 @@ pub(crate) fn process_frame(receiver: &mut RaymarineReportReceiver, data: &[u8])
 
         next_offset += header3.length as usize - SPOKE_DATA_LENGTH;
 
+        if angle < receiver.prev_angle {
+            mark_full_rotation = true;
+        }
+        let spokes_per_revolution = receiver.info.spokes_per_revolution as u16;
+        if receiver.prev_angle < spokes_per_revolution
+            && ((receiver.prev_angle + 1) % spokes_per_revolution) != angle
+        {
+            receiver.statistics.missing_spokes +=
+                (angle + spokes_per_revolution - receiver.prev_angle - 1) as usize
+                    % spokes_per_revolution as usize;
+            log::trace!(
+                "{}: Spoke angle {} is not consecutive to previous angle {}, new missing spokes {}",
+                receiver.key,
+                angle,
+                receiver.prev_angle,
+                receiver.statistics.missing_spokes
+            );
+        }
+        receiver.statistics.received_spokes += 1;
+        receiver.prev_angle = angle;
+
         scanline += 1;
     }
     if scanline != nspokes {
-        log::warn!(
+        log::debug!(
             "{}: Scanline count mismatch, header {} vs actual {}",
             receiver.key,
             nspokes,
             scanline
         );
+        receiver.statistics.broken_packets += 1;
+    }
+
+    if mark_full_rotation {
+        let ms = receiver.info.full_rotation();
+        receiver.trails.set_rotation_speed(ms);
+        receiver.statistics.full_rotation(&receiver.key);
     }
 
     receiver.info.broadcast_radar_message(message);
