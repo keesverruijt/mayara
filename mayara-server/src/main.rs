@@ -25,7 +25,7 @@ async fn main() -> Result<()> {
     let log_level = args.verbose.log_level_filter();
     env_logger::Builder::from_env(Env::default())
         .filter_level(log_level)
-        .filter_module("tungstenite::protocol", log::LevelFilter::Info)
+        .filter_module("tungstenite", log::LevelFilter::Info)
         .filter_module("mdns_sd", log::LevelFilter::Info)
         .filter_module("polling", log::LevelFilter::Info)
         .init();

@@ -978,6 +978,15 @@ impl Control {
         enabled: Option<bool>,
     ) -> Result<Option<()>, ControlError> {
         // SCALE MAPPING
+        log::trace!(
+            "{}: set(value={},auto_value={:?},auto={:?},enabled={:?}) with item {:?}",
+            self.item.name,
+            value,
+            auto_value,
+            auto,
+            enabled,
+            self.item
+        );
         if let Some(wire_offset) = self.item.wire_offset {
             if wire_offset > 0.0 {
                 value -= wire_offset;
@@ -1086,12 +1095,14 @@ impl Control {
     ///
     pub fn set_wire_range(&mut self, min: f32, max: f32) -> Result<Option<()>, ControlError> {
         if Some(min) != self.item.wire_offset || Some(max) != self.item.wire_scale_factor {
+            log::debug!(
+                "{}: new wire offset {} and scale {}",
+                self.item.name,
+                min,
+                max - min,
+            );
             self.item.wire_offset = if min != 0.0 { Some(min) } else { None };
             self.item.wire_scale_factor = Some(max - min);
-
-            if let Some(value) = self.value {
-                return self.set(value, None, None, None);
-            }
         }
         Ok(None)
     }
