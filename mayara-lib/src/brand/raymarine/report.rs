@@ -268,13 +268,15 @@ impl RaymarineReportReceiver {
             }
         }
     }
-    fn set(
+    fn set<T>(
         &mut self,
         control_type: &ControlType,
-        value: f32,
+        value: T,
         auto: Option<bool>,
         enabled: Option<bool>,
-    ) {
+    ) where
+        f32: From<T>,
+    {
         match self
             .info
             .controls
@@ -300,15 +302,24 @@ impl RaymarineReportReceiver {
         };
     }
 
-    fn set_value(&mut self, control_type: &ControlType, value: f32) {
-        self.set(control_type, value, None, None)
+    fn set_value<T>(&mut self, control_type: &ControlType, value: T)
+    where
+        f32: From<T>,
+    {
+        self.set(control_type, value.into(), None, None)
     }
 
-    fn set_value_auto(&mut self, control_type: &ControlType, value: f32, auto: u8) {
+    fn set_value_auto<T>(&mut self, control_type: &ControlType, value: T, auto: u8)
+    where
+        f32: From<T>,
+    {
         self.set(control_type, value, Some(auto > 0), None)
     }
 
-    fn set_value_enabled(&mut self, control_type: &ControlType, value: f32, enabled: u8) {
+    fn set_value_enabled<T>(&mut self, control_type: &ControlType, value: T, enabled: u8)
+    where
+        f32: From<T>,
+    {
         self.set(control_type, value, None, Some(enabled > 0))
     }
 

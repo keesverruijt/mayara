@@ -431,25 +431,23 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
     receiver.set_value(&ControlType::Range, range_meters as f32);
     receiver.set_value_auto(&ControlType::Gain, report.gain as f32, report.auto_gain);
 
-    receiver.set_value_auto(&ControlType::Sea, report.sea as f32, report.auto_sea);
-    receiver.set_value_enabled(&ControlType::Rain, report.rain as f32, report.rain_enabled);
-    receiver.set_value_enabled(&ControlType::Ftc, report.ftc as f32, report.ftc_enabled);
-    receiver.set_value_auto(&ControlType::Tune, report.tune as f32, report.auto_tune);
-    receiver.set_value(
-        &ControlType::TargetExpansion,
-        report.target_expansion as f32,
-    );
+    receiver.set_value_auto(&ControlType::Sea, report.sea, report.auto_sea);
+    receiver.set_value_enabled(&ControlType::Rain, report.rain, report.rain_enabled);
+    receiver.set_value_enabled(&ControlType::Ftc, report.ftc, report.ftc_enabled);
+    receiver.set_value_auto(&ControlType::Tune, report.tune, report.auto_tune);
+    receiver.set_value(&ControlType::TargetExpansion, report.target_expansion);
     receiver.set_value(
         &ControlType::InterferenceRejection,
-        report.interference_rejection as f32,
+        report.interference_rejection,
     );
-    receiver.set_value(&ControlType::BearingAlignment, report.bearing_offset as f32);
-    receiver.set_value(&ControlType::MainBangSuppression, report.mbs_enabled as f32);
+    receiver.set_value(&ControlType::BearingAlignment, report.bearing_offset);
+    receiver.set_value(&ControlType::MainBangSuppression, report.mbs_enabled);
     receiver.set_value_enabled(
         &ControlType::WarmupTime,
-        report.warmup_time as f32,
+        report.warmup_time,
         report.warmup_time,
     );
+    receiver.set_value(&ControlType::SignalStrength, report.signal_strength);
 }
 
 #[derive(Deserialize, Debug, Clone, Copy)]
@@ -525,16 +523,10 @@ pub(super) fn process_fixed_report(receiver: &mut RaymarineReportReceiver, data:
     }
 
     if receiver.model.is_some() {
-        receiver.set_value(&ControlType::OperatingHours, report.magnetron_time as f32);
-        receiver.set_value(
-            &ControlType::MagnetronCurrent,
-            report.magnetron_current as f32,
-        );
-        receiver.set_value(
-            &ControlType::SignalStrength,
-            report.signal_strength_value as f32,
-        );
-        receiver.set_value(&ControlType::DisplayTiming, report.display_timing as f32);
+        receiver.set_value(&ControlType::OperatingHours, report.magnetron_time);
+        receiver.set_value(&ControlType::MagnetronCurrent, report.magnetron_current);
+        receiver.set_value(&ControlType::SignalStrength, report.signal_strength_value);
+        receiver.set_value(&ControlType::DisplayTiming, report.display_timing);
 
         receiver.set_wire_range(&ControlType::Gain, report.gain_min, report.gain_max);
         receiver.set_wire_range(&ControlType::Sea, report.sea_min, report.sea_max);
@@ -585,6 +577,7 @@ pub(super) fn process_info_report(receiver: &mut RaymarineReportReceiver, data: 
         model.name,
         serial_nr
     );
+    receiver.set_string(&ControlType::SerialNumber, serial_nr.clone());
     receiver.info.serial_no = Some(serial_nr);
     receiver.info.spokes_per_revolution = model.max_spoke_len as u16;
     receiver.info.max_spoke_len = model.max_spoke_len as u16;

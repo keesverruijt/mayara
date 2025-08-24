@@ -391,18 +391,21 @@ impl SharedControls {
         }
     }
 
-    pub fn set_value_auto_enabled(
+    pub fn set_value_auto_enabled<T>(
         &self,
         control_type: &ControlType,
-        value: f32,
+        value: T,
         auto: Option<bool>,
         enabled: Option<bool>,
-    ) -> Result<Option<()>, ControlError> {
+    ) -> Result<Option<()>, ControlError>
+    where
+        f32: From<T>,
+    {
         let control = {
             let mut locked = self.controls.write().unwrap();
             if let Some(control) = locked.controls.get_mut(control_type) {
                 Ok(control
-                    .set(value, None, auto, enabled)?
+                    .set(value.into(), None, auto, enabled)?
                     .map(|_| control.clone()))
             } else {
                 Err(ControlError::NotSupported(*control_type))
@@ -1094,15 +1097,18 @@ impl Control {
     /// to be broadcast to listeners.
     ///
     pub fn set_wire_range(&mut self, min: f32, max: f32) -> Result<Option<()>, ControlError> {
-        if Some(min) != self.item.wire_offset || Some(max) != self.item.wire_scale_factor {
+        let max = Some(max - min);
+        let min = if min != 0.0 { Some(min) } else { None };
+
+        if min != self.item.wire_offset || max != self.item.wire_scale_factor {
             log::debug!(
-                "{}: new wire offset {} and scale {}",
+                "{}: new wire offset {:?} and scale {:?}",
                 self.item.name,
                 min,
-                max - min,
+                max,
             );
-            self.item.wire_offset = if min != 0.0 { Some(min) } else { None };
-            self.item.wire_scale_factor = Some(max - min);
+            self.item.wire_offset = min;
+            self.item.wire_scale_factor = max;
         }
         Ok(None)
     }
