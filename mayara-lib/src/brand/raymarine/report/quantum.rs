@@ -11,52 +11,37 @@ use crate::radar::spoke::{to_protobuf_spoke, GenericSpoke};
 use crate::radar::{SpokeBearing, Status};
 use crate::settings::ControlType;
 
-use super::super::report::RaymarineReportReceiver;
-
-#[derive(Deserialize, Debug, Clone, Copy)]
-#[repr(packed)]
-
-struct SpokeHeader {
-    _field01: u32,  //
-    _counter1: u16, //
-    _field02: u16,  // 0x0101
-    _field03: u32,
-    _field04: u32,
-    _counter2: u16,
-    data_len: u16, // length of the rest of the data
-}
+use super::{RaymarineReportReceiver, ReceiverState};
 
 #[derive(Deserialize, Debug, Clone, Copy)]
 #[repr(packed)]
 struct FrameHeader {
     _type: u32, // 0x00280003
-    _seq_num: u16,
+    seq_num: u16,
     _something_1: u16,      // 0x0101
     scan_len: u16,          // 0x002b
     num_spokes: u16,        // 0x00fa
     _something_3: u16,      // 0x0008
     returns_per_range: u16, // number of radar returns per range from the status
     azimuth: u16,
-    _data_len: u16, // length of the rest of the data
+    data_len: u16, // length of the rest of the data
 }
 
-const SPOKE_HEADER_LENGTH: usize = size_of::<SpokeHeader>();
 const FRAME_HEADER_LENGTH: usize = size_of::<FrameHeader>();
 
 pub(crate) fn process_frame(receiver: &mut RaymarineReportReceiver, data: &[u8]) {
-    if receiver.range_meters <= 1 {
-        log::debug!("{}: Skip scan: Invalid range", receiver.key);
+    if receiver.state != ReceiverState::StatusRequestReceived {
+        log::trace!("{}: Skip scan: not all reports seen", receiver.key);
         return;
     }
-    if data.len() < FRAME_HEADER_LENGTH + FRAME_HEADER_LENGTH {
+
+    if data.len() < FRAME_HEADER_LENGTH {
         log::warn!(
-            "UDP data frame with even less than one spoke, len {} dropped",
+            "UDP data frame with even less than header, len {} dropped",
             data.len()
         );
         return;
     }
-    log::trace!("{}: Scandata {:02X?}", receiver.key, data);
-
     let header = &data[..FRAME_HEADER_LENGTH];
     let header: FrameHeader = match bincode::deserialize(header) {
         Ok(h) => h,
@@ -65,12 +50,20 @@ pub(crate) fn process_frame(receiver: &mut RaymarineReportReceiver, data: &[u8])
             return;
         }
     };
+    log::trace!("{}: FrameHeader {:?}", receiver.key, header);
     let nspokes = header.num_spokes;
-    let returns_per_line = header.scan_len as usize;
-    let mut azimuth = header.azimuth as SpokeBearing;
+    let returns_per_range = header.returns_per_range as u32;
+    let returns_per_line = header.scan_len as u32;
+    // Rotate image 180 degrees to get our "0 = up" view
+    let azimuth = (header.azimuth + receiver.info.spokes_per_revolution / 2)
+        % receiver.info.spokes_per_revolution as SpokeBearing;
 
-    if nspokes == 0 || nspokes > 50 {
-        log::warn!("{}: Invalid spoke count {}", receiver.key, nspokes);
+    if nspokes != receiver.info.spokes_per_revolution {
+        log::warn!(
+            "{}: Invalid spokes per revolution {}",
+            receiver.key,
+            nspokes
+        );
         return;
     }
 
@@ -80,49 +73,26 @@ pub(crate) fn process_frame(receiver: &mut RaymarineReportReceiver, data: &[u8])
         .ok();
     let mut message = RadarMessage::new();
 
-    let mut scanline = 0;
     let mut next_offset = FRAME_HEADER_LENGTH;
 
-    while next_offset < data.len() - SPOKE_HEADER_LENGTH {
-        let spoke_header = &data[next_offset..next_offset + SPOKE_HEADER_LENGTH];
-        let spoke_header: SpokeHeader = match bincode::deserialize(spoke_header) {
-            Ok(h) => h,
-            Err(e) => {
-                log::error!("{}: Failed to deserialize header3: {}", receiver.key, e);
-                return;
-            }
-        };
-        next_offset += SPOKE_HEADER_LENGTH;
-        let data_len = spoke_header.data_len as usize;
+    let data_len = header.data_len as usize;
 
-        let spoke = &data[next_offset..next_offset + data_len];
-        next_offset = next_offset + data_len;
+    let spoke = &data[next_offset..next_offset + data_len];
 
-        let mut spoke = to_protobuf_spoke(
-            &receiver.info,
-            receiver.range_meters,
-            azimuth,
-            None,
-            now,
-            process_spoke(returns_per_line, spoke),
-        );
-        receiver
-            .trails
-            .update_trails(&mut spoke, &receiver.info.legend);
-        message.spokes.push(spoke);
+    let mut spoke = to_protobuf_spoke(
+        &receiver.info,
+        receiver.range_meters * returns_per_line / returns_per_range as u32,
+        azimuth,
+        None,
+        now,
+        process_spoke(returns_per_line as usize, spoke),
+    );
+    receiver
+        .trails
+        .update_trails(&mut spoke, &receiver.info.legend);
+    message.spokes.push(spoke);
 
-        next_offset += data_len;
-
-        scanline += 1;
-    }
-    if scanline != nspokes {
-        log::warn!(
-            "{}: Scanline count mismatch, header {} vs actual {}",
-            receiver.key,
-            nspokes,
-            scanline
-        );
-    }
+    next_offset += data_len;
 
     receiver.info.broadcast_radar_message(message);
 }
@@ -132,11 +102,11 @@ fn process_spoke(returns_per_line: usize, spoke: &[u8]) -> GenericSpoke {
     let mut src_offset: usize = 0;
     while src_offset < spoke.len() {
         if spoke[src_offset] != 0x5c {
-            unpacked_data.push(spoke[src_offset]);
+            unpacked_data.push(spoke[src_offset] >> 1);
             src_offset = src_offset + 1;
         } else {
             let count = spoke[src_offset + 1] as usize; // number to be filled
-            let value = spoke[src_offset + 2]; // data to be filled
+            let value = spoke[src_offset + 2] >> 1; // data to be filled
             for _ in 0..count {
                 unpacked_data.push(value);
             }
@@ -150,7 +120,7 @@ fn process_spoke(returns_per_line: usize, spoke: &[u8]) -> GenericSpoke {
 
 #[derive(Deserialize, Debug, Copy, Clone)]
 #[repr(packed)]
-struct QuantumControls {
+struct ControlsPerMode {
     gain_auto: u8,       // @ 0
     gain: u8,            // @ 1
     color_gain_auto: u8, // @ 2
@@ -163,7 +133,7 @@ struct QuantumControls {
 
 #[derive(Deserialize, Debug, Copy, Clone)]
 #[repr(packed)]
-struct QuantumRadarReport {
+struct StatusReport {
     _id: [u8; 4],                   // @0 0x280002
     status: u8,                     // @4 0 - standby ; 1 - transmitting
     _something_1: [u8; 9],          // @5
@@ -173,7 +143,7 @@ struct QuantumRadarReport {
     _something_3: [u8; 2],          // @18
     range_index: u8,                // @20
     mode: u8,                       // @21 harbor - 0, coastal - 1, offshore - 2, weather - 3
-    controls: [QuantumControls; 4], // @22 controls indexed by mode
+    controls: [ControlsPerMode; 4], // @22 controls indexed by mode
     target_expansion: u8,           // @54
     _something_9: u8,               // @55
     _something_10: [u8; 3],         // @56
@@ -183,9 +153,9 @@ struct QuantumRadarReport {
     _something_12: [u8; 32],        // @228
 }
 
-const STATUS_REPORT_LENGTH: usize = size_of::<QuantumRadarReport>();
+const STATUS_REPORT_LENGTH: usize = size_of::<StatusReport>();
 
-impl QuantumRadarReport {
+impl StatusReport {
     fn transmute(receiver: &RaymarineReportReceiver, data: &[u8]) -> Result<Self, anyhow::Error> {
         if data.len() < STATUS_REPORT_LENGTH {
             bail!(
@@ -195,7 +165,7 @@ impl QuantumRadarReport {
             );
         }
         let report = &data[0..STATUS_REPORT_LENGTH];
-        let report: QuantumRadarReport = match bincode::deserialize(report) {
+        let report: StatusReport = match bincode::deserialize(report) {
             Ok(h) => h,
             Err(e) => {
                 bail!("{}: Failed to deserialize header: {}", receiver.key, e);
@@ -205,8 +175,12 @@ impl QuantumRadarReport {
     }
 }
 
-pub(super) fn process_quantum_report(receiver: &mut RaymarineReportReceiver, data: &[u8]) {
-    let report = match QuantumRadarReport::transmute(receiver, data) {
+pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data: &[u8]) {
+    if receiver.model.is_none() {
+        return;
+    }
+
+    let report = match StatusReport::transmute(receiver, data) {
         Ok(r) => r,
         Err(_) => return,
     };
@@ -234,7 +208,8 @@ pub(super) fn process_quantum_report(receiver: &mut RaymarineReportReceiver, dat
 
             ranges.push(Range::new(meters, i));
         }
-        receiver.info.ranges = Ranges::new(ranges.all);
+        receiver.set_ranges(Ranges::new(ranges.all));
+        receiver.radars.update(&receiver.info);
         log::info!(
             "{}: Ranges initialized: {}",
             receiver.key,
@@ -247,6 +222,7 @@ pub(super) fn process_quantum_report(receiver: &mut RaymarineReportReceiver, dat
         .get_distance(report.range_index as usize);
     receiver.set_value(&ControlType::Range, range_meters as f32);
     receiver.range_meters = range_meters as u32;
+    receiver.state = ReceiverState::StatusRequestReceived;
 
     let mode = report.mode as usize;
     if mode <= 3 {
@@ -262,7 +238,7 @@ pub(super) fn process_quantum_report(receiver: &mut RaymarineReportReceiver, dat
             report.controls[mode].color_gain_auto,
         );
         receiver.set_value_auto(
-            &ControlType::SeaState,
+            &ControlType::Sea,
             report.controls[mode].sea as f32,
             report.controls[mode].sea_auto,
         );
@@ -337,6 +313,7 @@ pub(super) fn process_info_report(receiver: &mut RaymarineReportReceiver, data: 
             };
             receiver.command_sender = command_sender;
             receiver.model = Some(model);
+            receiver.state = ReceiverState::InfoRequestReceived;
         }
         None => {
             log::error!("{}: Unknown model serial: {}", receiver.key, model_serial);
