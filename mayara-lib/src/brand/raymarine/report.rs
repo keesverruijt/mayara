@@ -111,7 +111,7 @@ impl RaymarineReportReceiver {
         let args = session.read().unwrap().args.clone();
         let replay = args.replay;
         log::debug!(
-            "{}: Creating NavicoReportReceiver with args {:?}",
+            "{}: Creating RaymarineReportReceiver with args {:?}",
             key,
             args
         );
@@ -387,7 +387,7 @@ impl RaymarineReportReceiver {
                 quantum::process_info_report(self, data);
             }
             0x280002 => {
-                quantum::process_quantum_report(self, data);
+                quantum::process_status_report(self, data);
             }
             0x280003 => {
                 quantum::process_frame(self, data);
