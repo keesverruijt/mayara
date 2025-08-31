@@ -685,11 +685,8 @@ fn default_legend(session: Session, doppler: bool, pixel_values: u8) -> Legend {
     legend.pixels.push(Lookup {
         r#type: PixelType::Normal,
         color: Color {
-            // red starts at 2/3 and peaks at end
             r: 0,
-            // green speaks at 2/3
             g: 0,
-            // blue peaks at 1/3 and is zero by 2/3
             b: 0,
             a: TRANSPARENT,
         },
@@ -700,15 +697,27 @@ fn default_legend(session: Session, doppler: bool, pixel_values: u8) -> Legend {
             r#type: PixelType::Normal,
             color: Color {
                 // red starts at 2/3 and peaks at end
-                r: if v >= two_thirds { 200 } else { 0 },
+                r: if v >= two_thirds {
+                    (255.0 * (v - two_thirds) as f64 / one_third as f64) as u8
+                } else {
+                    0
+                },
                 // green starts at 1/3 and peaks at 2/3
                 g: if v >= one_third && v < two_thirds {
-                    200
+                    (255.0 * (v - one_third) as f64 / one_third as f64) as u8
+                } else if v >= two_thirds {
+                    (255.0 * (pixels_with_color - v) as f64 / one_third as f64) as u8
                 } else {
                     0
                 },
                 // blue peaks at 1/3
-                b: if v < one_third { 200 } else { 0 },
+                b: if v < one_third {
+                    (255.0 * v as f64 / one_third as f64) as u8
+                } else if v >= one_third && v < two_thirds {
+                    (255.0 * (two_thirds - v) as f64 / one_third as f64) as u8
+                } else {
+                    0
+                },
                 a: OPAQUE,
             },
         });
