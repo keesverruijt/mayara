@@ -97,7 +97,7 @@ const RADAR_LINE_HEADER_LENGTH: usize = size_of::<Br4gHeader>();
 const RADAR_LINE_LENGTH: usize = size_of::<RadarLine>();
 
 // The LookupSpokeEnum is an index into an array, really
-enum LookupSpokeEnum {
+enum LookupDoppler {
     LowNormal = 0,
     LowBoth = 1,
     LowApproaching = 2,
@@ -105,7 +105,7 @@ enum LookupSpokeEnum {
     HighBoth = 4,
     HighApproaching = 5,
 }
-const LOOKUP_SPOKE_LENGTH: usize = (LookupSpokeEnum::HighApproaching as usize) + 1;
+const LOOKUP_DOPPLER_LENGTH: usize = (LookupDoppler::HighApproaching as usize) + 1;
 
 pub struct NavicoDataReceiver {
     key: String,
@@ -114,7 +114,7 @@ pub struct NavicoDataReceiver {
     sock: Option<UdpSocket>,
     data_update_rx: tokio::sync::broadcast::Receiver<DataUpdate>,
     doppler: DopplerMode,
-    pixel_to_blob: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH],
+    pixel_to_blob: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_DOPPLER_LENGTH],
     trails: TrailBuffer,
     prev_angle: u16,
     replay: bool,
@@ -174,32 +174,32 @@ impl NavicoDataReceiver {
         }
     }
 
-    fn pixel_to_blob(legend: &Legend) -> [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH] {
-        let mut lookup: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH] =
-            [[0; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH];
+    fn pixel_to_blob(legend: &Legend) -> [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_DOPPLER_LENGTH] {
+        let mut lookup: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_DOPPLER_LENGTH] =
+            [[0; BYTE_LOOKUP_LENGTH]; LOOKUP_DOPPLER_LENGTH];
         // Cannot use for() in const expr, so use while instead
         let mut j: usize = 0;
         while j < BYTE_LOOKUP_LENGTH {
             let low: u8 = (j as u8) & 0x0f;
             let high: u8 = ((j as u8) >> 4) & 0x0f;
 
-            lookup[LookupSpokeEnum::LowNormal as usize][j] = low;
-            lookup[LookupSpokeEnum::LowBoth as usize][j] = match low {
+            lookup[LookupDoppler::LowNormal as usize][j] = low;
+            lookup[LookupDoppler::LowBoth as usize][j] = match low {
                 0x0f => legend.doppler_approaching,
                 0x0e => legend.doppler_receding,
                 _ => low,
             };
-            lookup[LookupSpokeEnum::LowApproaching as usize][j] = match low {
+            lookup[LookupDoppler::LowApproaching as usize][j] = match low {
                 0x0f => legend.doppler_approaching,
                 _ => low,
             };
-            lookup[LookupSpokeEnum::HighNormal as usize][j] = high;
-            lookup[LookupSpokeEnum::HighBoth as usize][j] = match high {
+            lookup[LookupDoppler::HighNormal as usize][j] = high;
+            lookup[LookupDoppler::HighBoth as usize][j] = match high {
                 0x0f => legend.doppler_approaching,
                 0x0e => legend.doppler_receding,
                 _ => high,
             };
-            lookup[LookupSpokeEnum::HighApproaching as usize][j] = match high {
+            lookup[LookupDoppler::HighApproaching as usize][j] = match high {
                 0x0f => legend.doppler_approaching,
                 _ => high,
             };
@@ -475,14 +475,14 @@ impl NavicoDataReceiver {
         // Convert the spoke data to bytes
         let mut generic_spoke: Vec<u8> = Vec::with_capacity(NAVICO_SPOKE_LEN);
         let low_nibble_index = (match self.doppler {
-            DopplerMode::None => LookupSpokeEnum::LowNormal,
-            DopplerMode::Both => LookupSpokeEnum::LowBoth,
-            DopplerMode::Approaching => LookupSpokeEnum::LowApproaching,
+            DopplerMode::None => LookupDoppler::LowNormal,
+            DopplerMode::Both => LookupDoppler::LowBoth,
+            DopplerMode::Approaching => LookupDoppler::LowApproaching,
         }) as usize;
         let high_nibble_index = (match self.doppler {
-            DopplerMode::None => LookupSpokeEnum::HighNormal,
-            DopplerMode::Both => LookupSpokeEnum::HighBoth,
-            DopplerMode::Approaching => LookupSpokeEnum::HighApproaching,
+            DopplerMode::None => LookupDoppler::HighNormal,
+            DopplerMode::Both => LookupDoppler::HighBoth,
+            DopplerMode::Approaching => LookupDoppler::HighApproaching,
         }) as usize;
 
         for pixel in spoke {

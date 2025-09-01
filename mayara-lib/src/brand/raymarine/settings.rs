@@ -36,16 +36,14 @@ pub fn new(session: Session, model: BaseModel) -> SharedControls {
         ControlType::InterferenceRejection,
         Control::new_list(
             ControlType::InterferenceRejection,
-            &["Off", "Low", "Medium", "High"],
+            &["Off", "Level 1", "Level 2", "Level 3", "Level 4", "Level 5"],
         ),
     );
 
-    let mut control =
-        Control::new_numeric(ControlType::Rain, 0., 100.).wire_scale_factor(100., false);
-    if model == BaseModel::RD {
-        control = control.has_enabled();
-    }
-    controls.insert(ControlType::Rain, control);
+    controls.insert(
+        ControlType::Rain,
+        Control::new_numeric(ControlType::Rain, 0., 100.).has_enabled(),
+    );
 
     let mut control =
         Control::new_numeric(ControlType::Ftc, 0., 100.).wire_scale_factor(100., false);
@@ -82,6 +80,11 @@ pub fn new(session: Session, model: BaseModel) -> SharedControls {
             controls.insert(
                 ControlType::TargetExpansion,
                 Control::new_list(ControlType::TargetExpansion, &["Off", "On"]),
+            );
+            controls.insert(
+                ControlType::ColorGain,
+                Control::new_auto(ControlType::ColorGain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE)
+                    .wire_scale_factor(100., false),
             );
         }
         BaseModel::RD => {

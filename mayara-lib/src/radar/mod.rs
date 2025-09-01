@@ -751,9 +751,10 @@ fn default_legend(session: Session, doppler: bool, pixel_values: u8) -> Legend {
         legend.pixels.push(Lookup {
             r#type: PixelType::DopplerApproaching,
             color: Color {
-                r: 200,
-                g: 200,
-                b: 0,
+                // Purple
+                r: 255,
+                g: 0,
+                b: 255,
                 a: OPAQUE,
             },
         });
@@ -761,9 +762,10 @@ fn default_legend(session: Session, doppler: bool, pixel_values: u8) -> Legend {
         legend.pixels.push(Lookup {
             r#type: PixelType::DopplerReceding,
             color: Color {
-                r: 0x90,
-                g: 0xd0,
-                b: 0xf0,
+                // Green
+                r: 0x00,
+                g: 0xff,
+                b: 0x00,
                 a: OPAQUE,
             },
         });

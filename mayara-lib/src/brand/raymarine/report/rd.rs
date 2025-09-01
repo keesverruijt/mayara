@@ -228,26 +228,26 @@ pub(crate) fn process_frame(receiver: &mut RaymarineReportReceiver, data: &[u8])
 
         next_offset += header3.length as usize - SPOKE_DATA_LENGTH;
 
-        if angle < receiver.prev_angle {
+        if angle < receiver.prev_azimuth {
             mark_full_rotation = true;
         }
         let spokes_per_revolution = receiver.info.spokes_per_revolution as u16;
-        if receiver.prev_angle < spokes_per_revolution
-            && ((receiver.prev_angle + 1) % spokes_per_revolution) != angle
+        if receiver.prev_azimuth < spokes_per_revolution
+            && ((receiver.prev_azimuth + 1) % spokes_per_revolution) != angle
         {
             receiver.statistics.missing_spokes +=
-                (angle + spokes_per_revolution - receiver.prev_angle - 1) as usize
+                (angle + spokes_per_revolution - receiver.prev_azimuth - 1) as usize
                     % spokes_per_revolution as usize;
             log::trace!(
                 "{}: Spoke angle {} is not consecutive to previous angle {}, new missing spokes {}",
                 receiver.key,
                 angle,
-                receiver.prev_angle,
+                receiver.prev_azimuth,
                 receiver.statistics.missing_spokes
             );
         }
         receiver.statistics.received_spokes += 1;
-        receiver.prev_angle = angle;
+        receiver.prev_azimuth = angle;
 
         scanline += 1;
     }

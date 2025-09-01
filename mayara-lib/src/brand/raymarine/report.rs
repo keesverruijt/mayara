@@ -25,46 +25,25 @@ mod rd;
 const REPORT_REQUEST_INTERVAL: Duration = Duration::from_millis(5000);
 
 // The LookupSpokeEnum is an index into an array, really
-enum LookupSpokeEnum {
-    LowNormal = 0,
-    LowBoth = 1,
-    LowApproaching = 2,
-    HighNormal = 3,
-    HighBoth = 4,
-    HighApproaching = 5,
+enum LookupDoppler {
+    Normal = 0,
+    Doppler = 1,
 }
-const LOOKUP_SPOKE_LENGTH: usize = (LookupSpokeEnum::HighApproaching as usize) + 1;
+const LOOKUP_DOPPLER_LENGTH: usize = (LookupDoppler::Doppler as usize) + 1;
 
-pub(super) fn pixel_to_blob(legend: &Legend) -> [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH] {
-    let mut lookup: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH] =
-        [[0; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH];
+type PixelToBlobType = [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_DOPPLER_LENGTH];
+
+pub(super) fn pixel_to_blob(legend: &Legend) -> PixelToBlobType {
+    let mut lookup: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_DOPPLER_LENGTH] =
+        [[0; BYTE_LOOKUP_LENGTH]; LOOKUP_DOPPLER_LENGTH];
     // Cannot use for() in const expr, so use while instead
-    let mut j: usize = 0;
-    while j < BYTE_LOOKUP_LENGTH {
-        let low: u8 = (j as u8) & 0x0f;
-        let high: u8 = ((j as u8) >> 4) & 0x0f;
-
-        lookup[LookupSpokeEnum::LowNormal as usize][j] = low;
-        lookup[LookupSpokeEnum::LowBoth as usize][j] = match low {
-            0x0f => legend.doppler_approaching,
-            0x0e => legend.doppler_receding,
-            _ => low,
+    for j in 0..BYTE_LOOKUP_LENGTH {
+        lookup[LookupDoppler::Normal as usize][j] = j as u8 / 2;
+        lookup[LookupDoppler::Doppler as usize][j] = match j {
+            0xff => legend.doppler_approaching,
+            0xfe => legend.doppler_receding,
+            _ => j as u8 / 2,
         };
-        lookup[LookupSpokeEnum::LowApproaching as usize][j] = match low {
-            0x0f => legend.doppler_approaching,
-            _ => low,
-        };
-        lookup[LookupSpokeEnum::HighNormal as usize][j] = high;
-        lookup[LookupSpokeEnum::HighBoth as usize][j] = match high {
-            0x0f => legend.doppler_approaching,
-            0x0e => legend.doppler_receding,
-            _ => high,
-        };
-        lookup[LookupSpokeEnum::HighApproaching as usize][j] = match high {
-            0x0f => legend.doppler_approaching,
-            _ => high,
-        };
-        j += 1;
     }
     lookup
 }
@@ -94,10 +73,11 @@ pub(crate) struct RaymarineReportReceiver {
 
     // For data (spokes)
     statistics: Statistics,
+    pixel_stats: [u32; 256],
     range_meters: u32,
-    pixel_to_blob: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH],
+    pixel_to_blob: PixelToBlobType,
     trails: TrailBuffer,
-    prev_angle: u16,
+    prev_azimuth: u16,
 }
 
 impl RaymarineReportReceiver {
@@ -139,10 +119,11 @@ impl RaymarineReportReceiver {
             control_update_rx,
             reported_unknown: HashMap::new(),
             statistics: Statistics::new(),
+            pixel_stats: [0; 256],
             range_meters: 0,
             pixel_to_blob,
             trails,
-            prev_angle: 0,
+            prev_azimuth: 0,
         }
     }
 

@@ -4,11 +4,12 @@ use std::mem::size_of;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::brand::raymarine::command::Command;
+use crate::brand::raymarine::report::{LookupDoppler, PixelToBlobType};
 use crate::brand::raymarine::{hd_to_pixel_values, settings, RaymarineModel};
 use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::range::{Range, Ranges};
 use crate::radar::spoke::{to_protobuf_spoke, GenericSpoke};
-use crate::radar::{SpokeBearing, Status};
+use crate::radar::{DopplerMode, SpokeBearing, Status};
 use crate::settings::ControlType;
 
 use super::{RaymarineReportReceiver, ReceiverState};
@@ -85,7 +86,13 @@ pub(crate) fn process_frame(receiver: &mut RaymarineReportReceiver, data: &[u8])
         azimuth,
         None,
         now,
-        process_spoke(returns_per_line as usize, spoke),
+        process_spoke(
+            returns_per_line as usize,
+            spoke,
+            LookupDoppler::Doppler as usize,
+            &receiver.pixel_to_blob,
+            &mut receiver.pixel_stats,
+        ),
     );
     receiver
         .trails
@@ -95,18 +102,38 @@ pub(crate) fn process_frame(receiver: &mut RaymarineReportReceiver, data: &[u8])
     next_offset += data_len;
 
     receiver.info.broadcast_radar_message(message);
+
+    if azimuth < receiver.prev_azimuth {
+        log::info!("Pixel stats: {:?}", receiver.pixel_stats);
+        receiver.pixel_stats = [0; 256];
+
+        let ms = receiver.info.full_rotation();
+        receiver.trails.set_rotation_speed(ms);
+        receiver.statistics.full_rotation(&receiver.key);
+    }
+    receiver.prev_azimuth = azimuth;
 }
 
-fn process_spoke(returns_per_line: usize, spoke: &[u8]) -> GenericSpoke {
+fn process_spoke(
+    returns_per_line: usize,
+    spoke: &[u8],
+    doppler: usize,
+    pixel_to_blob: &PixelToBlobType,
+    pixel_stats: &mut [u32; 256],
+) -> GenericSpoke {
     let mut unpacked_data: Vec<u8> = Vec::with_capacity(1024);
     let mut src_offset: usize = 0;
     while src_offset < spoke.len() {
         if spoke[src_offset] != 0x5c {
-            unpacked_data.push(spoke[src_offset] >> 1);
+            let pixel = spoke[src_offset] as usize;
+            pixel_stats[pixel] += 1;
+            unpacked_data.push(pixel_to_blob[doppler][pixel]);
             src_offset = src_offset + 1;
         } else {
             let count = spoke[src_offset + 1] as usize; // number to be filled
-            let value = spoke[src_offset + 2] >> 1; // data to be filled
+            let pixel = spoke[src_offset + 2] as usize; // data to be filled
+            pixel_stats[pixel] += count as u32;
+            let value = pixel_to_blob[doppler][pixel];
             for _ in 0..count {
                 unpacked_data.push(value);
             }
@@ -127,7 +154,7 @@ struct ControlsPerMode {
     color_gain: u8,      // @ 3
     sea_auto: u8,        // @ 4
     sea: u8,             // @ 5
-    rain_auto: u8,       // @ 6
+    rain_enabled: u8,    // @ 6
     rain: u8,            // @ 7
 }
 
@@ -242,10 +269,10 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
             report.controls[mode].sea as f32,
             report.controls[mode].sea_auto,
         );
-        receiver.set_value_auto(
+        receiver.set_value_enabled(
             &ControlType::Rain,
             report.controls[mode].rain as f32,
-            report.controls[mode].rain_auto,
+            report.controls[mode].rain_enabled,
         );
     } else {
         log::warn!("{}: Unknown mode {}", receiver.key, report.mode);
