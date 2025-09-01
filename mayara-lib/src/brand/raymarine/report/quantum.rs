@@ -14,6 +14,8 @@ use crate::settings::ControlType;
 
 use super::{RaymarineReportReceiver, ReceiverState};
 
+const QUANTUM_RADAR_RANGES: usize = 20;
+
 #[derive(Deserialize, Debug, Clone, Copy)]
 #[repr(packed)]
 struct FrameHeader {
@@ -161,23 +163,23 @@ struct ControlsPerMode {
 #[derive(Deserialize, Debug, Copy, Clone)]
 #[repr(packed)]
 struct StatusReport {
-    _id: [u8; 4],                   // @0 0x280002
-    status: u8,                     // @4 0 - standby ; 1 - transmitting
-    _something_1: [u8; 9],          // @5
-    bearing_offset: [u8; 2],        // @14
-    _something_2: u8,               // @16
-    interference_rejection: u8,     // @17
-    _something_3: [u8; 2],          // @18
-    range_index: u8,                // @20
-    mode: u8,                       // @21 harbor - 0, coastal - 1, offshore - 2, weather - 3
-    controls: [ControlsPerMode; 4], // @22 controls indexed by mode
-    target_expansion: u8,           // @54
-    _something_9: u8,               // @55
-    _something_10: [u8; 3],         // @56
-    mbs_enabled: u8,                // @59
-    _something_11: [u32; 22],       // @60
-    ranges: [u32; 20],              // @148
-    _something_12: [u8; 32],        // @228
+    _id: [u8; 4],                        // @0 0x280002
+    status: u8,                          // @4 0 - standby ; 1 - transmitting
+    _something_1: [u8; 9],               // @5
+    bearing_offset: [u8; 2],             // @14
+    _something_2: u8,                    // @16
+    interference_rejection: u8,          // @17
+    _something_3: [u8; 2],               // @18
+    range_index: u8,                     // @20
+    mode: u8,                            // @21 harbor - 0, coastal - 1, offshore - 2, weather - 3
+    controls: [ControlsPerMode; 4],      // @22 controls indexed by mode
+    target_expansion: u8,                // @54
+    _something_9: u8,                    // @55
+    _something_10: [u8; 3],              // @56
+    mbs_enabled: u8,                     // @59
+    _something_11: [u32; 22],            // @60
+    ranges: [u32; QUANTUM_RADAR_RANGES], // @148
+    _something_12: [u8; 32],             // @228
 }
 
 const STATUS_REPORT_LENGTH: usize = size_of::<StatusReport>();
@@ -229,7 +231,8 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
     if receiver.info.ranges.is_empty() {
         let mut ranges = Ranges::empty();
 
-        for i in 0..20 {
+        // Can't use rust's iter() over report.ranges as it complains about packed data alignment
+        for i in 0..QUANTUM_RADAR_RANGES {
             let range = report.ranges[i];
             let meters = (range as f64 * 1.852f64) as i32; // Convert to nautical miles
 
