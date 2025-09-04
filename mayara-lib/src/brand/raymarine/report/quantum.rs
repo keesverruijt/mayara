@@ -93,9 +93,11 @@ pub(crate) fn process_frame(receiver: &mut RaymarineReportReceiver, data: &[u8])
             spoke,
             LookupDoppler::Doppler as usize,
             &receiver.pixel_to_blob,
-            &mut receiver.pixel_stats,
         ),
     );
+    for p in &spoke.data {
+        receiver.pixel_stats[*p as usize] += 1;
+    }
     receiver
         .trails
         .update_trails(&mut spoke, &receiver.info.legend);
@@ -121,20 +123,17 @@ fn process_spoke(
     spoke: &[u8],
     doppler: usize,
     pixel_to_blob: &PixelToBlobType,
-    pixel_stats: &mut [u32; 256],
 ) -> GenericSpoke {
     let mut unpacked_data: Vec<u8> = Vec::with_capacity(1024);
     let mut src_offset: usize = 0;
     while src_offset < spoke.len() {
         if spoke[src_offset] != 0x5c {
             let pixel = spoke[src_offset] as usize;
-            pixel_stats[pixel] += 1;
             unpacked_data.push(pixel_to_blob[doppler][pixel]);
             src_offset = src_offset + 1;
         } else {
             let count = spoke[src_offset + 1] as usize; // number to be filled
             let pixel = spoke[src_offset + 2] as usize; // data to be filled
-            pixel_stats[pixel] += count as u32;
             let value = pixel_to_blob[doppler][pixel];
             for _ in 0..count {
                 unpacked_data.push(value);

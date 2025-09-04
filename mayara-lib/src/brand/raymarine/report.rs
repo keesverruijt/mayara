@@ -45,6 +45,7 @@ pub(super) fn pixel_to_blob(legend: &Legend) -> PixelToBlobType {
             _ => j as u8 / 2,
         };
     }
+    log::info!("Created pixel_to_blob from legend {:?}", legend);
     lookup
 }
 

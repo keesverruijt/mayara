@@ -220,7 +220,7 @@ impl RadarInfo {
 
         let legend = default_legend(session.clone(), false, pixel_values);
 
-        RadarInfo {
+        let info = RadarInfo {
             session,
             key: {
                 let mut key = brand.to_string();
@@ -258,7 +258,10 @@ impl RadarInfo {
             controls,
             doppler,
             rotation_timestamp: Instant::now() - Duration::from_secs(2),
-        }
+        };
+
+        log::info!("Created RadarInfo {:?}", info);
+        info
     }
 
     pub fn all_clients_rx(&self) -> tokio::sync::broadcast::Receiver<ControlValue> {
@@ -276,6 +279,7 @@ impl RadarInfo {
     pub fn set_doppler(&mut self, doppler: bool) {
         if doppler != self.doppler {
             self.legend = default_legend(self.session.clone(), doppler, self.pixel_values);
+            log::info!("Doppler changed to {}", doppler);
         }
         self.doppler = doppler;
     }
@@ -283,6 +287,7 @@ impl RadarInfo {
     pub fn set_pixel_values(&mut self, pixel_values: u8) {
         if pixel_values != self.pixel_values {
             self.legend = default_legend(self.session.clone(), self.doppler, pixel_values);
+            log::info!("Pixel_values changed to {}", pixel_values);
         }
         self.pixel_values = pixel_values;
     }
@@ -792,6 +797,7 @@ fn default_legend(session: Session, doppler: bool, pixel_values: u8) -> Legend {
         }
     }
 
+    log::info!("Created legend {:?}", legend);
     legend
 }
 
