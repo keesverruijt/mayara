@@ -498,7 +498,6 @@ impl RaymarineLocatorState {
         if let Some(info) = radars.located(info) {
             // It's new, start the RadarProcessor thread
 
-            // Clone everything moved into future twice or more
             if self.session.read().unwrap().args.output {
                 let info_clone2 = info.clone();
 
@@ -507,20 +506,14 @@ impl RaymarineLocatorState {
                 }));
             }
 
-            // let data_name = info.key() + " data";
-            let report_name = info.key() + " reports";
+            let report_name = info.key();
             let info_clone = info.clone();
-            // let data_receiver = data::RaymarineDataReceiver::new(self.session.clone(), info, rx_data, args.replay);
             let report_receiver = report::RaymarineReportReceiver::new(
                 self.session.clone(),
                 info_clone,
                 radars.clone(),
             );
 
-            // subsys.start(SubsystemBuilder::new(
-            //     data_name,
-            //     move |s: SubsystemHandle| data_receiver.run(s),
-            // ));
             subsys.start(SubsystemBuilder::new(report_name, |s| {
                 report_receiver.run(s)
             }));
@@ -588,32 +581,7 @@ impl RadarLocatorState for RaymarineLocatorState {
 }
 
 #[derive(Clone)]
-struct RaymarineWifiLocator {
-    session: Session,
-}
-
-#[async_trait]
-impl RadarLocator for RaymarineWifiLocator {
-    fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
-        if !addresses.iter().any(|i| i.id == LocatorId::Raymarine) {
-            addresses.push(LocatorAddress::new(
-                LocatorId::Raymarine,
-                &RAYMARINE_QUANTUM_WIFI_ADDRESS,
-                Brand::Raymarine,
-                vec![&RAYMARINE_MFD_BEACON], // Same beacon for all Raymarine radars, no need to send a specific RD one.
-                Box::new(RaymarineLocatorState::new(self.session.clone())),
-            ));
-        }
-    }
-}
-
-pub fn create_wireless_locator(session: Session) -> Box<dyn RadarLocator + Send> {
-    let locator = RaymarineWifiLocator { session };
-    Box::new(locator)
-}
-
-#[derive(Clone)]
-struct RaymarineWiredLocator {
+struct RaymarineLocator {
     session: Session,
 }
 
@@ -624,22 +592,28 @@ const RAYMARINE_MFD_BEACON: [u8; 56] = [
     0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01, 0x00,
 ];
 
-impl RadarLocator for RaymarineWiredLocator {
+impl RadarLocator for RaymarineLocator {
     fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
-        if !addresses.iter().any(|i| i.id == LocatorId::GenBR24) {
+        if !addresses.iter().any(|i| i.id == LocatorId::Raymarine) {
+            let beacon_address = if self.session.args().allow_wifi {
+                &RAYMARINE_QUANTUM_WIFI_ADDRESS
+            } else {
+                &RAYMARINE_BEACON_ADDRESS
+            };
+
             addresses.push(LocatorAddress::new(
-                LocatorId::GenBR24,
-                &RAYMARINE_BEACON_ADDRESS,
+                LocatorId::Raymarine,
+                beacon_address,
                 Brand::Raymarine,
-                vec![],
+                vec![&RAYMARINE_MFD_BEACON],
                 Box::new(RaymarineLocatorState::new(self.session.clone())),
             ));
         }
     }
 }
 
-pub fn create_wired_locator(session: Session) -> Box<dyn RadarLocator + Send> {
-    let locator = RaymarineWiredLocator { session };
+pub fn create_locator(session: Session) -> Box<dyn RadarLocator + Send> {
+    let locator = RaymarineLocator { session };
     Box::new(locator)
 }
 

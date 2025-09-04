@@ -330,7 +330,6 @@ impl Locator {
         }
         #[cfg(feature = "raymarine")]
         if args.brand.unwrap_or(Brand::Raymarine) == Brand::Raymarine {
-            locators.push(raymarine::create_wireless_locator(self.session.clone()));
             locators.push(raymarine::create_wired_locator(self.session.clone()));
             brands.insert(Brand::Raymarine);
         }
