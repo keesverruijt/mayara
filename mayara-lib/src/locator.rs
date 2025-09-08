@@ -419,7 +419,7 @@ impl Locator {
                                         if let SocketAddr::V4(listen_addr) =
                                             radar_listen_address.address
                                         {
-                                            let socket = if !listen_addr.ip().is_multicast()
+                                            if !listen_addr.ip().is_multicast()
                                                 && !network::match_ipv4(
                                                     &nic_ip,
                                                     listen_addr.ip(),
@@ -427,17 +427,18 @@ impl Locator {
                                                 )
                                                 && only_interface.is_none()
                                             {
-                                                Err(std::io::Error::new(
-                                                    std::io::ErrorKind::AddrNotAvailable,
+                                                listeners.insert(
+                                                    radar_listen_address.brand.clone(),
                                                     format!("No match for {}", listen_addr.ip()),
-                                                ))
-                                            } else {
-                                                network::create_udp_listen(
-                                                    &listen_addr,
-                                                    &nic_ip,
-                                                    true, // we don't write to this socket ever, so no SO_BROADCAST needed
-                                                )
-                                            };
+                                                );
+                                                continue;
+                                            }
+
+                                            let socket = network::create_udp_listen(
+                                                &listen_addr,
+                                                &nic_ip,
+                                                true, // we don't write to this socket ever, so no SO_BROADCAST needed
+                                            );
 
                                             let status = match socket {
                                                 Ok(socket) => {
