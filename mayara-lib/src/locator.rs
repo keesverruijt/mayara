@@ -180,8 +180,10 @@ impl Locator {
                                 return Err(e);
                             }
                             log::debug!("No NIC addresses found");
-                            sleep(Duration::from_millis(5000)).await;
-                            continue;
+                            // Still enter the main loop so we listen to subsys requests. The main
+                            // loop will time out in 2 or 20 secs. We will get here again when the
+                            // IP address change message causes the main loop to break.
+                            Vec::new()
                         }
                         Ok(sockets) => sockets,
                     }
@@ -218,7 +220,7 @@ impl Locator {
             });
 
             // Spawn a task to listen for interface list requests from the clients
-            spawn_interface_request(&mut set, &tx_interface_request);
+            spawn_interface_request_handler(&mut set, &tx_interface_request);
 
             while let Some(join_result) = set.join_next().await {
                 match join_result {
@@ -253,7 +255,7 @@ impl Locator {
                                     .await;
 
                                 // Respawn this task
-                                spawn_interface_request(&mut set, &tx_interface_request);
+                                spawn_interface_request_handler(&mut set, &tx_interface_request);
                             }
                             Err(e) => {
                                 match e {
@@ -529,7 +531,7 @@ impl Locator {
     }
 }
 
-fn spawn_interface_request(
+fn spawn_interface_request_handler(
     set: &mut JoinSet<std::result::Result<ResultType, RadarError>>,
     tx_interface_request: &broadcast::Sender<Option<Sender<InterfaceApi>>>,
 ) {
