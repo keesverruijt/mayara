@@ -94,6 +94,10 @@ pub struct Cli {
     /// Stationary mode
     #[arg(long, default_value_t = false)]
     pub stationary: bool,
+
+    /// Multi-radar mode keeps locators running even when one radar is found
+    #[arg(long, default_value_t = false)]
+    pub multiple_radar: bool,
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -253,13 +257,13 @@ impl Session {
         let (tx_ip_change, rx_ip_change) = mpsc::channel(1);
         let mut navdata = navdata::NavigationData::new(session.clone());
 
-        subsystem.start(SubsystemBuilder::new("NavData", |a| async move {
-            navdata.run(a, rx_ip_change).await
+        subsystem.start(SubsystemBuilder::new("NavData", |subsys| async move {
+            navdata.run(subsys, rx_ip_change).await
         }));
         let tx_interface_request = session.write().unwrap().tx_interface_request.clone();
 
-        subsystem.start(SubsystemBuilder::new("Locator", |a| {
-            locator.run(a, tx_ip_change, tx_interface_request)
+        subsystem.start(SubsystemBuilder::new("Locator", |subsys| {
+            locator.run(subsys, tx_ip_change, tx_interface_request)
         }));
 
         session

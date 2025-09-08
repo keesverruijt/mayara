@@ -415,7 +415,6 @@ impl NavicoLocatorState {
                 radars.update(&info);
             }
 
-            // Clone everything moved into future twice or more
             let data_name = info.key() + " data";
             let report_name = info.key() + " reports";
             let info_clone = info.clone();

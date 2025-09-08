@@ -172,26 +172,26 @@ impl fmt::Display for GeoPosition {
 
 #[derive(Clone, Debug)]
 pub struct RadarInfo {
-    pub session: Session,
+    session: Session,
     key: String,
     pub id: usize,
-    pub locator_id: LocatorId,
-    pub brand: Brand,
-    pub serial_no: Option<String>,       // Serial # for this radar
-    pub which: Option<String>,           // "A", "B" or None
-    pub pixel_values: u8,                // How many values per pixel, 0..220 or so
-    pub spokes_per_revolution: u16,      // How many spokes per rotation
-    pub max_spoke_len: u16,              // Fixed for some radars, variable for others
-    pub addr: SocketAddrV4,              // The IP address of the radar
-    pub nic_addr: Ipv4Addr,              // IPv4 address of NIC via which radar can be reached
-    pub spoke_data_addr: SocketAddrV4,   // Where the radar will send data spokes
-    pub report_addr: SocketAddrV4,       // Where the radar will send reports
-    pub send_command_addr: SocketAddrV4, // Where displays will send commands to the radar
-    pub legend: Legend,                  // What pixel values mean
-    pub controls: SharedControls,        // Which controls there are, not complete in beginning
-    pub ranges: Ranges,                  // Ranges for this radar, empty in beginning
+    pub(crate) locator_id: LocatorId,
+    pub(crate) brand: Brand,
+    pub(crate) serial_no: Option<String>, // Serial # for this radar
+    pub(crate) which: Option<String>,     // "A", "B" or None
+    pub(crate) pixel_values: u8,          // How many values per pixel, 0..220 or so
+    pub spokes_per_revolution: u16,       // How many spokes per rotation
+    pub max_spoke_len: u16,               // Fixed for some radars, variable for others
+    pub(crate) addr: SocketAddrV4,        // The IP address of the radar
+    pub(crate) nic_addr: Ipv4Addr,        // IPv4 address of NIC via which radar can be reached
+    pub(crate) spoke_data_addr: SocketAddrV4, // Where the radar will send data spokes
+    pub(crate) report_addr: SocketAddrV4, // Where the radar will send reports
+    pub(crate) send_command_addr: SocketAddrV4, // Where displays will send commands to the radar
+    pub legend: Legend,                   // What pixel values mean
+    pub controls: SharedControls,         // Which controls there are, not complete in beginning
+    pub ranges: Ranges,                   // Ranges for this radar, empty in beginning
     pub(crate) range_detection: Option<RangeDetection>, // if Some, then ranges are flexible, detected and persisted
-    pub doppler: bool,                                  // Does it support Doppler?
+    pub(crate) doppler: bool,                           // Does it support Doppler?
     rotation_timestamp: Instant,
 
     // Channels
@@ -513,6 +513,17 @@ impl SharedRadars {
             .collect()
     }
 
+    pub fn have_active(&self) -> bool {
+        let radars = self.radars.read().unwrap();
+        radars
+            .info
+            .iter()
+            .map(|(_k, v)| v)
+            .filter(|i| i.ranges.len() > 0)
+            .count()
+            > 0
+    }
+
     #[allow(dead_code)]
     pub fn get_by_key(&self, key: &str) -> Option<RadarInfo> {
         let radars = self.radars.read().unwrap();
@@ -558,7 +569,7 @@ impl SharedRadars {
         }
     }
 
-    pub fn is_active_radar(&self, brand: &Brand, ip: &Ipv4Addr) -> bool {
+    pub(crate) fn is_active_radar(&self, brand: &Brand, ip: &Ipv4Addr) -> bool {
         let radars = self.radars.read().unwrap();
         for (_, info) in radars.info.iter() {
             log::trace!(

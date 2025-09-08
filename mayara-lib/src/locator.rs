@@ -12,7 +12,6 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
 
-use clap::Parser;
 use miette::Result;
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use serde::Serialize;
@@ -118,7 +117,7 @@ enum ResultType {
     InterfaceRequest(mpsc::Sender<InterfaceApi>),
 }
 
-pub struct Locator {
+pub(crate) struct Locator {
     pub session: Session,
     pub radars: SharedRadars,
     pub args: Cli,
@@ -165,30 +164,35 @@ impl Locator {
         log::debug!("beacon_messages = {:?}", beacon_messages);
 
         loop {
+            let mut set = JoinSet::new();
+
             let cancellation_token = subsys.create_cancellation_token();
             let child_token = cancellation_token.child_token();
+            let tx_ip_change = tx_ip_change.clone();
 
-            // create a list of sockets for all listen addresses
-            let sockets = self.create_listen_sockets(&listen_addresses, &mut interface_state);
-            let mut set = JoinSet::new();
-            if sockets.is_err() {
-                if self.args.interface.is_some() {
-                    return Err(sockets.err().unwrap());
+            if self.args.multiple_radar || !radars.have_active() {
+                // actively listening for new radars
+                // create a list of sockets for all listen addresses
+                for socket in
+                    match self.create_listen_sockets(&listen_addresses, &mut interface_state) {
+                        Err(e) => {
+                            if self.args.interface.is_some() {
+                                return Err(e);
+                            }
+                            log::debug!("No NIC addresses found");
+                            sleep(Duration::from_millis(5000)).await;
+                            continue;
+                        }
+                        Ok(sockets) => sockets,
+                    }
+                {
+                    spawn_receive(&mut set, socket);
                 }
-                log::debug!("No NIC addresses found");
-                sleep(Duration::from_millis(5000)).await;
-                continue;
-            }
-            let sockets: Vec<LocatorSocket> = sockets.unwrap();
-
-            for socket in sockets {
-                spawn_receive(&mut set, socket);
             }
             set.spawn(async move {
                 cancellation_token.cancelled().await;
                 Err(RadarError::Shutdown)
             });
-            let tx_ip_change = tx_ip_change.clone();
             set.spawn(async move {
                 if let Err(e) = network::wait_for_ip_addr_change(child_token).await {
                     match e {
@@ -235,8 +239,13 @@ impl Locator {
                                     &radars,
                                     &subsys,
                                 );
-                                // Respawn this task
-                                spawn_receive(&mut set, locator_socket);
+                                if self.args.multiple_radar || !radars.have_active() {
+                                    // Respawn this task
+                                    spawn_receive(&mut set, locator_socket);
+                                } else {
+                                    // we have found a radar
+                                    break; // Restart the loop but now without locators
+                                }
                             }
                             Ok(ResultType::InterfaceRequest(reply_channel)) => {
                                 // Send an answer to the request
@@ -264,10 +273,15 @@ impl Locator {
                                             )
                                             .await;
                                         }
-                                        set.spawn(async move {
-                                            sleep(Duration::from_secs(20)).await;
-                                            Err(RadarError::Timeout)
-                                        });
+                                        if self.args.multiple_radar || radars.have_active() {
+                                            // Respawn this task
+                                            set.spawn(async move {
+                                                sleep(Duration::from_secs(20)).await;
+                                                Err(RadarError::Timeout)
+                                            });
+                                        } else {
+                                            break; // Restart the loop but now with locators
+                                        }
                                     }
                                     _ => {
                                         log::warn!("receive error: {}", e);
@@ -330,7 +344,7 @@ impl Locator {
         }
         #[cfg(feature = "raymarine")]
         if args.brand.unwrap_or(Brand::Raymarine) == Brand::Raymarine {
-            locators.push(raymarine::create_wired_locator(self.session.clone()));
+            locators.push(raymarine::create_locator(self.session.clone()));
             brands.insert(Brand::Raymarine);
         }
 
