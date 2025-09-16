@@ -619,7 +619,11 @@ impl SharedControls {
             .map(|c| {
                 c.set_valid_ranges(ranges);
                 ()
-            })
+            })?;
+        self.get_data_update_tx()
+            .send(DataUpdate::Ranges(ranges.clone()))
+            .expect("Ranges update");
+        Ok(())
     }
 
     pub(crate) fn get_status(&self) -> Option<Status> {
@@ -641,8 +645,6 @@ pub struct ControlUpdate {
 // Messages sent to Data receiver
 #[derive(Clone, Debug)]
 pub enum DataUpdate {
-    Doppler(DopplerMode),
-    Legend(Legend),
     Ranges(Ranges),
     ControlValue(tokio::sync::mpsc::Sender<ControlValue>, ControlValue),
 }

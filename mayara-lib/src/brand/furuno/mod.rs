@@ -277,13 +277,7 @@ impl FurunoLocatorState {
             let data_name = info.key() + " data";
             let report_name = info.key() + " reports";
 
-            if self.session.read().unwrap().args.output {
-                let info_clone2 = info.clone();
-
-                subsys.start(SubsystemBuilder::new("stdout", move |s| {
-                    info_clone2.forward_output(s)
-                }));
-            }
+            info.start_forwarding_radar_messages_to_stdout(&subsys);
 
             let data_receiver = data::FurunoDataReceiver::new(self.session.clone(), info.clone());
             subsys.start(SubsystemBuilder::new(

@@ -1,30 +1,165 @@
 use anyhow::{bail, Error};
+use bincode::deserialize;
+use protobuf::Message;
+use serde::Deserialize;
 use std::cmp::min;
 use std::io;
 use std::mem::transmute;
 use std::net::SocketAddr;
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::net::UdpSocket;
 use tokio::sync::*;
-use tokio::time::{sleep, sleep_until, Instant};
+use tokio::time::{sleep_until, Instant};
 use tokio_graceful_shutdown::SubsystemHandle;
+
+use super::command::Command;
+use super::Model;
+use super::{NAVICO_SPOKES, NAVICO_SPOKES_RAW, RADAR_LINE_DATA_LENGTH, SPOKES_PER_FRAME};
 
 use crate::brand::navico::info::{
     HaloHeadingPacket, HaloNavigationPacket, HaloSpeedPacket, Information,
 };
-use crate::brand::navico::{NAVICO_INFO_ADDRESS, NAVICO_SPEED_ADDRESS_A};
+use crate::brand::navico::{NAVICO_INFO_ADDRESS, NAVICO_SPEED_ADDRESS_A, NAVICO_SPOKE_LEN};
+use crate::locator::LocatorId;
 use crate::network::create_udp_multicast_listen;
+use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::range::{RangeDetection, RangeDetectionResult};
+use crate::radar::spoke::{to_protobuf_spoke, GenericSpoke};
 use crate::radar::target::MS_TO_KN;
-use crate::radar::{DopplerMode, RadarError, RadarInfo, SharedRadars};
+use crate::radar::trail::TrailBuffer;
+use crate::radar::{
+    DopplerMode, Legend, RadarError, RadarInfo, SharedRadars, SpokeBearing, Statistics, Status,
+    BYTE_LOOKUP_LENGTH,
+};
 use crate::settings::{ControlType, ControlUpdate, ControlValue, DataUpdate};
+use crate::util::PrintableSpoke;
 use crate::util::{c_string, c_wide_string};
 use crate::Session;
 
-use super::command::Command;
-use super::Model;
+/*
+ Heading on radar. Observed in field:
+ - Hakan: BR24, no RI: 0x9234 = negative, with recognisable 1234 in hex?
+ - Marcus: 3G, RI, true heading: 0x45be
+ - Kees: 4G, RI, mag heading: 0x07d6 = 2006 = 176,6 deg
+ - Kees: 4G, RI, no heading: 0x8000 = -1 = negative
+ - Kees: Halo, true heading: 0x4xxx => true
+ Known values for heading value:
+*/
+const HEADING_TRUE_FLAG: u16 = 0x4000;
+const HEADING_MASK: u16 = NAVICO_SPOKES_RAW - 1;
+fn is_heading_true(x: u16) -> bool {
+    (x & HEADING_TRUE_FLAG) != 0
+}
+fn is_valid_heading_value(x: u16) -> bool {
+    (x & !(HEADING_TRUE_FLAG | HEADING_MASK)) == 0
+}
+fn extract_heading_value(x: u16) -> Option<u16> {
+    match is_valid_heading_value(x) && is_heading_true(x) {
+        true => Some(x & HEADING_MASK),
+        false => None,
+    }
+}
 
-use crate::radar::Status;
+#[derive(Deserialize, Debug, Clone, Copy)]
+#[repr(packed)]
+struct Br24Header {
+    header_len: u8,        // 1 bytes
+    status: u8,            // 1 bytes
+    _scan_number: [u8; 2], // 1 byte (HALO and newer), 2 bytes (4G and older)
+    _mark: [u8; 4],        // 4 bytes, on BR24 this is always 0x00, 0x44, 0x0d, 0x0e
+    angle: [u8; 2],        // 2 bytes
+    heading: [u8; 2],      // 2 bytes heading with RI-10/11. See bitmask explanation above.
+    range: [u8; 4],        // 4 bytes
+    _u01: [u8; 2],         // 2 bytes blank
+    _u02: [u8; 2],         // 2 bytes
+    _u03: [u8; 4],         // 4 bytes blank
+} /* total size = 24 */
+
+#[derive(Deserialize, Debug, Clone, Copy)]
+#[repr(packed)]
+struct Br4gHeader {
+    header_len: u8,        // 1 bytes
+    status: u8,            // 1 bytes
+    _scan_number: [u8; 2], // 1 byte (HALO and newer), 2 bytes (4G and older)
+    _mark: [u8; 2],        // 2 bytes
+    large_range: [u8; 2],  // 2 bytes, on 4G and up
+    angle: [u8; 2],        // 2 bytes
+    heading: [u8; 2],      // 2 bytes heading with RI-10/11. See bitmask explanation above.
+    small_range: [u8; 2],  // 2 bytes or -1
+    _rotation: [u8; 2],    // 2 bytes or -1
+    _u01: [u8; 4],         // 4 bytes signed integer, always -1
+    _u02: [u8; 4], // 4 bytes signed integer, mostly -1 (0x80 in last byte) or 0xa0 in last byte
+} /* total size = 24 */
+
+#[derive(Debug, Clone, Copy)]
+#[repr(packed)]
+struct RadarLine {
+    _header: Br4gHeader, // or Br24Header
+    _data: [u8; RADAR_LINE_DATA_LENGTH],
+}
+
+#[repr(packed)]
+struct FrameHeader {
+    _frame_hdr: [u8; 8],
+}
+
+#[repr(packed)]
+struct RadarFramePkt {
+    _header: FrameHeader,
+    _line: [RadarLine; SPOKES_PER_FRAME], //  scan lines, or spokes
+}
+
+const FRAME_HEADER_LENGTH: usize = size_of::<FrameHeader>();
+const RADAR_LINE_HEADER_LENGTH: usize = size_of::<Br4gHeader>();
+const RADAR_LINE_LENGTH: usize = size_of::<RadarLine>();
+
+// The LookupSpokeEnum is an index into an array, really
+enum LookupDoppler {
+    LowNormal = 0,
+    LowBoth = 1,
+    LowApproaching = 2,
+    HighNormal = 3,
+    HighBoth = 4,
+    HighApproaching = 5,
+}
+const LOOKUP_DOPPLER_LENGTH: usize = (LookupDoppler::HighApproaching as usize) + 1;
+
+type PixelToBlobType = [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_DOPPLER_LENGTH];
+
+fn pixel_to_blob(legend: &Legend) -> [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_DOPPLER_LENGTH] {
+    let mut lookup: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_DOPPLER_LENGTH] =
+        [[0; BYTE_LOOKUP_LENGTH]; LOOKUP_DOPPLER_LENGTH];
+    // Cannot use for() in const expr, so use while instead
+    let mut j: usize = 0;
+    while j < BYTE_LOOKUP_LENGTH {
+        let low: u8 = (j as u8) & 0x0f;
+        let high: u8 = ((j as u8) >> 4) & 0x0f;
+
+        lookup[LookupDoppler::LowNormal as usize][j] = low;
+        lookup[LookupDoppler::LowBoth as usize][j] = match low {
+            0x0f => legend.doppler_approaching,
+            0x0e => legend.doppler_receding,
+            _ => low,
+        };
+        lookup[LookupDoppler::LowApproaching as usize][j] = match low {
+            0x0f => legend.doppler_approaching,
+            _ => low,
+        };
+        lookup[LookupDoppler::HighNormal as usize][j] = high;
+        lookup[LookupDoppler::HighBoth as usize][j] = match high {
+            0x0f => legend.doppler_approaching,
+            0x0e => legend.doppler_receding,
+            _ => high,
+        };
+        lookup[LookupDoppler::HighApproaching as usize][j] = match high {
+            0x0f => legend.doppler_approaching,
+            _ => high,
+        };
+        j += 1;
+    }
+    lookup
+}
 
 pub struct NavicoReportReceiver {
     replay: bool,
@@ -41,12 +176,20 @@ pub struct NavicoReportReceiver {
     model: Model,
     command_sender: Option<Command>,
     info_sender: Option<Information>,
-    data_tx: broadcast::Sender<DataUpdate>,
     control_update_rx: broadcast::Receiver<ControlUpdate>,
     range_timeout: Instant,
     info_request_timeout: Instant,
     report_request_timeout: Instant,
     reported_unknown: [bool; 256],
+
+    // For data (spokes)
+    statistics: Statistics,
+    data_buf: Vec<u8>,
+    data_socket: Option<UdpSocket>,
+    doppler: DopplerMode,
+    pixel_to_blob: PixelToBlobType,
+    trails: TrailBuffer,
+    prev_angle: u16,
 }
 
 // Every 5 seconds we ask the radar for reports, so we can update our controls
@@ -321,7 +464,9 @@ impl NavicoReportReceiver {
         };
 
         let control_update_rx = info.controls.control_update_subscribe();
-        let data_update_tx = info.controls.get_data_update_tx();
+
+        let pixel_to_blob = pixel_to_blob(&info.legend);
+        let trails = TrailBuffer::new(session.clone(), &info);
 
         let now = Instant::now();
         NavicoReportReceiver {
@@ -342,13 +487,24 @@ impl NavicoReportReceiver {
             range_timeout: now + FAR_FUTURE,
             info_request_timeout: now,
             report_request_timeout: now,
-            data_tx: data_update_tx,
             control_update_rx,
             reported_unknown: [false; 256],
+            statistics: Statistics::new(),
+            data_buf: Vec::with_capacity(size_of::<RadarFramePkt>()),
+            data_socket: None,
+            doppler: DopplerMode::None,
+            pixel_to_blob,
+            trails,
+            prev_angle: 0,
         }
     }
 
-    async fn start_report_socket(&mut self) -> io::Result<()> {
+    pub async fn run(mut self, subsys: SubsystemHandle) -> Result<(), RadarError> {
+        self.start_report_socket()?;
+        self.socket_loop(&subsys).await
+    }
+
+    fn start_report_socket(&mut self) -> io::Result<()> {
         match create_udp_multicast_listen(&self.info.report_addr, &self.info.nic_addr) {
             Ok(socket) => {
                 self.report_socket = Some(socket);
@@ -361,7 +517,6 @@ impl NavicoReportReceiver {
                 Ok(())
             }
             Err(e) => {
-                sleep(Duration::from_millis(1000)).await;
                 log::debug!(
                     "{}: {} via {}: create multicast failed: {}",
                     self.key,
@@ -369,12 +524,12 @@ impl NavicoReportReceiver {
                     &self.info.nic_addr,
                     e
                 );
-                Ok(())
+                Err(e)
             }
         }
     }
 
-    async fn start_info_socket(&mut self) -> io::Result<()> {
+    fn start_info_socket(&mut self) -> io::Result<()> {
         if self.info_socket.is_some() {
             return Ok(()); // Already started
         }
@@ -397,12 +552,12 @@ impl NavicoReportReceiver {
                     &self.info.nic_addr,
                     e
                 );
-                Ok(())
+                Err(e)
             }
         }
     }
 
-    async fn start_speed_socket(&mut self) -> io::Result<()> {
+    fn start_speed_socket(&mut self) -> io::Result<()> {
         if self.speed_socket.is_some() {
             return Ok(()); // Already started
         }
@@ -425,7 +580,33 @@ impl NavicoReportReceiver {
                     &self.info.nic_addr,
                     e
                 );
+                Err(e)
+            }
+        }
+    }
+
+    fn start_data_socket(&mut self) -> io::Result<()> {
+        if self.data_socket.is_some() {
+            return Ok(()); // Already started
+        }
+        match create_udp_multicast_listen(&self.info.spoke_data_addr, &self.info.nic_addr) {
+            Ok(sock) => {
+                self.data_socket = Some(sock);
+                log::debug!(
+                    "{} via {}: listening for spoke data",
+                    &self.info.spoke_data_addr,
+                    &self.info.nic_addr
+                );
                 Ok(())
+            }
+            Err(e) => {
+                log::debug!(
+                    "{} via {}: create multicast failed: {}",
+                    &self.info.spoke_data_addr,
+                    &self.info.nic_addr,
+                    e
+                );
+                Err(e)
             }
         }
     }
@@ -439,9 +620,10 @@ impl NavicoReportReceiver {
 
         loop {
             if !self.replay {
-                self.start_info_socket().await?;
-                self.start_speed_socket().await?;
+                self.start_info_socket()?;
+                self.start_speed_socket()?;
             }
+            self.start_data_socket()?;
 
             let timeout = min(
                 min(self.report_request_timeout, self.range_timeout),
@@ -511,14 +693,144 @@ impl NavicoReportReceiver {
                     }
                 },
 
+                r = self.data_socket.as_ref().unwrap().recv_buf_from(&mut self.data_buf)  => {
+                    match r {
+                        Ok(_) => {
+                            self.process_frame();
+                        },
+                        Err(e) => {
+                            return Err(RadarError::Io(e));
+                        }
+                    }
+                },
+
                 r = self.control_update_rx.recv() => {
                     match r {
                         Err(_) => {},
                         Ok(cv) => {let _ = self.process_control_update(cv).await;},
                     }
                 }
+
+
             }
         }
+    }
+
+    fn process_frame(&mut self) {
+        if self.data_buf.len() < FRAME_HEADER_LENGTH + RADAR_LINE_LENGTH {
+            log::warn!(
+                "UDP data frame with even less than one spoke, len {} dropped",
+                self.data_buf.len()
+            );
+            return;
+        }
+
+        let mut spokes_in_frame = (self.data_buf.len() - FRAME_HEADER_LENGTH) / RADAR_LINE_LENGTH;
+        if spokes_in_frame != 32 {
+            self.statistics.broken_packets += 1;
+            if spokes_in_frame > 32 {
+                spokes_in_frame = 32;
+            }
+        }
+
+        log::trace!("Received UDP frame with {} spokes", &spokes_in_frame);
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .ok();
+
+        let mut mark_full_rotation = false;
+        let mut message = RadarMessage::new();
+        message.radar = self.info.id as u32;
+
+        let mut offset: usize = FRAME_HEADER_LENGTH;
+        for scanline in 0..spokes_in_frame {
+            let header_slice = &self.data_buf[offset..offset + RADAR_LINE_HEADER_LENGTH];
+            let spoke_slice = &self.data_buf[offset + RADAR_LINE_HEADER_LENGTH
+                ..offset + RADAR_LINE_HEADER_LENGTH + RADAR_LINE_DATA_LENGTH];
+
+            if let Some((range, angle, heading)) =
+                validate_header(&self.info, header_slice, scanline)
+            {
+                log::trace!("range {} angle {} heading {:?}", range, angle, heading);
+                log::trace!(
+                    "Received {:04} spoke {}",
+                    scanline,
+                    PrintableSpoke::new(spoke_slice)
+                );
+                let mut spoke = to_protobuf_spoke(
+                    &self.info,
+                    range,
+                    angle,
+                    heading,
+                    now,
+                    self.process_spoke(spoke_slice),
+                );
+                self.trails.update_trails(&mut spoke, &self.info.legend);
+                message.spokes.push(spoke);
+
+                if angle < self.prev_angle {
+                    mark_full_rotation = true;
+                }
+                if ((self.prev_angle + 1) % NAVICO_SPOKES as u16) != angle {
+                    self.statistics.missing_spokes +=
+                        (angle + NAVICO_SPOKES as u16 - self.prev_angle - 1) as usize
+                            % NAVICO_SPOKES as usize;
+                    log::trace!("{}: Spoke angle {} is not consecutive to previous angle {}, new missing spokes {}",
+                        self.key, angle, self.prev_angle, self.statistics.missing_spokes);
+                }
+                self.statistics.received_spokes += 1;
+                self.prev_angle = angle;
+            } else {
+                log::warn!("Invalid spoke: header {:02X?}", &header_slice);
+                self.statistics.broken_packets += 1;
+            }
+
+            offset += RADAR_LINE_LENGTH;
+        }
+
+        if mark_full_rotation {
+            let ms = self.info.full_rotation();
+            self.trails.set_rotation_speed(ms);
+            self.statistics.full_rotation(&self.key);
+        }
+
+        self.info.broadcast_radar_message(message);
+    }
+
+    fn process_spoke(&self, spoke: &[u8]) -> GenericSpoke {
+        let pixel_to_blob = &self.pixel_to_blob;
+
+        // Convert the spoke data to bytes
+        let mut generic_spoke: Vec<u8> = Vec::with_capacity(NAVICO_SPOKE_LEN);
+        let low_nibble_index = (match self.doppler {
+            DopplerMode::None => LookupDoppler::LowNormal,
+            DopplerMode::Both => LookupDoppler::LowBoth,
+            DopplerMode::Approaching => LookupDoppler::LowApproaching,
+        }) as usize;
+        let high_nibble_index = (match self.doppler {
+            DopplerMode::None => LookupDoppler::HighNormal,
+            DopplerMode::Both => LookupDoppler::HighBoth,
+            DopplerMode::Approaching => LookupDoppler::HighApproaching,
+        }) as usize;
+
+        for pixel in spoke {
+            let pixel = *pixel as usize;
+            generic_spoke.push(pixel_to_blob[low_nibble_index][pixel]);
+            generic_spoke.push(pixel_to_blob[high_nibble_index][pixel]);
+        }
+
+        if self.replay {
+            // Generate circle at extreme range
+            let pixel = 0xff as usize;
+            generic_spoke.pop();
+            generic_spoke.pop();
+            generic_spoke.push(pixel_to_blob[low_nibble_index][pixel]);
+            generic_spoke.push(pixel_to_blob[high_nibble_index][pixel]);
+        }
+
+        generic_spoke
     }
 
     async fn process_control_update(
@@ -557,26 +869,6 @@ impl NavicoReportReceiver {
         }
         self.info_request_timeout += INFO_BY_US_INTERVAL;
         Ok(())
-    }
-
-    pub async fn run(mut self, subsys: SubsystemHandle) -> Result<(), RadarError> {
-        self.start_report_socket().await?;
-        loop {
-            if self.report_socket.is_some() {
-                match self.socket_loop(&subsys).await {
-                    Err(RadarError::Shutdown) => {
-                        return Ok(());
-                    }
-                    _ => {
-                        // Ignore, reopen socket
-                    }
-                }
-                self.report_socket = None;
-            } else {
-                sleep(Duration::from_millis(1000)).await;
-                self.start_report_socket().await?;
-            }
-        }
     }
 
     fn set(&mut self, control_type: &ControlType, value: f32, auto: Option<bool>) {
@@ -938,9 +1230,6 @@ impl NavicoReportReceiver {
                     self.info.set_doppler(model == Model::HALO);
 
                     self.radars.update(&self.info);
-
-                    self.data_tx
-                        .send(DataUpdate::Legend(self.info.legend.clone()))?;
                 }
             }
         }
@@ -1080,7 +1369,7 @@ impl NavicoReportReceiver {
                         doppler_mode,
                         doppler_speed
                     );
-                    self.data_tx.send(DataUpdate::Doppler(doppler_mode))?;
+                    self.doppler = doppler_mode;
                 }
             }
             self.set_value(&ControlType::Doppler, doppler_state as f32);
@@ -1119,4 +1408,93 @@ impl NavicoReportReceiver {
 
         Ok(())
     }
+}
+
+fn validate_header(
+    radar_info: &RadarInfo,
+    header_slice: &[u8],
+    scanline: usize,
+) -> Option<(u32, SpokeBearing, Option<u16>)> {
+    match radar_info.locator_id {
+        LocatorId::Gen3Plus => match deserialize::<Br4gHeader>(&header_slice) {
+            Ok(header) => {
+                log::trace!("Received {:04} header {:?}", scanline, header);
+
+                validate_4g_header(&header)
+            }
+            Err(e) => {
+                log::warn!("Illegible spoke: {} header {:02X?}", e, &header_slice);
+                return None;
+            }
+        },
+        LocatorId::GenBR24 => match deserialize::<Br24Header>(&header_slice) {
+            Ok(header) => {
+                log::trace!("Received {:04} header {:?}", scanline, header);
+
+                validate_br24_header(&header)
+            }
+            Err(e) => {
+                log::warn!("Illegible spoke: {} header {:02X?}", e, &header_slice);
+                return None;
+            }
+        },
+        _ => {
+            panic!("Incorrect Navico type");
+        }
+    }
+}
+
+fn validate_4g_header(header: &Br4gHeader) -> Option<(u32, SpokeBearing, Option<u16>)> {
+    if header.header_len != (RADAR_LINE_HEADER_LENGTH as u8) {
+        log::warn!(
+            "Spoke with illegal header length ({}) ignored",
+            header.header_len
+        );
+        return None;
+    }
+    if header.status != 0x02 && header.status != 0x12 {
+        log::warn!("Spoke with illegal status (0x{:x}) ignored", header.status);
+        return None;
+    }
+
+    let heading = u16::from_le_bytes(header.heading);
+    let angle = u16::from_le_bytes(header.angle) / 2;
+    let large_range = u16::from_le_bytes(header.large_range);
+    let small_range = u16::from_le_bytes(header.small_range);
+
+    let range = if large_range == 0x80 {
+        if small_range == 0xffff {
+            0
+        } else {
+            (small_range as u32) / 4
+        }
+    } else {
+        ((large_range as u32) * (small_range as u32)) / 512
+    };
+
+    let heading = extract_heading_value(heading);
+    Some((range, angle, heading))
+}
+
+fn validate_br24_header(header: &Br24Header) -> Option<(u32, SpokeBearing, Option<u16>)> {
+    if header.header_len != (RADAR_LINE_HEADER_LENGTH as u8) {
+        log::warn!(
+            "Spoke with illegal header length ({}) ignored",
+            header.header_len
+        );
+        return None;
+    }
+    if header.status != 0x02 && header.status != 0x12 {
+        log::warn!("Spoke with illegal status (0x{:x}) ignored", header.status);
+        return None;
+    }
+
+    let heading = u16::from_le_bytes(header.heading);
+    let angle = u16::from_le_bytes(header.angle) / 2;
+    const BR24_RANGE_FACTOR: f64 = 10.0 / 1.414; // 10 m / sqrt(2)
+    let range = ((u32::from_le_bytes(header.range) & 0xffffff) as f64 * BR24_RANGE_FACTOR) as u32;
+
+    let heading = extract_heading_value(heading);
+
+    Some((range, angle, heading))
 }

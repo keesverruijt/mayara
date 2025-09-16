@@ -66,9 +66,7 @@ pub(crate) struct RaymarineReportReceiver {
     state: ReceiverState,
     model: Option<RaymarineModel>,
     command_sender: Option<Command>,
-    data_update_tx: broadcast::Sender<DataUpdate>,
     control_update_rx: broadcast::Receiver<ControlUpdate>,
-    info_request_timeout: Instant,
     report_request_timeout: Instant,
     reported_unknown: HashMap<u32, bool>,
 
@@ -99,7 +97,6 @@ impl RaymarineReportReceiver {
         let command_sender = None; // Only known after we receive the model info
 
         let control_update_rx = info.controls.control_update_subscribe();
-        let data_update_tx = info.controls.get_data_update_tx();
 
         let pixel_to_blob = pixel_to_blob(&info.legend);
         let trails = TrailBuffer::new(session.clone(), &info);
@@ -114,9 +111,7 @@ impl RaymarineReportReceiver {
             state: ReceiverState::Initial,
             model: None, // We don't know this yet, it will be set when we receive the first info report
             command_sender,
-            info_request_timeout: now,
             report_request_timeout: now,
-            data_update_tx,
             control_update_rx,
             reported_unknown: HashMap::new(),
             statistics: Statistics::new(),

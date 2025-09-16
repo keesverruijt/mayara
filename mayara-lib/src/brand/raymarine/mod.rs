@@ -497,14 +497,7 @@ impl RaymarineLocatorState {
 
         if let Some(info) = radars.located(info) {
             // It's new, start the RadarProcessor thread
-
-            if self.session.read().unwrap().args.output {
-                let info_clone2 = info.clone();
-
-                subsys.start(SubsystemBuilder::new("stdout", move |s| {
-                    info_clone2.forward_output(s)
-                }));
-            }
+            info.start_forwarding_radar_messages_to_stdout(&subsys);
 
             let report_name = info.key();
             let info_clone = info.clone();

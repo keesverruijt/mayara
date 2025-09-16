@@ -13,7 +13,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 use thiserror::Error;
-use tokio_graceful_shutdown::SubsystemHandle;
+use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
 pub(crate) mod range;
 pub(crate) mod spoke;
@@ -360,18 +360,17 @@ impl RadarInfo {
         }
     }
 
-    ///
-    ///  forward_output is activated in all starts of radars when cli args.output
-    ///  is true:
-    ///
-    ///  if args.output {
-    ///      subsys.start(SubsystemBuilder::new(data_name, move |s| {
-    ///          info.forward_output(s)
-    ///      }));
-    ///  }
-    ///
+    pub fn start_forwarding_radar_messages_to_stdout(&self, subsys: &SubsystemHandle) {
+        if self.session.read().unwrap().args.output {
+            let info_clone2 = self.clone();
 
-    pub async fn forward_output(self, subsys: SubsystemHandle) -> Result<(), RadarError> {
+            subsys.start(SubsystemBuilder::new("stdout", move |s| {
+                info_clone2.forward_output(s)
+            }));
+        }
+    }
+
+    async fn forward_output(self, subsys: SubsystemHandle) -> Result<(), RadarError> {
         use std::io::Write;
 
         let mut rx = self.message_tx.subscribe();

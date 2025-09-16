@@ -240,13 +240,6 @@ impl FurunoDataReceiver {
     async fn handle_data_update(&mut self, r: DataUpdate) -> Result<(), RadarError> {
         log::debug!("Received data update: {:?}", r);
         match r {
-            DataUpdate::Doppler(_doppler) => {
-                // self.doppler = doppler;
-            }
-            DataUpdate::Legend(legend) => {
-                // self.pixel_to_blob = Self::pixel_to_blob(&legend);
-                self.info.legend = legend;
-            }
             DataUpdate::Ranges(ranges) => {
                 self.info.ranges = ranges;
             }

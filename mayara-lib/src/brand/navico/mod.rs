@@ -13,7 +13,6 @@ use crate::util::PrintableSlice;
 use crate::{Brand, Session};
 
 mod command;
-mod data;
 mod info;
 mod report;
 mod settings;
@@ -186,7 +185,7 @@ impl Model {
 
     pub fn from(model: u8) -> Self {
         match model {
-            0x0e => Model::BR24, // Davy's NorthStart BR24 from 2009
+            0x0e => Model::BR24, // Davy's NorthStar BR24 from 2009
             0x0f => Model::BR24,
             0x08 => Model::Gen3,
             0x01 => Model::Gen4,
@@ -415,30 +414,17 @@ impl NavicoLocatorState {
                 radars.update(&info);
             }
 
-            let data_name = info.key() + " data";
             let report_name = info.key() + " reports";
-            let info_clone = info.clone();
 
-            if self.session.read().unwrap().args.output {
-                let info_clone2 = info.clone();
+            info.start_forwarding_radar_messages_to_stdout(&subsys);
 
-                subsys.start(SubsystemBuilder::new("stdout", move |s| {
-                    info_clone2.forward_output(s)
-                }));
-            }
-
-            let data_receiver = data::NavicoDataReceiver::new(&self.session, info);
             let report_receiver = report::NavicoReportReceiver::new(
                 self.session.clone(),
-                info_clone,
+                info,
                 radars.clone(),
                 model,
             );
 
-            subsys.start(SubsystemBuilder::new(
-                data_name,
-                move |s: SubsystemHandle| data_receiver.run(s),
-            ));
             subsys.start(SubsystemBuilder::new(report_name, |s| {
                 report_receiver.run(s)
             }));

@@ -82,10 +82,6 @@ pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version:
     info.controls
         .set_valid_ranges(&ControlType::Range, &ranges)
         .expect("Set valid values");
-    info.controls
-        .get_data_update_tx()
-        .send(DataUpdate::Ranges(ranges))
-        .expect("Ranges update");
 
     // TODO: Add controls based on reverse engineered capability table
 
