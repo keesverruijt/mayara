@@ -1,6 +1,5 @@
 use anyhow::{bail, Error};
 use bincode::deserialize;
-use protobuf::Message;
 use serde::Deserialize;
 use std::cmp::min;
 use std::io;
@@ -9,7 +8,6 @@ use std::net::SocketAddr;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::net::UdpSocket;
-use tokio::sync::*;
 use tokio::time::{sleep_until, Instant};
 use tokio_graceful_shutdown::SubsystemHandle;
 
@@ -29,10 +27,10 @@ use crate::radar::spoke::{to_protobuf_spoke, GenericSpoke};
 use crate::radar::target::MS_TO_KN;
 use crate::radar::trail::TrailBuffer;
 use crate::radar::{
-    DopplerMode, Legend, RadarError, RadarInfo, SharedRadars, SpokeBearing, Statistics, Status,
-    BYTE_LOOKUP_LENGTH,
+    CommandSender, CommonRadar, DopplerMode, Legend, RadarError, RadarInfo, SharedRadars,
+    SpokeBearing, Status, BYTE_LOOKUP_LENGTH,
 };
-use crate::settings::{ControlType, ControlUpdate, ControlValue, DataUpdate};
+use crate::settings::{ControlType, ControlValue};
 use crate::util::PrintableSpoke;
 use crate::util::{c_string, c_wide_string};
 use crate::Session;
@@ -162,33 +160,27 @@ fn pixel_to_blob(legend: &Legend) -> [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_DOPPLER_L
 }
 
 pub struct NavicoReportReceiver {
-    replay: bool,
+    common: CommonRadar,
     transmit_after_range_detection: bool,
-    info: RadarInfo,
-    key: String,
     report_buf: Vec<u8>,
     report_socket: Option<UdpSocket>,
     info_buf: Vec<u8>,
     info_socket: Option<UdpSocket>,
     speed_buf: Vec<u8>,
     speed_socket: Option<UdpSocket>,
-    radars: SharedRadars,
     model: Model,
     command_sender: Option<Command>,
     info_sender: Option<Information>,
-    control_update_rx: broadcast::Receiver<ControlUpdate>,
     range_timeout: Instant,
     info_request_timeout: Instant,
     report_request_timeout: Instant,
     reported_unknown: [bool; 256],
 
     // For data (spokes)
-    statistics: Statistics,
     data_buf: Vec<u8>,
     data_socket: Option<UdpSocket>,
     doppler: DopplerMode,
     pixel_to_blob: PixelToBlobType,
-    trails: TrailBuffer,
     prev_angle: u16,
 }
 
@@ -468,33 +460,29 @@ impl NavicoReportReceiver {
         let pixel_to_blob = pixel_to_blob(&info.legend);
         let trails = TrailBuffer::new(session.clone(), &info);
 
+        let common = CommonRadar::new(key, info, radars, trails, control_update_rx, replay);
+
         let now = Instant::now();
         NavicoReportReceiver {
-            replay,
+            common,
             transmit_after_range_detection: false,
-            key,
-            info,
             report_buf: Vec::with_capacity(1000),
             report_socket: None,
             info_buf: Vec::with_capacity(::core::mem::size_of::<HaloHeadingPacket>()),
             info_socket: None,
             speed_buf: Vec::with_capacity(::core::mem::size_of::<HaloSpeedPacket>()),
             speed_socket: None,
-            radars,
             model,
             command_sender,
             info_sender,
             range_timeout: now + FAR_FUTURE,
             info_request_timeout: now,
             report_request_timeout: now,
-            control_update_rx,
             reported_unknown: [false; 256],
-            statistics: Statistics::new(),
             data_buf: Vec::with_capacity(size_of::<RadarFramePkt>()),
             data_socket: None,
             doppler: DopplerMode::None,
             pixel_to_blob,
-            trails,
             prev_angle: 0,
         }
     }
@@ -505,23 +493,24 @@ impl NavicoReportReceiver {
     }
 
     fn start_report_socket(&mut self) -> io::Result<()> {
-        match create_udp_multicast_listen(&self.info.report_addr, &self.info.nic_addr) {
+        match create_udp_multicast_listen(&self.common.info.report_addr, &self.common.info.nic_addr)
+        {
             Ok(socket) => {
                 self.report_socket = Some(socket);
                 log::debug!(
                     "{}: {} via {}: listening for reports",
-                    self.key,
-                    &self.info.report_addr,
-                    &self.info.nic_addr
+                    self.common.key,
+                    &self.common.info.report_addr,
+                    &self.common.info.nic_addr
                 );
                 Ok(())
             }
             Err(e) => {
                 log::debug!(
                     "{}: {} via {}: create multicast failed: {}",
-                    self.key,
-                    &self.info.report_addr,
-                    &self.info.nic_addr,
+                    self.common.key,
+                    &self.common.info.report_addr,
+                    &self.common.info.nic_addr,
                     e
                 );
                 Err(e)
@@ -533,23 +522,23 @@ impl NavicoReportReceiver {
         if self.info_socket.is_some() {
             return Ok(()); // Already started
         }
-        match create_udp_multicast_listen(&NAVICO_INFO_ADDRESS, &self.info.nic_addr) {
+        match create_udp_multicast_listen(&NAVICO_INFO_ADDRESS, &self.common.info.nic_addr) {
             Ok(socket) => {
                 self.info_socket = Some(socket);
                 log::debug!(
                     "{}: {} via {}: listening for info reports",
-                    self.key,
-                    &self.info.report_addr,
-                    &self.info.nic_addr
+                    self.common.key,
+                    &self.common.info.report_addr,
+                    &self.common.info.nic_addr
                 );
                 Ok(())
             }
             Err(e) => {
                 log::debug!(
                     "{}: {} via {}: create multicast failed: {}",
-                    self.key,
-                    &self.info.report_addr,
-                    &self.info.nic_addr,
+                    self.common.key,
+                    &self.common.info.report_addr,
+                    &self.common.info.nic_addr,
                     e
                 );
                 Err(e)
@@ -561,23 +550,23 @@ impl NavicoReportReceiver {
         if self.speed_socket.is_some() {
             return Ok(()); // Already started
         }
-        match create_udp_multicast_listen(&NAVICO_SPEED_ADDRESS_A, &self.info.nic_addr) {
+        match create_udp_multicast_listen(&NAVICO_SPEED_ADDRESS_A, &self.common.info.nic_addr) {
             Ok(socket) => {
                 self.speed_socket = Some(socket);
                 log::debug!(
                     "{}: {} via {}: listening for speed reports",
-                    self.key,
-                    &self.info.report_addr,
-                    &self.info.nic_addr
+                    self.common.key,
+                    &self.common.info.report_addr,
+                    &self.common.info.nic_addr
                 );
                 Ok(())
             }
             Err(e) => {
                 log::debug!(
                     "{}: {} via {}: create multicast failed: {}",
-                    self.key,
-                    &self.info.report_addr,
-                    &self.info.nic_addr,
+                    self.common.key,
+                    &self.common.info.report_addr,
+                    &self.common.info.nic_addr,
                     e
                 );
                 Err(e)
@@ -589,21 +578,24 @@ impl NavicoReportReceiver {
         if self.data_socket.is_some() {
             return Ok(()); // Already started
         }
-        match create_udp_multicast_listen(&self.info.spoke_data_addr, &self.info.nic_addr) {
+        match create_udp_multicast_listen(
+            &self.common.info.spoke_data_addr,
+            &self.common.info.nic_addr,
+        ) {
             Ok(sock) => {
                 self.data_socket = Some(sock);
                 log::debug!(
                     "{} via {}: listening for spoke data",
-                    &self.info.spoke_data_addr,
-                    &self.info.nic_addr
+                    &self.common.info.spoke_data_addr,
+                    &self.common.info.nic_addr
                 );
                 Ok(())
             }
             Err(e) => {
                 log::debug!(
                     "{} via {}: create multicast failed: {}",
-                    &self.info.spoke_data_addr,
-                    &self.info.nic_addr,
+                    &self.common.info.spoke_data_addr,
+                    &self.common.info.nic_addr,
                     e
                 );
                 Err(e)
@@ -613,13 +605,13 @@ impl NavicoReportReceiver {
 
     //
     // Process reports coming in from the radar on self.sock and commands from the
-    // controller (= user) on self.info.command_tx.
+    // controller (= user) on self.common.info.command_tx.
     //
     async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
-        log::debug!("{}: listening for reports", self.key);
+        log::debug!("{}: listening for reports", self.common.key);
 
         loop {
-            if !self.replay {
+            if !self.common.replay {
                 self.start_info_socket()?;
                 self.start_speed_socket()?;
             }
@@ -632,7 +624,7 @@ impl NavicoReportReceiver {
 
             tokio::select! {
                 _ = subsys.on_shutdown_requested() => {
-                    log::debug!("{}: shutdown", self.key);
+                    log::debug!("{}: shutdown", self.common.key);
                     return Err(RadarError::Shutdown);
                 },
 
@@ -653,12 +645,12 @@ impl NavicoReportReceiver {
                     match r {
                         Ok((_len, _addr)) => {
                             if let Err(e) = self.process_report().await {
-                                log::error!("{}: {}", self.key, e);
+                                log::error!("{}: {}", self.common.key, e);
                             }
                             self.report_buf.clear();
                         }
                         Err(e) => {
-                            log::error!("{}: receive error: {}", self.key, e);
+                            log::error!("{}: receive error: {}", self.common.key, e);
                             return Err(RadarError::Io(e));
                         }
                     }
@@ -672,7 +664,7 @@ impl NavicoReportReceiver {
                             self.info_buf.clear();
                         }
                         Err(e) => {
-                            log::error!("{}: receive info error: {}", self.key, e);
+                            log::error!("{}: receive info error: {}", self.common.key, e);
                             return Err(RadarError::Io(e));
                         }
                     }
@@ -687,7 +679,7 @@ impl NavicoReportReceiver {
                             self.speed_buf.clear();
                         }
                         Err(e) => {
-                            log::error!("{}: receive speed error: {}", self.key, e);
+                            log::error!("{}: receive speed error: {}", self.common.key, e);
                             return Err(RadarError::Io(e));
                         }
                     }
@@ -704,10 +696,10 @@ impl NavicoReportReceiver {
                     }
                 },
 
-                r = self.control_update_rx.recv() => {
+                r = self.common.control_update_rx.recv() => {
                     match r {
                         Err(_) => {},
-                        Ok(cv) => {let _ = self.process_control_update(cv).await;},
+                        Ok(cu) => {let _ = self.common.process_control_update(cu, &mut self.command_sender).await;},
                     }
                 }
 
@@ -727,7 +719,7 @@ impl NavicoReportReceiver {
 
         let mut spokes_in_frame = (self.data_buf.len() - FRAME_HEADER_LENGTH) / RADAR_LINE_LENGTH;
         if spokes_in_frame != 32 {
-            self.statistics.broken_packets += 1;
+            self.common.statistics.broken_packets += 1;
             if spokes_in_frame > 32 {
                 spokes_in_frame = 32;
             }
@@ -742,7 +734,7 @@ impl NavicoReportReceiver {
 
         let mut mark_full_rotation = false;
         let mut message = RadarMessage::new();
-        message.radar = self.info.id as u32;
+        message.radar = self.common.info.id as u32;
 
         let mut offset: usize = FRAME_HEADER_LENGTH;
         for scanline in 0..spokes_in_frame {
@@ -751,7 +743,7 @@ impl NavicoReportReceiver {
                 ..offset + RADAR_LINE_HEADER_LENGTH + RADAR_LINE_DATA_LENGTH];
 
             if let Some((range, angle, heading)) =
-                validate_header(&self.info, header_slice, scanline)
+                validate_header(&self.common.info, header_slice, scanline)
             {
                 log::trace!("range {} angle {} heading {:?}", range, angle, heading);
                 log::trace!(
@@ -760,43 +752,45 @@ impl NavicoReportReceiver {
                     PrintableSpoke::new(spoke_slice)
                 );
                 let mut spoke = to_protobuf_spoke(
-                    &self.info,
+                    &self.common.info,
                     range,
                     angle,
                     heading,
                     now,
                     self.process_spoke(spoke_slice),
                 );
-                self.trails.update_trails(&mut spoke, &self.info.legend);
+                self.common
+                    .trails
+                    .update_trails(&mut spoke, &self.common.info.legend);
                 message.spokes.push(spoke);
 
                 if angle < self.prev_angle {
                     mark_full_rotation = true;
                 }
                 if ((self.prev_angle + 1) % NAVICO_SPOKES as u16) != angle {
-                    self.statistics.missing_spokes +=
+                    self.common.statistics.missing_spokes +=
                         (angle + NAVICO_SPOKES as u16 - self.prev_angle - 1) as usize
                             % NAVICO_SPOKES as usize;
                     log::trace!("{}: Spoke angle {} is not consecutive to previous angle {}, new missing spokes {}",
-                        self.key, angle, self.prev_angle, self.statistics.missing_spokes);
+                        self.common.key, angle, self.prev_angle, self.common.statistics.missing_spokes);
                 }
-                self.statistics.received_spokes += 1;
+                self.common.statistics.received_spokes += 1;
                 self.prev_angle = angle;
             } else {
                 log::warn!("Invalid spoke: header {:02X?}", &header_slice);
-                self.statistics.broken_packets += 1;
+                self.common.statistics.broken_packets += 1;
             }
 
             offset += RADAR_LINE_LENGTH;
         }
 
         if mark_full_rotation {
-            let ms = self.info.full_rotation();
-            self.trails.set_rotation_speed(ms);
-            self.statistics.full_rotation(&self.key);
+            let ms = self.common.info.full_rotation();
+            self.common.trails.set_rotation_speed(ms);
+            self.common.statistics.full_rotation(&self.common.key);
         }
 
-        self.info.broadcast_radar_message(message);
+        self.common.info.broadcast_radar_message(message);
     }
 
     fn process_spoke(&self, spoke: &[u8]) -> GenericSpoke {
@@ -821,7 +815,7 @@ impl NavicoReportReceiver {
             generic_spoke.push(pixel_to_blob[high_nibble_index][pixel]);
         }
 
-        if self.replay {
+        if self.common.replay {
             // Generate circle at extreme range
             let pixel = 0xff as usize;
             generic_spoke.pop();
@@ -831,28 +825,6 @@ impl NavicoReportReceiver {
         }
 
         generic_spoke
-    }
-
-    async fn process_control_update(
-        &mut self,
-        control_update: ControlUpdate,
-    ) -> Result<(), RadarError> {
-        let cv = control_update.control_value;
-        let reply_tx = control_update.reply_tx;
-
-        if let Some(command_sender) = &mut self.command_sender {
-            if let Err(e) = command_sender.set_control(&cv, &self.info.controls).await {
-                return self
-                    .info
-                    .controls
-                    .send_error_to_client(reply_tx, &cv, &e)
-                    .await;
-            } else {
-                self.info.controls.set_refresh(&cv.id);
-            }
-        }
-
-        Ok(())
     }
 
     async fn send_report_requests(&mut self) -> Result<(), RadarError> {
@@ -872,16 +844,16 @@ impl NavicoReportReceiver {
     }
 
     fn set(&mut self, control_type: &ControlType, value: f32, auto: Option<bool>) {
-        match self.info.controls.set(control_type, value, auto) {
+        match self.common.info.controls.set(control_type, value, auto) {
             Err(e) => {
-                log::error!("{}: {}", self.key, e.to_string());
+                log::error!("{}: {}", self.common.key, e.to_string());
             }
             Ok(Some(())) => {
                 if log::log_enabled!(log::Level::Debug) {
-                    let control = self.info.controls.get(control_type).unwrap();
+                    let control = self.common.info.controls.get(control_type).unwrap();
                     log::trace!(
                         "{}: Control '{}' new value {} auto {:?} enabled {:?}",
-                        self.key,
+                        self.common.key,
                         control_type,
                         control.value(),
                         control.auto,
@@ -908,19 +880,20 @@ impl NavicoReportReceiver {
         auto_value: f32,
     ) {
         match self
+            .common
             .info
             .controls
             .set_value_with_many_auto(control_type, value, auto_value)
         {
             Err(e) => {
-                log::error!("{}: {}", self.key, e.to_string());
+                log::error!("{}: {}", self.common.key, e.to_string());
             }
             Ok(Some(())) => {
                 if log::log_enabled!(log::Level::Debug) {
-                    let control = self.info.controls.get(control_type).unwrap();
+                    let control = self.common.info.controls.get(control_type).unwrap();
                     log::debug!(
                         "{}: Control '{}' new value {} auto_value {:?} auto {:?}",
-                        self.key,
+                        self.common.key,
                         control_type,
                         control.value(),
                         control.auto_value,
@@ -933,12 +906,17 @@ impl NavicoReportReceiver {
     }
 
     fn set_string(&mut self, control: &ControlType, value: String) {
-        match self.info.controls.set_string(control, value) {
+        match self.common.info.controls.set_string(control, value) {
             Err(e) => {
-                log::error!("{}: {}", self.key, e.to_string());
+                log::error!("{}: {}", self.common.key, e.to_string());
             }
             Ok(Some(v)) => {
-                log::debug!("{}: Control '{}' new value '{}'", self.key, control, v);
+                log::debug!(
+                    "{}: Control '{}' new value '{}'",
+                    self.common.key,
+                    control,
+                    v
+                );
             }
             Ok(None) => {}
         };
@@ -947,12 +925,15 @@ impl NavicoReportReceiver {
     // If range detection is in progress, go to the next range
     async fn process_range(&mut self, range: i32) -> Result<(), RadarError> {
         let range = range / 10;
-        if self.info.ranges.len() == 0 && self.info.range_detection.is_none() && !self.replay {
-            if let Some(status) = self.info.controls.get_status() {
+        if self.common.info.ranges.len() == 0
+            && self.common.info.range_detection.is_none()
+            && !self.common.replay
+        {
+            if let Some(status) = self.common.info.controls.get_status() {
                 if status == Status::Transmit {
                     log::warn!(
                         "{}: No ranges available, but radar is transmitting, standby during range detection",
-                        self.key
+                        self.common.key
                     );
                     self.send_status(Status::Standby).await?;
                     self.transmit_after_range_detection = true;
@@ -960,13 +941,13 @@ impl NavicoReportReceiver {
             } else {
                 log::warn!(
                     "{}: No ranges available and no radar status found, cannot start range detection",
-                    self.key
+                    self.common.key
                 );
                 return Ok(());
             }
-            if let Some(control) = self.info.controls.get(&ControlType::Range) {
-                self.info.range_detection = Some(RangeDetection::new(
-                    self.key.clone(),
+            if let Some(control) = self.common.info.controls.get(&ControlType::Range) {
+                self.common.info.range_detection = Some(RangeDetection::new(
+                    self.common.key.clone(),
                     50,
                     control.item().max_value.unwrap() as i32,
                     true,
@@ -975,20 +956,21 @@ impl NavicoReportReceiver {
             }
         }
 
-        if let Some(range_detection) = &mut self.info.range_detection {
+        if let Some(range_detection) = &mut self.common.info.range_detection {
             match range_detection.found_range(range) {
                 RangeDetectionResult::NoRange => {
                     return Ok(());
                 }
                 RangeDetectionResult::Complete(ranges, saved_range) => {
-                    self.info.ranges = ranges.clone();
-                    self.info
+                    self.common.info.ranges = ranges.clone();
+                    self.common
+                        .info
                         .controls
                         .set_valid_ranges(&ControlType::Range, &ranges)?;
-                    self.info.range_detection = None;
+                    self.common.info.range_detection = None;
                     self.range_timeout = Instant::now() + FAR_FUTURE;
 
-                    self.radars.update(&self.info);
+                    self.common.radars.update(&self.common.info);
 
                     self.send_range(saved_range).await?;
                     if self.transmit_after_range_detection {
@@ -1012,27 +994,35 @@ impl NavicoReportReceiver {
         self.command_sender
             .as_mut()
             .unwrap() // Safe, as we only create a range detection when replay is false
-            .set_control(&cv, &self.info.controls)
+            .set_control(&cv, &self.common.info.controls)
             .await?;
         Ok(())
     }
 
     async fn send_range(&mut self, range: i32) -> Result<(), RadarError> {
-        let cv = ControlValue::new(ControlType::Range, range.to_string());
+        let cv: ControlValue = ControlValue::new(ControlType::Range, range.to_string());
         self.command_sender
             .as_mut()
             .unwrap() // Safe, as we only create a range detection when replay is false
-            .set_control(&cv, &self.info.controls)
+            .set_control(&cv, &self.common.info.controls)
             .await?;
         Ok(())
     }
 
     fn process_info(&mut self, addr: &SocketAddr) {
         if let SocketAddr::V4(addr) = addr {
-            if addr.ip() == &self.info.nic_addr {
-                log::trace!("{}: Ignoring info from ourselves ({})", self.key, addr);
+            if addr.ip() == &self.common.info.nic_addr {
+                log::trace!(
+                    "{}: Ignoring info from ourselves ({})",
+                    self.common.key,
+                    addr
+                );
             } else {
-                log::trace!("{}: {} is sending information updates", self.key, addr);
+                log::trace!(
+                    "{}: {} is sending information updates",
+                    self.common.key,
+                    addr
+                );
                 self.info_request_timeout = Instant::now() + INFO_BY_OTHERS_TIMEOUT;
 
                 if self.info_buf.len() >= ::core::mem::size_of::<HaloNavigationPacket>() {
@@ -1042,13 +1032,13 @@ impl NavicoReportReceiver {
                             let cog = u16::from_le_bytes(report.cog) as f64 * 360.0 / 63488.0;
                             log::debug!(
                                 "{}: Halo sog={sog} cog={cog} from navigation report {:?}",
-                                self.key,
+                                self.common.key,
                                 report
                             );
                         }
                     } else {
                         if let Ok(report) = HaloHeadingPacket::transmute(&self.info_buf) {
-                            log::debug!("{}: Halo heading report {:?}", self.key, report);
+                            log::debug!("{}: Halo heading report {:?}", self.common.key, report);
                         }
                     }
                 }
@@ -1058,9 +1048,9 @@ impl NavicoReportReceiver {
 
     fn process_speed(&mut self, addr: &SocketAddr) {
         if let SocketAddr::V4(addr) = addr {
-            if addr.ip() != &self.info.nic_addr {
+            if addr.ip() != &self.common.info.nic_addr {
                 if let Ok(report) = HaloSpeedPacket::transmute(&self.speed_buf) {
-                    log::debug!("{}: Halo speed report {:?}", self.key, report);
+                    log::debug!("{}: Halo speed report {:?}", self.common.key, report);
                 }
             }
         }
@@ -1139,7 +1129,7 @@ impl NavicoReportReceiver {
     async fn process_report_01(&mut self) -> Result<(), Error> {
         let report = RadarReport1_18::transmute(&self.report_buf)?;
 
-        log::debug!("{}: report {:?}", self.key, report);
+        log::debug!("{}: report {:?}", self.common.key, report);
 
         self.set_status(report.status)
     }
@@ -1151,7 +1141,7 @@ impl NavicoReportReceiver {
             2 => Status::Transmit,
             5 => Status::Preparing,
             _ => {
-                bail!("{}: Unknown radar status {}", self.key, status);
+                bail!("{}: Unknown radar status {}", self.common.key, status);
             }
         };
         self.set_value(&ControlType::Status, status as i32 as f32);
@@ -1161,7 +1151,7 @@ impl NavicoReportReceiver {
     async fn process_report_02(&mut self) -> Result<(), Error> {
         let report = RadarReport2_99::transmute(&self.report_buf)?;
 
-        log::trace!("{}: report {:?}", self.key, report);
+        log::trace!("{}: report {:?}", self.common.key, report);
 
         let mode = report.mode as i32;
         let range = i32::from_le_bytes(report.range);
@@ -1182,7 +1172,8 @@ impl NavicoReportReceiver {
         if self.model != Model::HALO {
             self.set_value_auto(&ControlType::Sea, sea as f32, sea_auto);
         } else {
-            self.info
+            self.common
+                .info
                 .controls
                 .set_auto_state(&ControlType::Sea, sea_auto > 0)
                 .unwrap(); // Only crashes if control not supported which would be an internal bug
@@ -1203,7 +1194,7 @@ impl NavicoReportReceiver {
     async fn process_report_03(&mut self) -> Result<(), Error> {
         let report = RadarReport3_129::transmute(&self.report_buf)?;
 
-        log::trace!("{}: report {:?}", self.key, report);
+        log::trace!("{}: report {:?}", self.common.key, report);
 
         let model_raw = report.model;
         let hours = i32::from_le_bytes(report.hours);
@@ -1214,22 +1205,26 @@ impl NavicoReportReceiver {
             Model::Unknown => {
                 if !self.reported_unknown[model_raw as usize] {
                     self.reported_unknown[model_raw as usize] = true;
-                    log::error!("{}: Unknown radar model 0x{:02x}", self.key, model_raw);
+                    log::error!(
+                        "{}: Unknown radar model 0x{:02x}",
+                        self.common.key,
+                        model_raw
+                    );
                 }
             }
             _ => {
                 if self.model != model {
-                    log::info!("{}: Radar is model {}", self.key, model);
-                    let info2 = self.info.clone();
+                    log::info!("{}: Radar is model {}", self.common.key, model);
+                    let info2 = self.common.info.clone();
                     self.model = model;
                     super::settings::update_when_model_known(
-                        &mut self.info.controls,
+                        &mut self.common.info.controls,
                         model,
                         &info2,
                     );
-                    self.info.set_doppler(model == Model::HALO);
+                    self.common.info.set_doppler(model == Model::HALO);
 
-                    self.radars.update(&self.info);
+                    self.common.radars.update(&self.common.info);
                 }
             }
         }
@@ -1244,7 +1239,7 @@ impl NavicoReportReceiver {
     async fn process_report_04(&mut self) -> Result<(), Error> {
         let report = RadarReport4_66::transmute(&self.report_buf)?;
 
-        log::trace!("{}: report {:?}", self.key, report);
+        log::trace!("{}: report {:?}", self.common.key, report);
 
         self.set_value(
             &ControlType::BearingAlignment,
@@ -1267,7 +1262,7 @@ impl NavicoReportReceiver {
     async fn process_report_06_68(&mut self) -> Result<(), Error> {
         let report = RadarReport6_68::transmute(&self.report_buf)?;
 
-        log::trace!("{}: report {:?}", self.key, report);
+        log::trace!("{}: report {:?}", self.common.key, report);
 
         let name = c_string(&report.name);
         self.set_string(&ControlType::ModelName, name.unwrap_or("").to_string());
@@ -1277,12 +1272,18 @@ impl NavicoReportReceiver {
             let start_angle = i16::from_le_bytes(blanking.start_angle);
             let end_angle = i16::from_le_bytes(blanking.end_angle);
             let enabled = Some(blanking.enabled > 0);
-            self.info
-                .controls
-                .set_value_auto_enabled(&start, start_angle as f32, None, enabled)?;
-            self.info
-                .controls
-                .set_value_auto_enabled(&end, end_angle as f32, None, enabled)?;
+            self.common.info.controls.set_value_auto_enabled(
+                &start,
+                start_angle as f32,
+                None,
+                enabled,
+            )?;
+            self.common.info.controls.set_value_auto_enabled(
+                &end,
+                end_angle as f32,
+                None,
+                enabled,
+            )?;
         }
 
         Ok(())
@@ -1294,7 +1295,7 @@ impl NavicoReportReceiver {
     async fn process_report_06_74(&mut self) -> Result<(), Error> {
         let report = RadarReport6_74::transmute(&self.report_buf)?;
 
-        log::trace!("{}: report {:?}", self.key, report);
+        log::trace!("{}: report {:?}", self.common.key, report);
 
         let name = c_string(&report.name);
         // self.set_string(&ControlType::ModelName, name.unwrap_or("").to_string());
@@ -1309,12 +1310,18 @@ impl NavicoReportReceiver {
             let start_angle = i16::from_le_bytes(blanking.start_angle);
             let end_angle = i16::from_le_bytes(blanking.end_angle);
             let enabled = Some(blanking.enabled > 0);
-            self.info
-                .controls
-                .set_value_auto_enabled(&start, start_angle as f32, None, enabled)?;
-            self.info
-                .controls
-                .set_value_auto_enabled(&end, end_angle as f32, None, enabled)?;
+            self.common.info.controls.set_value_auto_enabled(
+                &start,
+                start_angle as f32,
+                None,
+                enabled,
+            )?;
+            self.common.info.controls.set_value_auto_enabled(
+                &end,
+                end_angle as f32,
+                None,
+                enabled,
+            )?;
         }
 
         Ok(())
@@ -1327,12 +1334,16 @@ impl NavicoReportReceiver {
             && data.len() != size_of::<RadarReport8_21>()
             && data.len() != size_of::<RadarReport8_21>() + 1
         {
-            bail!("{}: Report 0x08C4 invalid length {}", self.key, data.len());
+            bail!(
+                "{}: Report 0x08C4 invalid length {}",
+                self.common.key,
+                data.len()
+            );
         }
 
         let report = RadarReport8_18::transmute(&data[0..size_of::<RadarReport8_18>()])?;
 
-        log::trace!("{}: report {:?}", self.key, report);
+        log::trace!("{}: report {:?}", self.common.key, report);
 
         let sea_state = report.sea_state as i32;
         let local_interference_rejection = report.interference_rejection as i32;
@@ -1348,7 +1359,7 @@ impl NavicoReportReceiver {
         if data.len() >= size_of::<RadarReport8_21>() {
             let report = RadarReport8_21::transmute(&data[0..size_of::<RadarReport8_21>()])?;
 
-            log::trace!("{}: report {:?}", self.key, report);
+            log::trace!("{}: report {:?}", self.common.key, report);
 
             let doppler_speed = u16::from_le_bytes(report.doppler_speed);
             let doppler_state = report.doppler_state;
@@ -1358,14 +1369,14 @@ impl NavicoReportReceiver {
                 Err(_) => {
                     bail!(
                         "{}: Unknown doppler state {}",
-                        self.key,
+                        self.common.key,
                         report.doppler_state
                     );
                 }
                 Ok(doppler_mode) => {
                     log::debug!(
                         "{}: doppler mode={} speed={}",
-                        self.key,
+                        self.common.key,
                         doppler_mode,
                         doppler_speed
                     );
@@ -1400,7 +1411,7 @@ impl NavicoReportReceiver {
         } else if target_sep > 0 {
             log::trace!(
                 "{}: Target separation value {} not supported on model {}",
-                self.key,
+                self.common.key,
                 target_sep,
                 self.model
             );

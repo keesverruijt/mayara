@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use enum_primitive_derive::Primitive;
@@ -13,6 +14,9 @@ use std::{
     sync::{Arc, RwLock},
 };
 use thiserror::Error;
+use tokio::io::WriteHalf;
+use tokio::net::TcpStream;
+use tokio::sync::broadcast;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
 pub(crate) mod range;
@@ -23,6 +27,7 @@ pub(crate) mod trail;
 use crate::config::Persistence;
 use crate::locator::LocatorId;
 use crate::protos::RadarMessage::RadarMessage;
+use crate::radar::trail::TrailBuffer;
 use crate::settings::{ControlError, ControlType, ControlUpdate, ControlValue, SharedControls};
 use crate::{Brand, Session, TargetMode};
 use range::{RangeDetection, Ranges};
@@ -67,6 +72,8 @@ pub enum RadarError {
     LoginFailed,
     #[error("Invalid port number")]
     InvalidPort,
+    #[error("Not connected")]
+    NotConnected,
     #[cfg(windows)]
     #[error("OS error: {0}")]
     OSError(String),
@@ -821,5 +828,82 @@ mod tests {
         let legend = default_legend(session.clone(), true, 16);
         let json = serde_json::to_string_pretty(&legend).unwrap();
         println!("{}", json);
+    }
+}
+
+#[async_trait]
+pub(crate) trait CommandSender {
+    async fn set_control(
+        &mut self,
+        cv: &ControlValue,
+        controls: &SharedControls,
+    ) -> Result<(), RadarError>;
+}
+
+pub(crate) struct CommonRadar {
+    pub key: String,
+    pub info: RadarInfo,
+    pub radars: SharedRadars,
+    pub statistics: Statistics,
+    pub trails: TrailBuffer,
+    pub control_update_rx: broadcast::Receiver<ControlUpdate>,
+    pub replay: bool,
+}
+
+impl CommonRadar {
+    pub(crate) fn new(
+        key: String,
+        info: RadarInfo,
+        radars: SharedRadars,
+        trails: TrailBuffer,
+        control_update_rx: broadcast::Receiver<ControlUpdate>,
+        replay: bool,
+    ) -> Self {
+        CommonRadar {
+            key,
+            info,
+            radars,
+            statistics: Statistics::new(),
+            trails,
+            control_update_rx,
+            replay,
+        }
+    }
+
+    pub(crate) async fn process_control_update<T: CommandSender>(
+        &mut self,
+        control_update: ControlUpdate,
+        command_sender: &mut Option<T>,
+    ) -> Result<(), RadarError> {
+        let cv = control_update.control_value;
+        let reply_tx = control_update.reply_tx;
+
+        match self.trails.set_control_value(&self.info.controls, &cv) {
+            Some(Ok(())) => {
+                return Ok(());
+            }
+            Some(Err(e)) => {
+                return self
+                    .info
+                    .controls
+                    .send_error_to_client(reply_tx, &cv, &e)
+                    .await;
+            }
+            None => {} // Fall through to normal processing
+        };
+
+        if let Some(command_sender) = command_sender {
+            if let Err(e) = command_sender.set_control(&cv, &self.info.controls).await {
+                return self
+                    .info
+                    .controls
+                    .send_error_to_client(reply_tx, &cv, &e)
+                    .await;
+            } else {
+                self.info.controls.set_refresh(&cv.id);
+            }
+        }
+
+        Ok(())
     }
 }

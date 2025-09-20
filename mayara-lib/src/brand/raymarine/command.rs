@@ -1,10 +1,10 @@
+use async_trait::async_trait;
 use tokio::net::UdpSocket;
 
 use crate::network::create_multicast_send;
 use crate::radar::range::Ranges;
-use crate::radar::{RadarError, RadarInfo};
-use crate::settings::{ControlType, ControlValue, SharedControls};
-use crate::Session;
+use crate::radar::{CommandSender, RadarError, RadarInfo};
+use crate::settings::{ControlValue, SharedControls};
 
 use super::BaseModel;
 
@@ -99,8 +99,11 @@ impl Command {
 
         Ok(cmd)
     }
+}
 
-    pub async fn set_control(
+#[async_trait]
+impl CommandSender for Command {
+    async fn set_control(
         &mut self,
         cv: &ControlValue,
         controls: &SharedControls,
@@ -114,9 +117,5 @@ impl Command {
             BaseModel::RD => rd::set_control(self, cv, value, controls).await,
             BaseModel::Quantum => quantum::set_control(self, cv, value, controls).await,
         }
-    }
-
-    pub(super) async fn send_report_requests(&mut self) -> Result<(), RadarError> {
-        Ok(())
     }
 }

@@ -15,7 +15,6 @@ use crate::util::{c_string, PrintableSlice};
 use crate::{Brand, Session};
 
 mod command;
-mod data;
 mod report;
 mod settings;
 
@@ -274,16 +273,9 @@ impl FurunoLocatorState {
             }
 
             // Clone everything moved into future twice or more
-            let data_name = info.key() + " data";
-            let report_name = info.key() + " reports";
+            let report_name = info.key();
 
             info.start_forwarding_radar_messages_to_stdout(&subsys);
-
-            let data_receiver = data::FurunoDataReceiver::new(self.session.clone(), info.clone());
-            subsys.start(SubsystemBuilder::new(
-                data_name,
-                move |s: SubsystemHandle| data_receiver.run(s),
-            ));
 
             if !self.session.read().unwrap().args.replay {
                 let report_receiver = report::FurunoReportReceiver::new(self.session.clone(), info);

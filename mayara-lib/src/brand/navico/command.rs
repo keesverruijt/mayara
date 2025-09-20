@@ -1,9 +1,10 @@
+use async_trait::async_trait;
 use tokio::net::UdpSocket;
 
 use std::str::FromStr;
 
 use crate::network::create_multicast_send;
-use crate::radar::{RadarError, RadarInfo, Status};
+use crate::radar::{CommandSender, RadarError, RadarInfo, Status};
 use crate::settings::{ControlType, ControlValue, SharedControls};
 use crate::Session;
 
@@ -124,7 +125,17 @@ impl Command {
         Ok(cmd)
     }
 
-    pub async fn set_control(
+    pub(super) async fn send_report_requests(&mut self) -> Result<(), RadarError> {
+        self.send(&REQUEST_03_REPORT).await?;
+        self.send(&REQUEST_MANY2_REPORT).await?;
+        self.send(&COMMAND_STAY_ON_A).await?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl CommandSender for Command {
+    async fn set_control(
         &mut self,
         cv: &ControlValue,
         controls: &SharedControls,
@@ -336,13 +347,6 @@ impl Command {
         if self.fake_errors && cv.id == ControlType::Rain && value > 10. {
             return Self::generate_fake_error(value as i32);
         }
-        Ok(())
-    }
-
-    pub(super) async fn send_report_requests(&mut self) -> Result<(), RadarError> {
-        self.send(&REQUEST_03_REPORT).await?;
-        self.send(&REQUEST_MANY2_REPORT).await?;
-        self.send(&COMMAND_STAY_ON_A).await?;
         Ok(())
     }
 }

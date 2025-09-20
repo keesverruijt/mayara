@@ -99,7 +99,7 @@ impl TrailBuffer {
         &mut self,
         controls: &SharedControls,
         cv: &ControlValue,
-    ) -> Result<(), RadarError> {
+    ) -> Option<Result<(), RadarError>> {
         let mut reply = match cv.id {
             ControlType::ClearTrails => {
                 self.clear();
@@ -122,7 +122,7 @@ impl TrailBuffer {
                 let true_motion = match cv.value.as_str() {
                     "0" => false,
                     "1" => true,
-                    _ => return Err(RadarError::CannotSetControlType(cv.id)),
+                    _ => return Some(Err(RadarError::CannotSetControlType(cv.id))),
                 };
                 self.set_trails_mode(true_motion)
                     .map_err(|e| RadarError::ControlError(e))
@@ -135,11 +135,11 @@ impl TrailBuffer {
                 let arpa = match cv.value.as_str() {
                     "0" => false,
                     "1" => true,
-                    _ => return Err(RadarError::CannotSetControlType(cv.id)),
+                    _ => return Some(Err(RadarError::CannotSetControlType(cv.id))),
                 };
                 if let Some(ref mut targets) = self.targets {
                     if let Err(e) = targets.set_arpa_via_doppler(arpa) {
-                        return Err(RadarError::ControlError(e));
+                        return Some(Err(RadarError::ControlError(e)));
                     } else {
                         Ok(())
                     }
@@ -147,7 +147,7 @@ impl TrailBuffer {
                     Ok(())
                 }
             }
-            _ => return Err(RadarError::CannotSetControlType(cv.id)),
+            _ => return None,
         };
 
         if reply.is_ok() {
@@ -156,7 +156,7 @@ impl TrailBuffer {
                 .map(|_| ())
                 .map_err(|e| RadarError::ControlError(e));
         }
-        reply
+        Some(reply)
     }
 
     pub fn set_trails_mode(&mut self, value: bool) -> Result<(), ControlError> {

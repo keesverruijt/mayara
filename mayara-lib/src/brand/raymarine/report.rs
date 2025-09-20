@@ -11,7 +11,9 @@ use crate::brand::raymarine::RaymarineModel;
 use crate::network::create_udp_multicast_listen;
 use crate::radar::range::Ranges;
 use crate::radar::trail::TrailBuffer;
-use crate::radar::{Legend, RadarError, RadarInfo, SharedRadars, Statistics, BYTE_LOOKUP_LENGTH};
+use crate::radar::{
+    CommonRadar, Legend, RadarError, RadarInfo, SharedRadars, Statistics, BYTE_LOOKUP_LENGTH,
+};
 use crate::settings::{ControlType, ControlUpdate, DataUpdate};
 use crate::Session;
 
@@ -58,24 +60,18 @@ enum ReceiverState {
 }
 
 pub(crate) struct RaymarineReportReceiver {
-    replay: bool,
-    info: RadarInfo,
-    key: String,
+    common: CommonRadar,
     report_socket: Option<UdpSocket>,
-    radars: SharedRadars,
     state: ReceiverState,
     model: Option<RaymarineModel>,
     command_sender: Option<Command>,
-    control_update_rx: broadcast::Receiver<ControlUpdate>,
     report_request_timeout: Instant,
     reported_unknown: HashMap<u32, bool>,
 
     // For data (spokes)
-    statistics: Statistics,
     pixel_stats: [u32; 256],
     range_meters: u32,
     pixel_to_blob: PixelToBlobType,
-    trails: TrailBuffer,
     prev_azimuth: u16,
 }
 
@@ -101,37 +97,34 @@ impl RaymarineReportReceiver {
         let pixel_to_blob = pixel_to_blob(&info.legend);
         let trails = TrailBuffer::new(session.clone(), &info);
 
+        let common = CommonRadar::new(key, info, radars, trails, control_update_rx, replay);
+
         let now = Instant::now();
         RaymarineReportReceiver {
-            replay,
-            key,
-            info,
+            common,
             report_socket: None,
-            radars,
             state: ReceiverState::Initial,
             model: None, // We don't know this yet, it will be set when we receive the first info report
             command_sender,
             report_request_timeout: now,
-            control_update_rx,
             reported_unknown: HashMap::new(),
-            statistics: Statistics::new(),
             pixel_stats: [0; 256],
             range_meters: 0,
             pixel_to_blob,
-            trails,
             prev_azimuth: 0,
         }
     }
 
     async fn start_report_socket(&mut self) -> io::Result<()> {
-        match create_udp_multicast_listen(&self.info.report_addr, &self.info.nic_addr) {
+        match create_udp_multicast_listen(&self.common.info.report_addr, &self.common.info.nic_addr)
+        {
             Ok(socket) => {
                 self.report_socket = Some(socket);
                 log::debug!(
                     "{}: {} via {}: listening for reports",
-                    self.key,
-                    &self.info.report_addr,
-                    &self.info.nic_addr
+                    self.common.key,
+                    &self.common.info.report_addr,
+                    &self.common.info.nic_addr
                 );
                 Ok(())
             }
@@ -139,9 +132,9 @@ impl RaymarineReportReceiver {
                 sleep(Duration::from_millis(1000)).await;
                 log::debug!(
                     "{}: {} via {}: create multicast failed: {}",
-                    self.key,
-                    &self.info.report_addr,
-                    &self.info.nic_addr,
+                    self.common.key,
+                    &self.common.info.report_addr,
+                    &self.common.info.nic_addr,
                     e
                 );
                 Ok(())
@@ -151,17 +144,17 @@ impl RaymarineReportReceiver {
 
     //
     // Process reports coming in from the radar on self.sock and commands from the
-    // controller (= user) on self.info.command_tx.
+    // controller (= user) on self.common.info.command_tx.
     //
     async fn socket_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
-        log::debug!("{}: listening for reports", self.key);
+        log::debug!("{}: listening for reports", self.common.key);
         let mut buf = Vec::with_capacity(10000);
 
         loop {
             let timeout = self.report_request_timeout;
             tokio::select! {
                 _ = subsys.on_shutdown_requested() => {
-                    log::info!("{}: shutdown", self.key);
+                    log::info!("{}: shutdown", self.common.key);
                     return Err(RadarError::Shutdown);
                 },
                 _ = sleep_until(timeout) => {
@@ -175,49 +168,27 @@ impl RaymarineReportReceiver {
                             if buf.len() == buf.capacity() {
                                 let old = buf.capacity();
                                 buf.reserve(1024);
-                                log::warn!("{}: UDP report buffer full, increasing size {} -> {}", self.key, old, buf.capacity()   );
+                                log::warn!("{}: UDP report buffer full, increasing size {} -> {}", self.common.key, old, buf.capacity()   );
                             }
                             else if let Err(e) = self.process_report(&buf).await {
-                                log::error!("{}: {}", self.key, e);
+                                log::error!("{}: {}", self.common.key, e);
                             }
                             buf.clear();
                         }
                         Err(e) => {
-                            log::error!("{}: receive error: {}", self.key, e);
+                            log::error!("{}: receive error: {}", self.common.key, e);
                             return Err(RadarError::Io(e));
                         }
                     }
                 },
-                r = self.control_update_rx.recv() => {
+                r = self.common.control_update_rx.recv() => {
                     match r {
                         Err(_) => {},
-                        Ok(cv) => {let _ = self.process_control_update(cv).await;},
+                        Ok(cv) => {let _ = self.common.process_control_update(cv, &mut self.command_sender).await;},
                     }
                 }
             }
         }
-    }
-
-    async fn process_control_update(
-        &mut self,
-        control_update: ControlUpdate,
-    ) -> Result<(), RadarError> {
-        let cv = control_update.control_value;
-        let reply_tx = control_update.reply_tx;
-
-        if let Some(command_sender) = &mut self.command_sender {
-            if let Err(e) = command_sender.set_control(&cv, &self.info.controls).await {
-                return self
-                    .info
-                    .controls
-                    .send_error_to_client(reply_tx, &cv, &e)
-                    .await;
-            } else {
-                self.info.controls.set_refresh(&cv.id);
-            }
-        }
-
-        Ok(())
     }
 
     async fn send_report_requests(&mut self) -> Result<(), RadarError> {
@@ -255,19 +226,20 @@ impl RaymarineReportReceiver {
         f32: From<T>,
     {
         match self
+            .common
             .info
             .controls
             .set_value_auto_enabled(control_type, value, auto, enabled)
         {
             Err(e) => {
-                log::error!("{}: {}", self.key, e.to_string());
+                log::error!("{}: {}", self.common.key, e.to_string());
             }
             Ok(Some(())) => {
                 if log::log_enabled!(log::Level::Debug) {
-                    let control = self.info.controls.get(control_type).unwrap();
+                    let control = self.common.info.controls.get(control_type).unwrap();
                     log::trace!(
                         "{}: Control '{}' new value {} auto {:?} enabled {:?}",
-                        self.key,
+                        self.common.key,
                         control_type,
                         control.value(),
                         control.auto,
@@ -301,12 +273,17 @@ impl RaymarineReportReceiver {
     }
 
     fn set_string(&mut self, control: &ControlType, value: String) {
-        match self.info.controls.set_string(control, value) {
+        match self.common.info.controls.set_string(control, value) {
             Err(e) => {
-                log::error!("{}: {}", self.key, e.to_string());
+                log::error!("{}: {}", self.common.key, e.to_string());
             }
             Ok(Some(v)) => {
-                log::debug!("{}: Control '{}' new value '{}'", self.key, control, v);
+                log::debug!(
+                    "{}: Control '{}' new value '{}'",
+                    self.common.key,
+                    control,
+                    v
+                );
             }
             Ok(None) => {}
         };
@@ -314,19 +291,20 @@ impl RaymarineReportReceiver {
 
     fn set_wire_range(&mut self, control_type: &ControlType, min: u8, max: u8) {
         match self
+            .common
             .info
             .controls
             .set_wire_range(control_type, min as f32, max as f32)
         {
             Err(e) => {
-                log::error!("{}: {}", self.key, e.to_string());
+                log::error!("{}: {}", self.common.key, e.to_string());
             }
             Ok(Some(())) => {
                 if log::log_enabled!(log::Level::Debug) {
-                    let control = self.info.controls.get(control_type).unwrap();
+                    let control = self.common.info.controls.get(control_type).unwrap();
                     log::trace!(
                         "{}: Control '{}' new wire min {} max {} value {} auto {:?} enabled {:?} ",
-                        self.key,
+                        self.common.key,
                         control_type,
                         min,
                         max,
@@ -344,7 +322,7 @@ impl RaymarineReportReceiver {
         if data.len() < 4 {
             bail!("UDP report len {} dropped", data.len());
         }
-        log::trace!("{}: UDP report {:02X?}", self.key, data);
+        log::trace!("{}: UDP report {:02X?}", self.common.key, data);
 
         let id = u32::from_le_bytes(data[0..4].try_into().unwrap());
         match id {
@@ -371,7 +349,7 @@ impl RaymarineReportReceiver {
             }
             _ => {
                 if self.reported_unknown.get(&id).is_none() {
-                    log::warn!("{}: Unknown report ID {:08X?}", self.key, id);
+                    log::warn!("{}: Unknown report ID {:08X?}", self.common.key, id);
                     self.reported_unknown.insert(id, true);
                 }
             }
@@ -380,8 +358,8 @@ impl RaymarineReportReceiver {
     }
 
     fn set_ranges(&mut self, ranges: Ranges) {
-        if self.info.set_ranges(ranges).is_ok() {
-            self.radars.update(&self.info);
+        if self.common.info.set_ranges(ranges).is_ok() {
+            self.common.radars.update(&self.common.info);
         }
     }
 }

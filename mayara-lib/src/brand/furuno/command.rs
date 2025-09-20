@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use enum_primitive_derive::Primitive;
 use std::fmt::Write;
 use std::str::FromStr;
@@ -6,7 +7,7 @@ use tokio::net::TcpStream;
 
 use super::CommandMode;
 use crate::radar::range::Ranges;
-use crate::radar::{RadarError, RadarInfo, Status};
+use crate::radar::{CommandSender, RadarError, RadarInfo, Status};
 use crate::settings::{ControlType, ControlValue, SharedControls};
 
 const RADAR_A: i32 = 0;
@@ -56,8 +57,9 @@ pub(crate) enum CommandId {
     RangeSelect = 0xFE,
 }
 
-pub struct Command {
+pub(crate) struct Command {
     key: String,
+    write: Option<WriteHalf<TcpStream>>,
     controls: SharedControls,
     ranges: Ranges,
 }
@@ -66,9 +68,14 @@ impl Command {
     pub fn new(info: &RadarInfo) -> Self {
         Command {
             key: info.key(),
+            write: None,
             controls: info.controls.clone(),
             ranges: info.ranges.clone(),
         }
+    }
+
+    pub fn set_writer(&mut self, write: WriteHalf<TcpStream>) {
+        self.write = Some(write);
     }
 
     pub fn set_ranges(&mut self, ranges: Ranges) {
@@ -77,17 +84,15 @@ impl Command {
 
     pub async fn send(
         &mut self,
-        writer: &mut WriteHalf<TcpStream>,
         cm: CommandMode,
         id: CommandId,
         args: &[i32],
     ) -> Result<(), RadarError> {
-        self.send_with_commas(writer, cm, id, args, 0).await
+        self.send_with_commas(cm, id, args, 0).await
     }
 
     pub async fn send_with_commas(
         &mut self,
-        writer: &mut WriteHalf<TcpStream>,
         cm: CommandMode,
         id: CommandId,
         args: &[i32],
@@ -110,7 +115,12 @@ impl Command {
 
         let bytes = message.into_bytes();
 
-        writer.write_all(&bytes).await.map_err(RadarError::Io)?;
+        match &mut self.write {
+            Some(w) => {
+                w.write_all(&bytes).await.map_err(RadarError::Io)?;
+            }
+            None => return Err(RadarError::NotConnected),
+        };
 
         Ok(())
     }
@@ -145,10 +155,74 @@ impl Command {
         cmd
     }
 
-    pub async fn set_control(
+    pub(crate) async fn init(&mut self) -> Result<(), RadarError> {
+        self.send(CommandMode::Request, CommandId::Connect, &[0])
+            .await?; // $R60,0,0,0,0,0,0,0, Furuno sends with just separated commas.
+
+        self.send_with_commas(CommandMode::Request, CommandId::Modules, &[], 7)
+            .await?; // $R96,,,,,,,
+
+        self.send(CommandMode::Request, CommandId::Range, &[0, 0, 0])
+            .await?; // $R62,0,0,0
+
+        self.send(CommandMode::Request, CommandId::CustomPictureAll, &[])
+            .await?; // $R66
+        self.send(CommandMode::Request, CommandId::Status, &[0, 0, 0, 0, 0, 0])
+            .await?; // $R66,0,0,0,0,0,0
+
+        self.send(
+            CommandMode::Request,
+            CommandId::AntennaType,
+            &[0, 0, 0, 0, 0, 0],
+        )
+        .await?; // $R6E,0,0,0,0,0,0,0
+
+        self.send(
+            CommandMode::Request,
+            CommandId::BlindSector,
+            &[0, 0, 0, 0, 0],
+        )
+        .await?; // $R77,0,0,0,0,0
+
+        self.send(CommandMode::Request, CommandId::MainBangSize, &[0, 0])
+            .await?; // $R83,0,0
+
+        self.send(CommandMode::Request, CommandId::AntennaHeight, &[0, 0])
+            .await?; // $R84,0,0
+
+        self.send(CommandMode::Request, CommandId::NearSTC, &[0])
+            .await?; // $R85,0
+
+        self.send(CommandMode::Request, CommandId::MiddleSTC, &[0])
+            .await?; // $R86,0
+
+        self.send(CommandMode::Request, CommandId::FarSTC, &[0])
+            .await?; // $R87,0
+
+        self.send(CommandMode::Request, CommandId::OnTime, &[0, 0])
+            .await?; // $R8E,0
+
+        self.send(CommandMode::Request, CommandId::WakeUpCount, &[0])
+            .await?; // $RAC,0
+
+        Ok(())
+    }
+
+    pub async fn send_report_requests(&mut self) -> Result<(), RadarError> {
+        log::debug!("{}: send_report_requests", self.key);
+
+        self.send(CommandMode::Request, CommandId::AliveCheck, &[])
+            .await?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl CommandSender for Command {
+    async fn set_control(
         &mut self,
-        write: &mut WriteHalf<TcpStream>,
         cv: &ControlValue,
+        _: &SharedControls,
     ) -> Result<(), RadarError> {
         let value = cv
             .value
@@ -248,103 +322,10 @@ impl Command {
             id.clone() as u32,
             cmd
         );
-        self.send(write, CommandMode::Set, id, &cmd).await?;
-        self.send(
-            write,
-            CommandMode::Request,
-            CommandId::CustomPictureAll,
-            &[],
-        )
-        .await?; // $R66
-        Ok(())
-    }
 
-    pub(crate) async fn init(
-        &mut self,
-        writer: &mut WriteHalf<TcpStream>,
-    ) -> Result<(), RadarError> {
-        self.send(writer, CommandMode::Request, CommandId::Connect, &[0])
-            .await?; // $R60,0,0,0,0,0,0,0, Furuno sends with just separated commas.
-
-        self.send_with_commas(writer, CommandMode::Request, CommandId::Modules, &[], 7)
-            .await?; // $R96,,,,,,,
-
-        self.send(writer, CommandMode::Request, CommandId::Range, &[0, 0, 0])
-            .await?; // $R62,0,0,0
-
-        self.send(
-            writer,
-            CommandMode::Request,
-            CommandId::CustomPictureAll,
-            &[],
-        )
-        .await?; // $R66
-        self.send(
-            writer,
-            CommandMode::Request,
-            CommandId::Status,
-            &[0, 0, 0, 0, 0, 0],
-        )
-        .await?; // $R66,0,0,0,0,0,0
-
-        self.send(
-            writer,
-            CommandMode::Request,
-            CommandId::AntennaType,
-            &[0, 0, 0, 0, 0, 0],
-        )
-        .await?; // $R6E,0,0,0,0,0,0,0
-
-        self.send(
-            writer,
-            CommandMode::Request,
-            CommandId::BlindSector,
-            &[0, 0, 0, 0, 0],
-        )
-        .await?; // $R77,0,0,0,0,0
-
-        self.send(
-            writer,
-            CommandMode::Request,
-            CommandId::MainBangSize,
-            &[0, 0],
-        )
-        .await?; // $R83,0,0
-
-        self.send(
-            writer,
-            CommandMode::Request,
-            CommandId::AntennaHeight,
-            &[0, 0],
-        )
-        .await?; // $R84,0,0
-
-        self.send(writer, CommandMode::Request, CommandId::NearSTC, &[0])
-            .await?; // $R85,0
-
-        self.send(writer, CommandMode::Request, CommandId::MiddleSTC, &[0])
-            .await?; // $R86,0
-
-        self.send(writer, CommandMode::Request, CommandId::FarSTC, &[0])
-            .await?; // $R87,0
-
-        self.send(writer, CommandMode::Request, CommandId::OnTime, &[0, 0])
-            .await?; // $R8E,0
-
-        self.send(writer, CommandMode::Request, CommandId::WakeUpCount, &[0])
-            .await?; // $RAC,0
-
-        Ok(())
-    }
-
-    pub(super) async fn send_report_requests(
-        &mut self,
-        writer: &mut WriteHalf<TcpStream>,
-    ) -> Result<(), RadarError> {
-        log::debug!("{}: send_report_requests", self.key);
-
-        self.send(writer, CommandMode::Request, CommandId::AliveCheck, &[])
-            .await?;
+        self.send(CommandMode::Set, id, &cmd).await?;
+        self.send(CommandMode::Request, CommandId::CustomPictureAll, &[])
+            .await?; // $R66
         Ok(())
     }
 }
