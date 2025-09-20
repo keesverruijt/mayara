@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     radar::{range::Ranges, RadarInfo, NAUTICAL_MILE},
-    settings::{Control, ControlType, DataUpdate, SharedControls},
+    settings::{Control, ControlType, SharedControls},
     Session,
 };
 

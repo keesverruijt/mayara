@@ -135,7 +135,7 @@ pub fn update_when_model_known(
     if controls.user_name() == radar_info.key() {
         let mut user_name = model.name.to_string();
         if radar_info.serial_no.is_some() {
-            let mut serial = radar_info.serial_no.clone().unwrap();
+            let serial = radar_info.serial_no.clone().unwrap();
 
             user_name.push(' ');
             user_name.push_str(&serial);

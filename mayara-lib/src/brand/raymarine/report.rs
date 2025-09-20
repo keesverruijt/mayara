@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::io;
 use std::time::Duration;
 use tokio::net::UdpSocket;
-use tokio::sync::broadcast;
 use tokio::time::{sleep, sleep_until, Instant};
 use tokio_graceful_shutdown::SubsystemHandle;
 
@@ -11,10 +10,8 @@ use crate::brand::raymarine::RaymarineModel;
 use crate::network::create_udp_multicast_listen;
 use crate::radar::range::Ranges;
 use crate::radar::trail::TrailBuffer;
-use crate::radar::{
-    CommonRadar, Legend, RadarError, RadarInfo, SharedRadars, Statistics, BYTE_LOOKUP_LENGTH,
-};
-use crate::settings::{ControlType, ControlUpdate, DataUpdate};
+use crate::radar::{CommonRadar, Legend, RadarError, RadarInfo, SharedRadars, BYTE_LOOKUP_LENGTH};
+use crate::settings::ControlType;
 use crate::Session;
 
 // use super::command::Command;
@@ -359,6 +356,9 @@ impl RaymarineReportReceiver {
 
     fn set_ranges(&mut self, ranges: Ranges) {
         if self.common.info.set_ranges(ranges).is_ok() {
+            if let Some(command_sender) = &mut self.command_sender {
+                command_sender.set_ranges(self.common.info.ranges.clone());
+            }
             self.common.radars.update(&self.common.info);
         }
     }

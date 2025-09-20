@@ -1,5 +1,4 @@
 use anyhow::{bail, Error};
-use async_trait::async_trait;
 use bincode::deserialize;
 use serde::Deserialize;
 use std::collections::HashMap;

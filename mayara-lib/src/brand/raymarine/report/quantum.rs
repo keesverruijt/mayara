@@ -20,7 +20,7 @@ const QUANTUM_RADAR_RANGES: usize = 20;
 #[repr(packed)]
 struct FrameHeader {
     _type: u32, // 0x00280003
-    seq_num: u16,
+    _seq_num: u16,
     _something_1: u16,      // 0x0101
     scan_len: u16,          // 0x002b
     num_spokes: u16,        // 0x00fa
@@ -34,7 +34,7 @@ const FRAME_HEADER_LENGTH: usize = size_of::<FrameHeader>();
 
 pub(crate) fn process_frame(receiver: &mut RaymarineReportReceiver, data: &[u8]) {
     if receiver.state != ReceiverState::StatusRequestReceived {
-        log::trace!("{}: Skip scan: not all reports seen", receiver.key);
+        log::trace!("{}: Skip scan: not all reports seen", receiver.common.key);
         return;
     }
 
@@ -49,22 +49,26 @@ pub(crate) fn process_frame(receiver: &mut RaymarineReportReceiver, data: &[u8])
     let header: FrameHeader = match bincode::deserialize(header) {
         Ok(h) => h,
         Err(e) => {
-            log::error!("{}: Failed to deserialize header: {}", receiver.key, e);
+            log::error!(
+                "{}: Failed to deserialize header: {}",
+                receiver.common.key,
+                e
+            );
             return;
         }
     };
-    log::trace!("{}: FrameHeader {:?}", receiver.key, header);
+    log::trace!("{}: FrameHeader {:?}", receiver.common.key, header);
     let nspokes = header.num_spokes;
     let returns_per_range = header.returns_per_range as u32;
     let returns_per_line = header.scan_len as u32;
     // Rotate image 180 degrees to get our "0 = up" view
-    let azimuth = (header.azimuth + receiver.info.spokes_per_revolution / 2)
-        % receiver.info.spokes_per_revolution as SpokeBearing;
+    let azimuth = (header.azimuth + receiver.common.info.spokes_per_revolution / 2)
+        % receiver.common.info.spokes_per_revolution as SpokeBearing;
 
-    if nspokes != receiver.info.spokes_per_revolution {
+    if nspokes != receiver.common.info.spokes_per_revolution {
         log::warn!(
             "{}: Invalid spokes per revolution {}",
-            receiver.key,
+            receiver.common.key,
             nspokes
         );
         return;
@@ -76,14 +80,14 @@ pub(crate) fn process_frame(receiver: &mut RaymarineReportReceiver, data: &[u8])
         .ok();
     let mut message = RadarMessage::new();
 
-    let mut next_offset = FRAME_HEADER_LENGTH;
+    let next_offset = FRAME_HEADER_LENGTH;
 
     let data_len = header.data_len as usize;
 
     let spoke = &data[next_offset..next_offset + data_len];
 
     let mut spoke = to_protobuf_spoke(
-        &receiver.info,
+        &receiver.common.info,
         receiver.range_meters * returns_per_line / returns_per_range as u32,
         azimuth,
         None,
@@ -99,21 +103,23 @@ pub(crate) fn process_frame(receiver: &mut RaymarineReportReceiver, data: &[u8])
         receiver.pixel_stats[*p as usize] += 1;
     }
     receiver
+        .common
         .trails
-        .update_trails(&mut spoke, &receiver.info.legend);
+        .update_trails(&mut spoke, &receiver.common.info.legend);
     message.spokes.push(spoke);
 
-    next_offset += data_len;
-
-    receiver.info.broadcast_radar_message(message);
+    receiver.common.info.broadcast_radar_message(message);
 
     if azimuth < receiver.prev_azimuth {
         log::info!("Pixel stats: {:?}", receiver.pixel_stats);
         receiver.pixel_stats = [0; 256];
 
-        let ms = receiver.info.full_rotation();
-        receiver.trails.set_rotation_speed(ms);
-        receiver.statistics.full_rotation(&receiver.key);
+        let ms = receiver.common.info.full_rotation();
+        receiver.common.trails.set_rotation_speed(ms);
+        receiver
+            .common
+            .statistics
+            .full_rotation(&receiver.common.key);
     }
     receiver.prev_azimuth = azimuth;
 }
@@ -188,7 +194,7 @@ impl StatusReport {
         if data.len() < STATUS_REPORT_LENGTH {
             bail!(
                 "{}: Invalid data length for fixed report: {}",
-                receiver.key,
+                receiver.common.key,
                 data.len()
             );
         }
@@ -196,7 +202,11 @@ impl StatusReport {
         let report: StatusReport = match bincode::deserialize(report) {
             Ok(h) => h,
             Err(e) => {
-                bail!("{}: Failed to deserialize header: {}", receiver.key, e);
+                bail!(
+                    "{}: Failed to deserialize header: {}",
+                    receiver.common.key,
+                    e
+                );
             }
         };
         Ok(report)
@@ -212,7 +222,7 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
         Ok(r) => r,
         Err(_) => return,
     };
-    log::debug!("{}: Quantum report {:?}", receiver.key, report);
+    log::debug!("{}: Quantum report {:?}", receiver.common.key, report);
 
     // Update controls based on the report
     let status = match report.status {
@@ -221,13 +231,13 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
         0x02 => Status::Preparing,
         0x03 => Status::Off,
         _ => {
-            log::warn!("{}: Unknown status {}", receiver.key, report.status);
+            log::warn!("{}: Unknown status {}", receiver.common.key, report.status);
             Status::Standby // Default to Standby if unknown
         }
     };
     receiver.set_value(&ControlType::Status, status as i32 as f32);
 
-    if receiver.info.ranges.is_empty() {
+    if receiver.common.info.ranges.is_empty() {
         let mut ranges = Ranges::empty();
 
         // Can't use rust's iter() over report.ranges as it complains about packed data alignment
@@ -238,14 +248,14 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
             ranges.push(Range::new(meters, i));
         }
         receiver.set_ranges(Ranges::new(ranges.all));
-        receiver.radars.update(&receiver.info);
         log::info!(
             "{}: Ranges initialized: {}",
-            receiver.key,
-            receiver.info.ranges
+            receiver.common.key,
+            receiver.common.info.ranges
         );
     }
     let range_meters = receiver
+        .common
         .info
         .ranges
         .get_distance(report.range_index as usize);
@@ -277,7 +287,7 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
             report.controls[mode].rain_enabled,
         );
     } else {
-        log::warn!("{}: Unknown mode {}", receiver.key, report.mode);
+        log::warn!("{}: Unknown mode {}", receiver.common.key, report.mode);
     }
     receiver.set_value(
         &ControlType::TargetExpansion,
@@ -302,7 +312,7 @@ pub(super) fn process_info_report(receiver: &mut RaymarineReportReceiver, data: 
     if data.len() < 17 {
         log::warn!(
             "{}: Invalid data length for quantum info report: {}",
-            receiver.key,
+            receiver.common.key,
             data.len()
         );
         return;
@@ -321,23 +331,29 @@ pub(super) fn process_info_report(receiver: &mut RaymarineReportReceiver, data: 
         Some(model) => {
             log::info!(
                 "{}: Detected model: {} with serial {}",
-                receiver.key,
+                receiver.common.key,
                 model.name,
                 serial_nr
             );
-            receiver.info.serial_no = Some(serial_nr);
-            let info2 = receiver.info.clone();
-            settings::update_when_model_known(&mut receiver.info.controls, &model, &info2);
-            receiver.info.set_pixel_values(hd_to_pixel_values(model.hd));
-            receiver.info.set_doppler(model.doppler);
-            receiver.radars.update(&receiver.info);
+            receiver.common.info.serial_no = Some(serial_nr);
+            let info2 = receiver.common.info.clone();
+            settings::update_when_model_known(&mut receiver.common.info.controls, &model, &info2);
+            receiver
+                .common
+                .info
+                .set_pixel_values(hd_to_pixel_values(model.hd));
+            receiver.common.info.set_doppler(model.doppler);
+            receiver.common.radars.update(&receiver.common.info);
 
             // If we are in replay mode, we don't need a command sender, as we will not send any commands
-            let command_sender = if !receiver.replay {
-                log::debug!("{}: Starting command sender", receiver.key);
-                Some(Command::new(receiver.info.clone(), model.model.clone()))
+            let command_sender = if !receiver.common.replay {
+                log::debug!("{}: Starting command sender", receiver.common.key);
+                Some(Command::new(
+                    receiver.common.info.clone(),
+                    model.model.clone(),
+                ))
             } else {
-                log::debug!("{}: No command sender, replay mode", receiver.key);
+                log::debug!("{}: No command sender, replay mode", receiver.common.key);
                 None
             };
             receiver.command_sender = command_sender;
@@ -345,7 +361,11 @@ pub(super) fn process_info_report(receiver: &mut RaymarineReportReceiver, data: 
             receiver.state = ReceiverState::InfoRequestReceived;
         }
         None => {
-            log::error!("{}: Unknown model serial: {}", receiver.key, model_serial);
+            log::error!(
+                "{}: Unknown model serial: {}",
+                receiver.common.key,
+                model_serial
+            );
         }
     }
 }

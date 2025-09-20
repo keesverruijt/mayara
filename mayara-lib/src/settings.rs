@@ -46,8 +46,6 @@ pub struct Controls {
     all_clients_tx: tokio::sync::broadcast::Sender<ControlValue>,
     #[serde(skip)]
     control_update_tx: tokio::sync::broadcast::Sender<ControlUpdate>,
-    #[serde(skip)]
-    data_update_tx: tokio::sync::broadcast::Sender<DataUpdate>,
 }
 
 impl Controls {
@@ -104,7 +102,7 @@ impl Controls {
                         (6, "10 min".to_string()),
                     ]),
                 )
-                .set_destination(ControlDestination::Data),
+                .set_destination(ControlDestination::Command),
             );
 
             controls.insert(
@@ -113,34 +111,32 @@ impl Controls {
                     ControlType::TrailsMotion,
                     HashMap::from([(0, "Relative".to_string()), (1, "True".to_string())]),
                 )
-                .set_destination(ControlDestination::Data),
+                .set_destination(ControlDestination::Command),
             );
 
             controls.insert(
                 ControlType::ClearTrails,
                 Control::new_button(ControlType::ClearTrails)
-                    .set_destination(ControlDestination::Data),
+                    .set_destination(ControlDestination::Command),
             );
 
             if session.read().unwrap().args.targets == TargetMode::Arpa {
                 controls.insert(
                     ControlType::ClearTargets,
                     Control::new_button(ControlType::ClearTargets)
-                        .set_destination(ControlDestination::Data),
+                        .set_destination(ControlDestination::Command),
                 );
             }
         }
 
         let (all_clients_tx, _) = tokio::sync::broadcast::channel(32);
         let (control_update_tx, _) = tokio::sync::broadcast::channel(32);
-        let (data_update_tx, _) = tokio::sync::broadcast::channel(10);
 
         Controls {
             session: session.clone(),
             controls,
             all_clients_tx,
             control_update_tx,
-            data_update_tx,
         }
     }
 }
@@ -194,12 +190,6 @@ impl SharedControls {
         }
     }
 
-    pub(crate) fn get_data_update_tx(&self) -> tokio::sync::broadcast::Sender<DataUpdate> {
-        let locked = self.controls.read().unwrap();
-
-        locked.data_update_tx.clone()
-    }
-
     fn get_command_tx(&self) -> tokio::sync::broadcast::Sender<ControlUpdate> {
         let locked = self.controls.read().unwrap();
 
@@ -241,9 +231,6 @@ impl SharedControls {
                         .set_string(&ControlType::UserName, control_value.value.clone())
                         .map(|_| ())
                         .map_err(|e| RadarError::ControlError(e)),
-                    ControlDestination::Data => {
-                        self.send_to_data_handler(&reply_tx, control_value.clone())
-                    }
                     ControlDestination::Command => {
                         self.send_to_command_handler(control_value.clone(), reply_tx.clone())
                     }
@@ -264,12 +251,6 @@ impl SharedControls {
         locked.control_update_tx.subscribe()
     }
 
-    pub fn data_update_subscribe(&self) -> tokio::sync::broadcast::Receiver<DataUpdate> {
-        let locked = self.controls.read().unwrap();
-
-        locked.data_update_tx.subscribe()
-    }
-
     pub async fn send_all_controls(
         &self,
         reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
@@ -285,17 +266,6 @@ impl SharedControls {
                 .await?;
         }
         Ok(())
-    }
-
-    fn send_to_data_handler(
-        &self,
-        reply_tx: &tokio::sync::mpsc::Sender<ControlValue>,
-        cv: ControlValue,
-    ) -> Result<(), RadarError> {
-        self.get_data_update_tx()
-            .send(DataUpdate::ControlValue(reply_tx.clone(), cv))
-            .map(|_| ())
-            .map_err(|_| RadarError::Shutdown)
     }
 
     fn send_to_command_handler(
@@ -620,9 +590,6 @@ impl SharedControls {
                 c.set_valid_ranges(ranges);
                 ()
             })?;
-        self.get_data_update_tx()
-            .send(DataUpdate::Ranges(ranges.clone()))
-            .expect("Ranges update");
         Ok(())
     }
 
@@ -640,13 +607,6 @@ impl SharedControls {
 pub struct ControlUpdate {
     pub reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
     pub control_value: ControlValue,
-}
-
-// Messages sent to Data receiver
-#[derive(Clone, Debug)]
-pub enum DataUpdate {
-    Ranges(Ranges),
-    ControlValue(tokio::sync::mpsc::Sender<ControlValue>, ControlValue),
 }
 
 // This is what we send back and forth to clients
@@ -1145,12 +1105,13 @@ pub enum ControlDataType {
     Button,
 }
 
+// TODO use ControlDestination more to separate stuff to send to trails buffer
 #[derive(Clone, Debug)]
 pub enum ControlDestination {
     Internal,
-    Data,
     Command,
 }
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlDefinition {
