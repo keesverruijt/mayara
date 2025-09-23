@@ -36,8 +36,7 @@ const RAYMARINE_QUANTUM_WIFI_ADDRESS: SocketAddr =
 #[derive(Clone, Debug)]
 struct RaymarineModel {
     model: BaseModel,
-    hd: bool, // true if HD = 256 bits per pixel
-    spokes_per_revolution: usize,
+    hd: bool,             // true if HD = 256 bits per pixel
     max_spoke_len: usize, // 1024 for analog, 256 for Quantum?
     doppler: bool,        // true if Doppler is supported
     name: &'static str,
@@ -48,7 +47,6 @@ impl RaymarineModel {
         RaymarineModel {
             model: BaseModel::RD,
             hd: false,
-            spokes_per_revolution: RD_SPOKES_PER_REVOLUTION,
             max_spoke_len: 512,
             doppler: false,
             name: "E series Classic",
@@ -62,7 +60,6 @@ impl RaymarineModel {
             "E70210" => (
                 BaseModel::Quantum,
                 true,
-                QUANTUM_SPOKES_PER_REVOLUTION,
                 QUANTUM_SPOKE_LEN,
                 false,
                 "Quantum Q24",
@@ -70,7 +67,6 @@ impl RaymarineModel {
             "E70344" => (
                 BaseModel::Quantum,
                 true,
-                QUANTUM_SPOKES_PER_REVOLUTION,
                 QUANTUM_SPOKE_LEN,
                 false,
                 "Quantum Q24C",
@@ -78,51 +74,27 @@ impl RaymarineModel {
             "E70498" => (
                 BaseModel::Quantum,
                 true,
-                QUANTUM_SPOKES_PER_REVOLUTION,
                 QUANTUM_SPOKE_LEN,
                 true,
                 "Quantum Q24D",
             ),
             // Cyclone and Cyclone Pro models, untested, assume works as Quantum
             // Probably supports higher resulution though...
-            "E70620" => (
-                BaseModel::Quantum,
-                true,
-                QUANTUM_SPOKES_PER_REVOLUTION,
-                QUANTUM_SPOKE_LEN,
-                true,
-                "Cyclone",
-            ),
+            "E70620" => (BaseModel::Quantum, true, QUANTUM_SPOKE_LEN, true, "Cyclone"),
             "E70621" => (
                 BaseModel::Quantum,
                 true,
-                QUANTUM_SPOKES_PER_REVOLUTION,
                 QUANTUM_SPOKE_LEN,
                 true,
                 "Cyclone Pro",
             ),
             // Magnum, untested, assume works as RD
-            "E70484" => (
-                BaseModel::RD,
-                true,
-                RD_SPOKES_PER_REVOLUTION,
-                RD_SPOKE_LEN,
-                false,
-                "Magnum 4kW",
-            ),
-            "E70487" => (
-                BaseModel::RD,
-                true,
-                RD_SPOKES_PER_REVOLUTION,
-                RD_SPOKE_LEN,
-                false,
-                "Magnum 12kW",
-            ),
+            "E70484" => (BaseModel::RD, true, RD_SPOKE_LEN, false, "Magnum 4kW"),
+            "E70487" => (BaseModel::RD, true, RD_SPOKE_LEN, false, "Magnum 12kW"),
             // Open Array HD and SHD, introduced circa 2007
             "E52069" => (
                 BaseModel::RD,
                 true,
-                RD_SPOKES_PER_REVOLUTION,
                 RD_SPOKE_LEN,
                 false,
                 "Open Array HD 4kW",
@@ -130,7 +102,6 @@ impl RaymarineModel {
             "E92160" => (
                 BaseModel::RD,
                 true,
-                RD_SPOKES_PER_REVOLUTION,
                 RD_SPOKE_LEN,
                 false,
                 "Open Array HD 12kW",
@@ -138,7 +109,6 @@ impl RaymarineModel {
             "E52081" => (
                 BaseModel::RD,
                 true,
-                RD_SPOKES_PER_REVOLUTION,
                 RD_SPOKE_LEN,
                 false,
                 "Open Array SHD 4kW",
@@ -146,51 +116,21 @@ impl RaymarineModel {
             "E52082" => (
                 BaseModel::RD,
                 true,
-                RD_SPOKES_PER_REVOLUTION,
                 RD_SPOKE_LEN,
                 false,
                 "Open Array SHD 12kW",
             ),
             // And the actual RD models, introduced circa 2004
-            "E92142" => (
-                BaseModel::RD,
-                true,
-                RD_SPOKES_PER_REVOLUTION,
-                RD_SPOKE_LEN,
-                false,
-                "RD418HD",
-            ),
-            "E92143" => (
-                BaseModel::RD,
-                true,
-                RD_SPOKES_PER_REVOLUTION,
-                RD_SPOKE_LEN,
-                false,
-                "RD424HD",
-            ),
-            "E92130" => (
-                BaseModel::RD,
-                true,
-                RD_SPOKES_PER_REVOLUTION,
-                512,
-                false,
-                "RD418D",
-            ),
-            "E92132" => (
-                BaseModel::RD,
-                true,
-                RD_SPOKES_PER_REVOLUTION,
-                512,
-                false,
-                "RD424D",
-            ),
+            "E92142" => (BaseModel::RD, true, RD_SPOKE_LEN, false, "RD418HD"),
+            "E92143" => (BaseModel::RD, true, RD_SPOKE_LEN, false, "RD424HD"),
+            "E92130" => (BaseModel::RD, true, 512, false, "RD418D"),
+            "E92132" => (BaseModel::RD, true, 512, false, "RD424D"),
 
             _ => return None,
         };
         Some(RaymarineModel {
             model,
             hd,
-            spokes_per_revolution,
             max_spoke_len,
             doppler,
             name,
