@@ -689,6 +689,7 @@ impl NavicoReportReceiver {
                     match r {
                         Ok(_) => {
                             self.process_frame();
+                            self.data_buf.clear();
                         },
                         Err(e) => {
                             return Err(RadarError::Io(e));
@@ -698,8 +699,8 @@ impl NavicoReportReceiver {
 
                 r = self.common.control_update_rx.recv() => {
                     match r {
-                        Err(_) => {},
                         Ok(cu) => {let _ = self.common.process_control_update(cu, &mut self.command_sender).await;},
+                        Err(_) => {},
                     }
                 }
 
