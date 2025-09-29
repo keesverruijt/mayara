@@ -28,6 +28,8 @@ async fn main() -> Result<()> {
         .filter_module("tungstenite", log::LevelFilter::Info)
         .filter_module("mdns_sd", log::LevelFilter::Info)
         .filter_module("polling", log::LevelFilter::Info)
+        .filter_module("netlink_proto", log::LevelFilter::Info)
+        .filter_module("tokio_tungstenite", log::LevelFilter::Info)
         .init();
 
     network::set_replay(args.replay);

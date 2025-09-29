@@ -61,10 +61,10 @@ fn extract_heading_value(x: u16) -> Option<u16> {
 
 #[derive(Deserialize, Debug, Clone, Copy)]
 #[repr(packed)]
-struct Br24Header {
+struct GenBr24Header {
     header_len: u8,        // 1 bytes
     status: u8,            // 1 bytes
-    _scan_number: [u8; 2], // 1 byte (HALO and newer), 2 bytes (4G and older)
+    _scan_number: [u8; 2], // 2 bytes
     _mark: [u8; 4],        // 4 bytes, on BR24 this is always 0x00, 0x44, 0x0d, 0x0e
     angle: [u8; 2],        // 2 bytes
     heading: [u8; 2],      // 2 bytes heading with RI-10/11. See bitmask explanation above.
@@ -76,7 +76,7 @@ struct Br24Header {
 
 #[derive(Deserialize, Debug, Clone, Copy)]
 #[repr(packed)]
-struct Br4gHeader {
+struct Gen3PlusHeader {
     header_len: u8,        // 1 bytes
     status: u8,            // 1 bytes
     _scan_number: [u8; 2], // 1 byte (HALO and newer), 2 bytes (4G and older)
@@ -93,7 +93,7 @@ struct Br4gHeader {
 #[derive(Debug, Clone, Copy)]
 #[repr(packed)]
 struct RadarLine {
-    _header: Br4gHeader, // or Br24Header
+    _header: Gen3PlusHeader, // or GenBr24Header
     _data: [u8; RADAR_LINE_DATA_LENGTH],
 }
 
@@ -109,7 +109,7 @@ struct RadarFramePkt {
 }
 
 const FRAME_HEADER_LENGTH: usize = size_of::<FrameHeader>();
-const RADAR_LINE_HEADER_LENGTH: usize = size_of::<Br4gHeader>();
+const RADAR_LINE_HEADER_LENGTH: usize = size_of::<Gen3PlusHeader>();
 const RADAR_LINE_LENGTH: usize = size_of::<RadarLine>();
 
 // The LookupSpokeEnum is an index into an array, really
@@ -1427,7 +1427,7 @@ fn validate_header(
     scanline: usize,
 ) -> Option<(u32, SpokeBearing, Option<u16>)> {
     match radar_info.locator_id {
-        LocatorId::Gen3Plus => match deserialize::<Br4gHeader>(&header_slice) {
+        LocatorId::Gen3Plus => match deserialize::<Gen3PlusHeader>(&header_slice) {
             Ok(header) => {
                 log::trace!("Received {:04} header {:?}", scanline, header);
 
@@ -1438,7 +1438,7 @@ fn validate_header(
                 return None;
             }
         },
-        LocatorId::GenBR24 => match deserialize::<Br24Header>(&header_slice) {
+        LocatorId::GenBR24 => match deserialize::<GenBr24Header>(&header_slice) {
             Ok(header) => {
                 log::trace!("Received {:04} header {:?}", scanline, header);
 
@@ -1455,7 +1455,7 @@ fn validate_header(
     }
 }
 
-fn validate_4g_header(header: &Br4gHeader) -> Option<(u32, SpokeBearing, Option<u16>)> {
+fn validate_4g_header(header: &Gen3PlusHeader) -> Option<(u32, SpokeBearing, Option<u16>)> {
     if header.header_len != (RADAR_LINE_HEADER_LENGTH as u8) {
         log::warn!(
             "Spoke with illegal header length ({}) ignored",
@@ -1487,7 +1487,7 @@ fn validate_4g_header(header: &Br4gHeader) -> Option<(u32, SpokeBearing, Option<
     Some((range, angle, heading))
 }
 
-fn validate_br24_header(header: &Br24Header) -> Option<(u32, SpokeBearing, Option<u16>)> {
+fn validate_br24_header(header: &GenBr24Header) -> Option<(u32, SpokeBearing, Option<u16>)> {
     if header.header_len != (RADAR_LINE_HEADER_LENGTH as u8) {
         log::warn!(
             "Spoke with illegal header length ({}) ignored",

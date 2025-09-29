@@ -54,7 +54,7 @@ impl RaymarineModel {
     }
 
     fn try_into(model: &str) -> Option<Self> {
-        let (model, hd, spokes_per_revolution, max_spoke_len, doppler, name) = match model {
+        let (model, hd, max_spoke_len, doppler, name) = match model {
             // All "E" strings derived from the raymarine.app.box.com EU declaration of conformity documents
             // Quantum models, believed working
             "E70210" => (
