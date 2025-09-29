@@ -138,21 +138,23 @@ fn pixel_to_blob(legend: &Legend) -> [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_DOPPLER_L
         lookup[LookupDoppler::LowBoth as usize][j] = match low {
             0x0f => legend.doppler_approaching,
             0x0e => legend.doppler_receding,
-            _ => low,
+            0x08..=0x0d => low + 2,
+            _ => low + 1,
         };
         lookup[LookupDoppler::LowApproaching as usize][j] = match low {
             0x0f => legend.doppler_approaching,
-            _ => low,
+            _ => low + 1,
         };
         lookup[LookupDoppler::HighNormal as usize][j] = high;
         lookup[LookupDoppler::HighBoth as usize][j] = match high {
             0x0f => legend.doppler_approaching,
             0x0e => legend.doppler_receding,
-            _ => high,
+            0x08..=0x0d => low + 2,
+            _ => high + 1,
         };
         lookup[LookupDoppler::HighApproaching as usize][j] = match high {
             0x0f => legend.doppler_approaching,
-            _ => high,
+            _ => high + 1,
         };
         j += 1;
     }

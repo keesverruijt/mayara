@@ -745,16 +745,6 @@ fn default_legend(session: Session, doppler: bool, pixel_values: u8) -> Legend {
         });
     }
 
-    legend.pixels.push(Lookup {
-        r#type: PixelType::Normal,
-        color: Color {
-            r: 0,
-            g: 0,
-            b: 0,
-            a: OPAQUE,
-        },
-    });
-
     if session.read().unwrap().args.targets == TargetMode::Arpa {
         legend.border = legend.pixels.len() as u8;
         legend.pixels.push(Lookup {
