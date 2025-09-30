@@ -25,7 +25,7 @@ pub async fn set_control(
 ) -> Result<(), RadarError> {
     let auto: u8 = if cv.auto.unwrap_or(false) { 1 } else { 0 };
     let enabled: u8 = if cv.enabled.unwrap_or(false) { 1 } else { 0 };
-    let v = Command::scale_100_to_byte(value); // todo! use transform values
+    let v = value as u8; // todo! use transform values
 
     let mut cmd = Vec::with_capacity(6);
 

@@ -80,25 +80,6 @@ impl Command {
         }
         r as u8
     }
-
-    async fn send_no_transmit_cmd(
-        &mut self,
-        value_start: i16,
-        value_end: i16,
-        enabled: u8,
-        sector: u8,
-    ) -> Result<Vec<u8>, RadarError> {
-        let mut cmd = Vec::with_capacity(12);
-
-        cmd.extend_from_slice(&[0x0d, 0xc1, sector, 0, 0, 0, enabled]);
-        self.send(&cmd).await?;
-        cmd.clear();
-        cmd.extend_from_slice(&[0xc0, 0xc1, sector, 0, 0, 0, enabled]);
-        cmd.extend_from_slice(&value_start.to_le_bytes());
-        cmd.extend_from_slice(&value_end.to_le_bytes());
-
-        Ok(cmd)
-    }
 }
 
 #[async_trait]

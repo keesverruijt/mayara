@@ -413,7 +413,7 @@ async fn control_stream(
                         match message {
                             Message::Text(message) => {
                                 if let Ok(control_value) = serde_json::from_str(&message) {
-                                    log::debug!("Received ControlValue {:?}", control_value);
+                                    log::info!("Received ControlValue {:?}", control_value);
                                     let _ = radar.controls.process_client_request(control_value, reply_tx.clone()).await;
                                 } else {
                                     log::error!("Unknown JSON string '{}'", message);

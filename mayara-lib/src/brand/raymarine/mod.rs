@@ -445,6 +445,7 @@ impl RaymarineLocatorState {
                 info_clone,
                 radars.clone(),
             );
+            radars.update(&info);
 
             subsys.start(SubsystemBuilder::new(report_name, |s| {
                 report_receiver.run(s)

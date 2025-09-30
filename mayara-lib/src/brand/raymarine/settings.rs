@@ -144,7 +144,8 @@ pub fn update_when_model_known(
     }
 
     let max_value = 36. * NAUTICAL_MILE_F64 as f32;
-    let range_control = Control::new_numeric(ControlType::Range, 50., max_value).unit("m");
+    let mut range_control = Control::new_numeric(ControlType::Range, 50., max_value).unit("m");
+    range_control.set_valid_ranges(&radar_info.ranges);
     controls.insert(ControlType::Range, range_control);
 
     controls.insert(

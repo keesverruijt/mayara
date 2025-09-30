@@ -253,6 +253,8 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
             receiver.common.key,
             receiver.common.info.ranges
         );
+        // Tell the UI about the range
+        receiver.common.radars.update(&receiver.common.info);
     }
     let range_meters = receiver
         .common
