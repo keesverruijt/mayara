@@ -22,6 +22,7 @@ struct GeoPositionPixels {
 
 pub struct TrailBuffer {
     session: Session,
+    target_mode: TargetMode,
     legend: Legend,
     spokes_per_revolution: usize,
     max_spoke_len: usize,
@@ -55,7 +56,8 @@ impl TrailBuffer {
             info.max_spoke_len as usize,
         );
 
-        let targets = match session.read().unwrap().args.targets {
+        let target_mode = session.read().unwrap().args.targets.to_owned();
+        let targets = match target_mode {
             TargetMode::Arpa => Some(TargetBuffer::new(session.clone(), info)),
             _ => None,
         };
@@ -70,6 +72,7 @@ impl TrailBuffer {
 
         TrailBuffer {
             session: session.clone(),
+            target_mode,
             legend,
             spokes_per_revolution,
             max_spoke_len,
@@ -202,7 +205,7 @@ impl TrailBuffer {
     }
 
     pub fn update_trails(&mut self, spoke: &mut Spoke, legend: &Legend) {
-        if self.session.read().unwrap().args.targets == TargetMode::None {
+        if self.target_mode == TargetMode::None {
             return;
         }
         if spoke.range != self.previous_range && spoke.range != 0 {
@@ -585,6 +588,7 @@ impl TrailBuffer {
         }
         while radius < self.max_spoke_len {
             trail[radius] = 0;
+            radius += 1;
         }
 
         if angle == 0 {
