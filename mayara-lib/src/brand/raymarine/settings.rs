@@ -45,23 +45,12 @@ pub fn new(session: Session, model: BaseModel) -> SharedControls {
         Control::new_numeric(ControlType::Rain, 0., 100.).has_enabled(),
     );
 
-    let mut control =
-        Control::new_numeric(ControlType::Ftc, 0., 100.).wire_scale_factor(100., false);
-    if model == BaseModel::RD {
-        control = control.has_enabled();
-    }
-    controls.insert(ControlType::Ftc, control);
-
     controls.insert(
         ControlType::RotationSpeed,
         Control::new_numeric(ControlType::RotationSpeed, 0., 99.)
             .wire_scale_factor(990., true) // 0.1 RPM
             .read_only(true)
             .unit("RPM"),
-    );
-    controls.insert(
-        ControlType::OperatingHours,
-        Control::new_numeric(ControlType::OperatingHours, 0., 99999.).read_only(true),
     );
     controls.insert(
         ControlType::MainBangSuppression,
@@ -112,6 +101,13 @@ pub fn new(session: Session, model: BaseModel) -> SharedControls {
                     .wire_scale_factor(255., false)
                     .read_only(true),
             );
+
+            let mut control =
+                Control::new_numeric(ControlType::Ftc, 0., 100.).wire_scale_factor(100., false);
+            if model == BaseModel::RD {
+                control = control.has_enabled();
+            }
+            controls.insert(ControlType::Ftc, control);
         }
     }
     SharedControls::new(session, controls)
