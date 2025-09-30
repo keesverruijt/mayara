@@ -35,7 +35,7 @@ pub async fn set_control(
                 Status::Transmit => 1,
                 _ => 0,
             };
-            cmd.extend_from_slice(&[0x01, 0x80, 0x01, 0x00, value, 0x00, 0x00, 0x00]);
+            cmd.extend_from_slice(&[0x10, 0x00, 0x28, 0x00, value, 0x00, 0x00, 0x00]);
         }
 
         ControlType::Range => {

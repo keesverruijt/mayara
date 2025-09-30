@@ -61,6 +61,7 @@ Not definitive list for
 4G radars only send the C4 data.
 */
 
+//
 const NAVICO_ADDRESS_REQUEST_PACKET: [u8; 2] = [0x01, 0xB1];
 
 #[derive(Deserialize, Debug, Copy, Clone)]
@@ -458,11 +459,11 @@ struct NavicoLocator {
 
 impl RadarLocator for NavicoLocator {
     fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
-        let mut beacon_request_packets: Vec<&'static [u8]> = Vec::new();
-        if !self.session.read().unwrap().args.replay {
-            beacon_request_packets.push(&NAVICO_ADDRESS_REQUEST_PACKET);
-        };
         if !addresses.iter().any(|i| i.id == LocatorId::Gen3Plus) {
+            let mut beacon_request_packets: Vec<&'static [u8]> = Vec::new();
+            if !self.session.read().unwrap().args.replay {
+                beacon_request_packets.push(&NAVICO_ADDRESS_REQUEST_PACKET);
+            };
             addresses.push(LocatorAddress::new(
                 LocatorId::Gen3Plus,
                 &NAVICO_BEACON_ADDRESS,
@@ -489,11 +490,15 @@ struct NavicoBR24Locator {
 impl RadarLocator for NavicoBR24Locator {
     fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
         if !addresses.iter().any(|i| i.id == LocatorId::GenBR24) {
+            let mut beacon_request_packets: Vec<&'static [u8]> = Vec::new();
+            if !self.session.read().unwrap().args.replay {
+                beacon_request_packets.push(&NAVICO_ADDRESS_REQUEST_PACKET);
+            };
             addresses.push(LocatorAddress::new(
                 LocatorId::GenBR24,
                 &NAVICO_BR24_BEACON_ADDRESS,
                 Brand::Navico,
-                vec![&NAVICO_ADDRESS_REQUEST_PACKET],
+                beacon_request_packets,
                 Box::new(NavicoLocatorState {
                     session: self.session.clone(),
                 }),
