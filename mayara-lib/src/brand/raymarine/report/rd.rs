@@ -2,6 +2,7 @@ use serde::Deserialize;
 use std::mem::size_of;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::brand::raymarine::report::pixel_to_blob;
 use crate::brand::raymarine::{hd_to_pixel_values, settings, RaymarineModel};
 use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::range::{Range, Ranges};
@@ -311,27 +312,28 @@ fn process_spoke(
         if hd_type {
             if spoke[src_offset] != 0x5c {
                 unpacked_data.push(spoke[src_offset] >> 1);
-                src_offset = src_offset + 1;
+                src_offset += 1;
             } else {
                 let count = spoke[src_offset + 1] as usize; // number to be filled
                 let value = spoke[src_offset + 2]; // data to be filled
                 for _ in 0..count {
                     unpacked_data.push(value >> 1);
                 }
-                src_offset = src_offset + 3;
+                src_offset += 3;
             }
         } else {
-            // not HDtype
-            if spoke[src_offset] != 0x5c {
-                unpacked_data.push(spoke[src_offset] & 0x0f);
-                unpacked_data.push(spoke[src_offset] >> 4);
+            // not HDtype, extract nibbles and blow up values by 8 so they match HD legend
+            let value = spoke[src_offset];
+            if value != 0x5c {
+                unpacked_data.push((value & 0x0f) << 3);
+                unpacked_data.push((value & 0xf0) >> 1);
                 src_offset += 1;
             } else {
                 let count = spoke[src_offset + 1] as usize; // number to be filled
                 let value = spoke[src_offset + 2]; // data to be filled
                 for _ in 0..count {
-                    unpacked_data.push(value & 0x0f);
-                    unpacked_data.push(value >> 4);
+                    unpacked_data.push((value & 0x0f) << 3);
+                    unpacked_data.push((value & 0xf0) >> 1);
                 }
                 src_offset += 3;
             }
@@ -636,6 +638,7 @@ pub(super) fn process_info_report(receiver: &mut RaymarineReportReceiver, data: 
         .set_pixel_values(hd_to_pixel_values(model.hd));
 
     receiver.common.info.set_doppler(model.doppler);
+    receiver.pixel_to_blob = pixel_to_blob(&receiver.common.info.legend);
     receiver.common.radars.update(&receiver.common.info);
     receiver.model = Some(model);
     receiver.state = ReceiverState::InfoRequestReceived;

@@ -134,6 +134,7 @@ pub struct Lookup {
 #[derive(Clone, Debug)]
 pub struct Legend {
     pub pixels: Vec<Lookup>,
+    pub target_colors: u8,
     pub border: u8,
     pub doppler_approaching: u8,
     pub doppler_receding: u8,
@@ -682,26 +683,18 @@ const OPAQUE: u8 = 255;
 fn default_legend(session: Session, doppler: bool, pixel_values: u8) -> Legend {
     let mut legend = Legend {
         pixels: Vec::new(),
-        history_start: 255,
-        border: 255,
-        doppler_approaching: 255,
-        doppler_receding: 255,
-        strong_return: 255,
+        target_colors: 0,
+        history_start: 0,
+        border: 0,
+        doppler_approaching: 0,
+        doppler_receding: 0,
+        strong_return: 0,
     };
 
     let mut pixel_values = pixel_values;
     if pixel_values > 255 - 32 - 2 {
         pixel_values = 255 - 32 - 2;
     }
-
-    if pixel_values == 0 {
-        return legend;
-    }
-
-    let pixels_with_color = pixel_values - 1;
-    let one_third = pixels_with_color / 3;
-    let two_thirds = one_third * 2;
-    legend.strong_return = two_thirds;
 
     // No return is black
     legend.pixels.push(Lookup {
@@ -713,6 +706,15 @@ fn default_legend(session: Session, doppler: bool, pixel_values: u8) -> Legend {
             a: TRANSPARENT,
         },
     });
+    legend.target_colors = pixel_values;
+    if pixel_values == 0 {
+        return legend;
+    }
+
+    let pixels_with_color = pixel_values - 1;
+    let one_third = pixels_with_color / 3;
+    let two_thirds = one_third * 2;
+    legend.strong_return = two_thirds;
 
     for v in 1..pixel_values {
         legend.pixels.push(Lookup {
@@ -744,6 +746,16 @@ fn default_legend(session: Session, doppler: bool, pixel_values: u8) -> Legend {
             },
         });
     }
+
+    legend.pixels.push(Lookup {
+        r#type: PixelType::Normal,
+        color: Color {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: OPAQUE,
+        },
+    });
 
     if session.read().unwrap().args.targets == TargetMode::Arpa {
         legend.border = legend.pixels.len() as u8;

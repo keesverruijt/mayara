@@ -4,7 +4,7 @@ use std::mem::size_of;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::brand::raymarine::command::Command;
-use crate::brand::raymarine::report::{LookupDoppler, PixelToBlobType};
+use crate::brand::raymarine::report::{pixel_to_blob, LookupDoppler, PixelToBlobType};
 use crate::brand::raymarine::{hd_to_pixel_values, settings, RaymarineModel};
 use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::range::{Range, Ranges};
@@ -343,6 +343,7 @@ pub(super) fn process_info_report(receiver: &mut RaymarineReportReceiver, data: 
                 .info
                 .set_pixel_values(hd_to_pixel_values(model.hd));
             receiver.common.info.set_doppler(model.doppler);
+            receiver.pixel_to_blob = pixel_to_blob(&receiver.common.info.legend);
             receiver.common.radars.update(&receiver.common.info);
 
             // If we are in replay mode, we don't need a command sender, as we will not send any commands

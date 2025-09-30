@@ -297,7 +297,7 @@ impl RaymarineLocatorState {
                         Brand::Raymarine,
                         None,
                         None,
-                        16,
+                        0,
                         spokes_per_revolution,
                         max_spoke_len,
                         radar_addr.into(),

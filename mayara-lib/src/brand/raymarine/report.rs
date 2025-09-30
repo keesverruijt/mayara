@@ -35,14 +35,25 @@ type PixelToBlobType = [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_DOPPLER_LENGTH];
 pub(super) fn pixel_to_blob(legend: &Legend) -> PixelToBlobType {
     let mut lookup: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_DOPPLER_LENGTH] =
         [[0; BYTE_LOOKUP_LENGTH]; LOOKUP_DOPPLER_LENGTH];
-    // Cannot use for() in const expr, so use while instead
-    for j in 0..BYTE_LOOKUP_LENGTH {
-        lookup[LookupDoppler::Normal as usize][j] = j as u8 / 2;
-        lookup[LookupDoppler::Doppler as usize][j] = match j {
-            0xff => legend.doppler_approaching,
-            0xfe => legend.doppler_receding,
-            _ => j as u8 / 2,
-        };
+
+    if legend.target_colors >= 128 {
+        for j in 0..BYTE_LOOKUP_LENGTH {
+            lookup[LookupDoppler::Normal as usize][j] = j as u8 / 2;
+            lookup[LookupDoppler::Doppler as usize][j] = match j {
+                0xff => legend.doppler_approaching,
+                0xfe => legend.doppler_receding,
+                _ => j as u8 / 2,
+            };
+        }
+    } else {
+        for j in 0..BYTE_LOOKUP_LENGTH {
+            lookup[LookupDoppler::Normal as usize][j] = j as u8;
+            lookup[LookupDoppler::Doppler as usize][j] = match j {
+                0xff => legend.doppler_approaching,
+                0xfe => legend.doppler_receding,
+                _ => j as u8,
+            };
+        }
     }
     log::info!("Created pixel_to_blob from legend {:?}", legend);
     lookup
