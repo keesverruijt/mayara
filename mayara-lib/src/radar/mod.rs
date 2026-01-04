@@ -288,8 +288,8 @@ impl RadarInfo {
         if doppler != self.doppler {
             self.legend = default_legend(self.session.clone(), doppler, self.pixel_values);
             log::info!("Doppler changed to {}", doppler);
+            self.doppler = doppler;
         }
-        self.doppler = doppler;
     }
 
     pub fn set_pixel_values(&mut self, pixel_values: u8) {
@@ -663,7 +663,7 @@ impl FromStr for Status {
 
 // The actual values are not arbitrary: these are the exact values as reported
 // by HALO radars, simplifying the navico::report code.
-#[derive(Copy, Clone, Debug, Primitive)]
+#[derive(Copy, Clone, Debug, Primitive, PartialEq)]
 pub enum DopplerMode {
     None = 0,
     Both = 1,

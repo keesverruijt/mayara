@@ -405,3 +405,27 @@ pub(super) fn process_info_report(receiver: &mut RaymarineReportReceiver, data: 
         }
     }
 }
+
+pub(super) fn process_doppler_report(receiver: &mut RaymarineReportReceiver, data: &[u8]) {
+    if data.len() < 1 {
+        log::warn!(
+            "{}: Invalid data length for quantum doppler report: {}",
+            receiver.common.key,
+            data.len()
+        );
+        return;
+    }
+
+    let doppler = match data[4] {
+        0x00 => 0,
+        0x03 => 1,
+        _ => {
+            log::warn!("{}: Unknown doppler status {:?}", receiver.common.key, data);
+            0
+        }
+    };
+
+    log::trace!("{}: Doppler {} -> {doppler}", receiver.common.key, data[4]);
+    receiver.set_value(&ControlType::Doppler, doppler as f32);
+    receiver.common.info.set_doppler(doppler > 0);
+}

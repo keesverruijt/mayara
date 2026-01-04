@@ -10,7 +10,9 @@ use crate::brand::raymarine::RaymarineModel;
 use crate::network::create_udp_multicast_listen;
 use crate::radar::range::Ranges;
 use crate::radar::trail::TrailBuffer;
-use crate::radar::{CommonRadar, Legend, RadarError, RadarInfo, SharedRadars, BYTE_LOOKUP_LENGTH};
+use crate::radar::{
+    CommonRadar, DopplerMode, Legend, RadarError, RadarInfo, SharedRadars, BYTE_LOOKUP_LENGTH,
+};
 use crate::settings::ControlType;
 use crate::Session;
 
@@ -354,6 +356,9 @@ impl RaymarineReportReceiver {
             }
             0x280003 => {
                 quantum::process_frame(self, data);
+            }
+            0x280030 => {
+                quantum::process_doppler_report(self, data);
             }
             _ => {
                 if self.reported_unknown.get(&id).is_none() {

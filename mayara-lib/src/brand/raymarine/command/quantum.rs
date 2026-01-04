@@ -141,6 +141,9 @@ pub async fn set_control(
         ControlType::SeaClutterCurve => {
             one_byte_command(&mut cmd, &[0x12, 0x03], v - 1);
         }
+        ControlType::Doppler => {
+            one_byte_command(&mut cmd, &[0x17, 0x03], v * 3); // 0x00 or 0x03
+        }
 
         // Non-hardware settings
         _ => return Err(RadarError::CannotSetControlType(cv.id)),

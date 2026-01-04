@@ -65,6 +65,10 @@ pub fn new(session: Session, model: BaseModel) -> SharedControls {
                 ),
             );
             controls.insert(
+                ControlType::Doppler,
+                Control::new_list(ControlType::Doppler, &["Off", "On"]),
+            );
+            controls.insert(
                 ControlType::TargetExpansion,
                 Control::new_list(ControlType::TargetExpansion, &["Off", "On"]),
             );
