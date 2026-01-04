@@ -61,7 +61,7 @@ pub struct LocatorAddress {
 
 // The only part of RadioListenAddress that isn't Send is process, but since this is static it really
 // is safe to send.
-unsafe impl Send for LocatorAddress {}
+// unsafe impl Send for LocatorAddress {}
 
 impl LocatorAddress {
     pub fn new(

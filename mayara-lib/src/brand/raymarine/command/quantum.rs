@@ -6,22 +6,36 @@ use crate::settings::{ControlType, ControlValue, SharedControls};
 use super::Command;
 
 fn one_byte_command(cmd: &mut Vec<u8>, lead: &[u8], value: u8) {
-    cmd.extend_from_slice(lead);
-    cmd.extend_from_slice(&[0x28, 0x00, 0x00, value, 0x00, 0x00]);
+    two_byte_command(cmd, lead, (value as u16) << 8);
 }
 
 fn two_byte_command(cmd: &mut Vec<u8>, lead: &[u8], value: u16) {
+    two_value_command(cmd, lead, value, 0);
+}
+
+fn two_value_command(cmd: &mut Vec<u8>, lead: &[u8], value1: u16, value2: u16) {
     cmd.extend_from_slice(lead);
     cmd.extend_from_slice(&[0x28, 0x00]);
-    cmd.extend_from_slice(&value.to_le_bytes());
-    cmd.extend_from_slice(&[0x00, 0x00]);
+    cmd.extend_from_slice(&value1.to_le_bytes());
+    cmd.extend_from_slice(&value2.to_le_bytes());
+}
+
+fn get_angle_value(ct: &ControlType, controls: &SharedControls) -> i16 {
+    if let Some(control) = controls.get(ct) {
+        if let Some(value) = control.value {
+            let value = (value * 10.0) as i16;
+            return value;
+        }
+    }
+
+    return 0;
 }
 
 pub async fn set_control(
     command: &mut Command,
     cv: &ControlValue,
     value: f32,
-    _controls: &SharedControls, // Not used now, but useful if controls depend on other controls
+    controls: &SharedControls,
 ) -> Result<(), RadarError> {
     let auto: u8 = if cv.auto.unwrap_or(false) { 1 } else { 0 };
     let enabled: u8 = if cv.enabled.unwrap_or(false) { 1 } else { 0 };
@@ -102,19 +116,30 @@ pub async fn set_control(
             two_byte_command(&mut cmd, &[0x01, 0x04], deci_value as u16);
         }
         ControlType::MainBangSuppression => {
-            todo!("Not implemented yet");
+            one_byte_command(&mut cmd, &[0x0a, 0x04], v);
         }
         ControlType::NoTransmitStart1 => {
-            todo!("Not implemented yet");
-        }
-        ControlType::NoTransmitStart2 => {
-            todo!("Not implemented yet");
+            let value_start: i16 = (value * 10.0) as i16;
+            let value_end: i16 = get_angle_value(&ControlType::NoTransmitEnd1, controls);
+            cmd = send_no_transmit_cmd(command, value_start, value_end, enabled, 0).await?;
         }
         ControlType::NoTransmitEnd1 => {
-            todo!("Not implemented yet");
+            let value_start: i16 = get_angle_value(&ControlType::NoTransmitStart1, controls);
+            let value_end: i16 = (value * 10.0) as i16;
+            cmd = send_no_transmit_cmd(command, value_start, value_end, enabled, 0).await?;
+        }
+        ControlType::NoTransmitStart2 => {
+            let value_start: i16 = (value * 10.0) as i16;
+            let value_end: i16 = get_angle_value(&ControlType::NoTransmitEnd2, controls);
+            cmd = send_no_transmit_cmd(command, value_start, value_end, enabled, 1).await?;
         }
         ControlType::NoTransmitEnd2 => {
-            todo!("Not implemented yet");
+            let value_start: i16 = get_angle_value(&ControlType::NoTransmitStart2, controls);
+            let value_end: i16 = (value * 10.0) as i16;
+            cmd = send_no_transmit_cmd(command, value_start, value_end, enabled, 1).await?;
+        }
+        ControlType::SeaClutterCurve => {
+            one_byte_command(&mut cmd, &[0x12, 0x03], v - 1);
         }
 
         // Non-hardware settings
@@ -125,4 +150,35 @@ pub async fn set_control(
     command.send(&cmd).await?;
 
     Ok(())
+}
+
+async fn send_no_transmit_cmd(
+    command: &mut Command,
+    value_start: i16,
+    value_end: i16,
+    enabled: u8,
+    sector: u8,
+) -> Result<Vec<u8>, RadarError> {
+    let mut cmd = Vec::with_capacity(12);
+
+    log::info!("{}: send_no_transmit_cmd start={value_start} end={value_end} enabled={enabled} sector={sector}", command.info.key());
+    two_byte_command(
+        &mut cmd,
+        &[0x05, 0x04],
+        sector as u16 + ((enabled as u16) << 8),
+    );
+    log::info!("{}: Send command1 {:02X?}", command.info.key(), cmd);
+
+    command.send(&cmd).await?;
+    cmd.clear();
+
+    two_value_command(
+        &mut cmd,
+        &[0x03, 0x04],
+        value_start as u16,
+        value_end as u16,
+    );
+    cmd.extend_from_slice(&[sector]);
+
+    Ok(cmd)
 }

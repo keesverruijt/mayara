@@ -179,10 +179,18 @@ struct StatusReport {
     mode: u8,                            // @21 harbor - 0, coastal - 1, offshore - 2, weather - 3
     controls: [ControlsPerMode; 4],      // @22 controls indexed by mode
     target_expansion: u8,                // @54
-    _something_9: u8,                    // @55
+    sea_clutter_curve: u8,               // @55
     _something_10: [u8; 3],              // @56
     mbs_enabled: u8,                     // @59
-    _something_11: [u32; 22],            // @60
+    _something_11: [u32; 18],            // @60
+    blank_start_1: [u8; 2],              // @132
+    blank_end_1: [u8; 2],                // @134
+    blank_enabled_1: u8,                 // @136
+    _pad_1: [u8; 3],                     // @137
+    blank_start_2: [u8; 2],              // @140
+    blank_end_2: [u8; 2],                // @142
+    blank_enabled_2: u8,                 // @144
+    _pad_2: [u8; 3],                     // @145
     ranges: [u32; QUANTUM_RADAR_RANGES], // @148
     _something_12: [u8; 32],             // @228
 }
@@ -292,6 +300,10 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
         log::warn!("{}: Unknown mode {}", receiver.common.key, report.mode);
     }
     receiver.set_value(
+        &ControlType::SeaClutterCurve,
+        (report.sea_clutter_curve + 1) as f32,
+    );
+    receiver.set_value(
         &ControlType::TargetExpansion,
         report.target_expansion as f32,
     );
@@ -304,6 +316,27 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
         i16::from_le_bytes(report.bearing_offset) as f32,
     );
     receiver.set_value(&ControlType::MainBangSuppression, report.mbs_enabled as f32);
+
+    receiver.set_value_enabled(
+        &ControlType::NoTransmitStart1,
+        u16::from_le_bytes(report.blank_start_1) as f32,
+        report.blank_enabled_1,
+    );
+    receiver.set_value_enabled(
+        &ControlType::NoTransmitEnd1,
+        u16::from_le_bytes(report.blank_end_1) as f32,
+        report.blank_enabled_1,
+    );
+    receiver.set_value_enabled(
+        &ControlType::NoTransmitStart2,
+        u16::from_le_bytes(report.blank_start_2) as f32,
+        report.blank_enabled_2,
+    );
+    receiver.set_value_enabled(
+        &ControlType::NoTransmitEnd2,
+        u16::from_le_bytes(report.blank_end_2) as f32,
+        report.blank_enabled_2,
+    );
 }
 
 pub(super) fn process_info_report(receiver: &mut RaymarineReportReceiver, data: &[u8]) {

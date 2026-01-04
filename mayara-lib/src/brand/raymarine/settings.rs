@@ -52,10 +52,8 @@ pub fn new(session: Session, model: BaseModel) -> SharedControls {
             .read_only(true)
             .unit("RPM"),
     );
-    controls.insert(
-        ControlType::MainBangSuppression,
-        Control::new_list(ControlType::MainBangSuppression, &["Off", "On"]),
-    );
+    /* TODO!
+     */
 
     match model {
         BaseModel::Quantum => {
@@ -74,6 +72,42 @@ pub fn new(session: Session, model: BaseModel) -> SharedControls {
                 ControlType::ColorGain,
                 Control::new_auto(ControlType::ColorGain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE)
                     .wire_scale_factor(100., false),
+            );
+            controls.insert(
+                ControlType::MainBangSuppression,
+                Control::new_list(ControlType::MainBangSuppression, &["Off", "On"]),
+            );
+            controls.insert(
+                ControlType::NoTransmitStart1,
+                Control::new_numeric(ControlType::NoTransmitStart1, 0., 359.)
+                    .unit("Deg")
+                    .wire_scale_factor(3590., true)
+                    .has_enabled(),
+            );
+            controls.insert(
+                ControlType::NoTransmitEnd1,
+                Control::new_numeric(ControlType::NoTransmitEnd1, 0., 359.)
+                    .unit("Deg")
+                    .wire_scale_factor(3590., true)
+                    .has_enabled(),
+            );
+            controls.insert(
+                ControlType::NoTransmitStart2,
+                Control::new_numeric(ControlType::NoTransmitStart2, 0., 359.)
+                    .unit("Deg")
+                    .wire_scale_factor(3590., true)
+                    .has_enabled(),
+            );
+            controls.insert(
+                ControlType::NoTransmitEnd2,
+                Control::new_numeric(ControlType::NoTransmitEnd2, 0., 359.)
+                    .unit("Deg")
+                    .wire_scale_factor(3590., true)
+                    .has_enabled(),
+            );
+            controls.insert(
+                ControlType::SeaClutterCurve,
+                Control::new_numeric(ControlType::SeaClutterCurve, 1., 2.),
             );
         }
         BaseModel::RD => {
