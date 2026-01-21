@@ -34,7 +34,7 @@ pub(crate) enum CommandId {
     NearSTC = 0x85,
     MiddleSTC = 0x86,
     FarSTC = 0x87,
-    AntennaRevolution = 0x89,
+    ScanSpeed = 0x89,
     AntennaSwitch = 0x8A,
     AntennaNo = 0x8D,
     OnTime = 0x8E,
@@ -141,16 +141,34 @@ impl Command {
         sector2_start: Option<i32>,
         sector2_end: Option<i32>,
     ) -> Vec<i32> {
-        let mut cmd = Vec::with_capacity(6);
+        let mut cmd = Vec::with_capacity(5);
 
-        cmd.push(
-            sector1_start.unwrap_or_else(|| self.get_angle_value(&ControlType::NoTransmitStart1)),
-        );
-        cmd.push(sector1_end.unwrap_or_else(|| self.get_angle_value(&ControlType::NoTransmitEnd1)));
-        cmd.push(
-            sector2_start.unwrap_or_else(|| self.get_angle_value(&ControlType::NoTransmitStart2)),
-        );
-        cmd.push(sector2_end.unwrap_or_else(|| self.get_angle_value(&ControlType::NoTransmitEnd2)));
+        // Get current values
+        let s1_start = sector1_start.unwrap_or_else(|| self.get_angle_value(&ControlType::NoTransmitStart1));
+        let s1_end = sector1_end.unwrap_or_else(|| self.get_angle_value(&ControlType::NoTransmitEnd1));
+        let s2_start = sector2_start.unwrap_or_else(|| self.get_angle_value(&ControlType::NoTransmitStart2));
+        let s2_end = sector2_end.unwrap_or_else(|| self.get_angle_value(&ControlType::NoTransmitEnd2));
+
+        // Calculate widths from start/end angles
+        let s1_width = if s1_end >= s1_start {
+            s1_end - s1_start
+        } else {
+            360 + s1_end - s1_start
+        };
+
+        let s2_width = if s2_end >= s2_start {
+            s2_end - s2_start
+        } else {
+            360 + s2_end - s2_start
+        };
+
+        // Format: $S77,{s2_enable},{s1_start},{s1_width},{s2_start},{s2_width}
+        let s2_enable = if s2_width > 0 { 1 } else { 0 };
+        cmd.push(s2_enable);
+        cmd.push(s1_start);
+        cmd.push(s1_width);
+        cmd.push(s2_start);
+        cmd.push(s2_width);
 
         cmd
     }
@@ -272,20 +290,35 @@ impl CommandSender for Command {
             }
 
             ControlType::Gain => {
-                cmd.push(0);
-                cmd.push(value);
+                // Format: $S63,{auto},{value},0,80,0
+                // From pcap: $S63,0,50,0,80,0 (manual, value=50)
                 cmd.push(auto);
                 cmd.push(value);
+                cmd.push(0);
+                cmd.push(80);
                 cmd.push(0);
                 CommandId::Gain
             }
             ControlType::Sea => {
+                // Format: $S64,{auto},{value},50,0,0,0
+                // From pcap: $S64,{auto},{value},50,0,0,0
+                cmd.push(auto);
                 cmd.push(value);
+                cmd.push(50);
+                cmd.push(0);
+                cmd.push(0);
+                cmd.push(0);
                 CommandId::Sea
             }
             ControlType::Rain => {
-                cmd.push(RADAR_A);
+                // Format: $S65,{auto},{value},0,0,0,0
+                // From pcap: $S65,{auto},{value},0,0,0,0
+                cmd.push(auto);
                 cmd.push(value);
+                cmd.push(0);
+                cmd.push(0);
+                cmd.push(0);
+                cmd.push(0);
                 CommandId::Rain
             }
 
@@ -309,8 +342,19 @@ impl CommandSender for Command {
 
                 CommandId::BlindSector
             }
-            ControlType::ScanSpeed => CommandId::AntennaRevolution,
-            ControlType::AntennaHeight => CommandId::AntennaHeight,
+            ControlType::ScanSpeed => {
+                // Format: $S89,{mode},0 where mode: 0=24RPM, 2=Auto
+                cmd.push(value);
+                cmd.push(0);
+                CommandId::ScanSpeed
+            }
+            ControlType::AntennaHeight => {
+                // Format: $S84,0,{meters},0
+                cmd.push(0);
+                cmd.push(value);
+                cmd.push(0);
+                CommandId::AntennaHeight
+            }
 
             // Non-hardware settings
             _ => return Err(RadarError::CannotSetControlType(cv.id)),
