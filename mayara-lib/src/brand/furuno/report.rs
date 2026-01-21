@@ -513,6 +513,10 @@ impl FurunoReportReceiver {
                 let hours = numbers[0] / 3600.0;
                 self.set_value(&ControlType::OperatingHours, hours);
             }
+            CommandId::TxTime => {
+                let hours = numbers[0] / 3600.0;
+                self.set_value(&ControlType::TransmitHours, hours);
+            }
             CommandId::AliveCheck => {}
             _ => {
                 bail!("TODO: Handle command {:?} values {:?}", command_id, numbers);

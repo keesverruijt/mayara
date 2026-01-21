@@ -38,6 +38,7 @@ pub(crate) enum CommandId {
     AntennaSwitch = 0x8A,
     AntennaNo = 0x8D,
     OnTime = 0x8E,
+    TxTime = 0x8F,
 
     Modules = 0x96,
 
@@ -228,54 +229,42 @@ impl Command {
     }
 
     pub(crate) async fn init(&mut self) -> Result<(), RadarError> {
-        self.send(CommandMode::Request, CommandId::Connect, &[0])
-            .await?; // $R60,0,0,0,0,0,0,0, Furuno sends with just separated commas.
+        // Query firmware/model information
+        self.send(CommandMode::Request, CommandId::Modules, &[])
+            .await?; // $R96
 
-        self.send_with_commas(CommandMode::Request, CommandId::Modules, &[], 7)
-            .await?; // $R96,,,,,,,
+        // Query operating hours
+        self.send(CommandMode::Request, CommandId::OnTime, &[0])
+            .await?; // $R8E,0
 
-        self.send(CommandMode::Request, CommandId::Range, &[0, 0, 0])
-            .await?; // $R62,0,0,0
+        // Query transmit hours
+        self.send(CommandMode::Request, CommandId::TxTime, &[0])
+            .await?; // $R8F,0
 
-        self.send(CommandMode::Request, CommandId::CustomPictureAll, &[])
-            .await?; // $R66
-        self.send(CommandMode::Request, CommandId::Status, &[0, 0, 0, 0, 0, 0])
-            .await?; // $R66,0,0,0,0,0,0
+        // Query current state of all controls
+        self.send(CommandMode::Request, CommandId::Status, &[])
+            .await?; // $R69
 
-        self.send(
-            CommandMode::Request,
-            CommandId::AntennaType,
-            &[0, 0, 0, 0, 0, 0],
-        )
-        .await?; // $R6E,0,0,0,0,0,0,0
+        self.send(CommandMode::Request, CommandId::Range, &[])
+            .await?; // $R62
 
-        self.send(
-            CommandMode::Request,
-            CommandId::BlindSector,
-            &[0, 0, 0, 0, 0],
-        )
-        .await?; // $R77,0,0,0,0,0
+        self.send(CommandMode::Request, CommandId::Gain, &[])
+            .await?; // $R63
+
+        self.send(CommandMode::Request, CommandId::Sea, &[])
+            .await?; // $R64
+
+        self.send(CommandMode::Request, CommandId::Rain, &[])
+            .await?; // $R65
+
+        self.send(CommandMode::Request, CommandId::ScanSpeed, &[])
+            .await?; // $R89
 
         self.send(CommandMode::Request, CommandId::MainBangSize, &[0, 0])
             .await?; // $R83,0,0
 
-        self.send(CommandMode::Request, CommandId::AntennaHeight, &[0, 0])
-            .await?; // $R84,0,0
-
-        self.send(CommandMode::Request, CommandId::NearSTC, &[0])
-            .await?; // $R85,0
-
-        self.send(CommandMode::Request, CommandId::MiddleSTC, &[0])
-            .await?; // $R86,0
-
-        self.send(CommandMode::Request, CommandId::FarSTC, &[0])
-            .await?; // $R87,0
-
-        self.send(CommandMode::Request, CommandId::OnTime, &[0, 0])
-            .await?; // $R8E,0
-
-        self.send(CommandMode::Request, CommandId::WakeUpCount, &[0])
-            .await?; // $RAC,0
+        self.send(CommandMode::Request, CommandId::BlindSector, &[])
+            .await?; // $R77
 
         Ok(())
     }

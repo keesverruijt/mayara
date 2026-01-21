@@ -191,22 +191,22 @@ static RANGE_TABLE_DRS: &[i32] = &[
 
 /// Range table for FAR series commercial radars (different range increments)
 static RANGE_TABLE_FAR: &[i32] = &[
-    231,  // 1/8 NM
-    463,  // 1/4 NM
-    926,  // 1/2 NM
-    1389, // 3/4 NM
-    1852, // 1 NM
-    2778, // 1.5 NM
-    3704,  // 2 NM
-    5556,  // 3 NM
-    7408,  // 4 NM
-    11112, // 6 NM
-    14816, // 8 NM
-    22224, // 12 NM
-    29632, // 16 NM
-    44448, // 24 NM
-    59264, // 32 NM
-    88896, // 48 NM
+    231,    // 1/8 NM
+    463,    // 1/4 NM
+    926,    // 1/2 NM
+    1389,   // 3/4 NM
+    1852,   // 1 NM
+    2778,   // 1.5 NM
+    3704,   // 2 NM
+    5556,   // 3 NM
+    7408,   // 4 NM
+    11112,  // 6 NM
+    14816,  // 8 NM
+    22224,  // 12 NM
+    29632,  // 16 NM
+    44448,  // 24 NM
+    59264,  // 32 NM
+    88896,  // 48 NM
     177792, // 96 NM
 ];
 
@@ -220,18 +220,24 @@ fn get_ranges_by_model(model: &RadarModel) -> Vec<i32> {
         RadarModel::DRS4DNXT | RadarModel::DRS6ANXT => RANGE_TABLE_DRS_NXT,
 
         // FAR series (commercial radars)
-        RadarModel::FAR21x7 | RadarModel::FAR3000 | RadarModel::FAR15x3 | RadarModel::FAR14x6 | RadarModel::FAR14x7 => {
-            RANGE_TABLE_FAR
-        }
+        RadarModel::FAR21x7
+        | RadarModel::FAR3000
+        | RadarModel::FAR15x3
+        | RadarModel::FAR14x6
+        | RadarModel::FAR14x7 => RANGE_TABLE_FAR,
 
         // Standard DRS series and unknown models
-        RadarModel::Unknown
-        | RadarModel::DRS
-        | RadarModel::DRS4DL
-        | RadarModel::DRS6AXCLASS => RANGE_TABLE_DRS,
+        RadarModel::Unknown | RadarModel::DRS | RadarModel::DRS4DL | RadarModel::DRS6AXCLASS => {
+            RANGE_TABLE_DRS
+        }
     };
 
     let ranges: Vec<i32> = range_table.to_vec();
-    log::debug!("Model {} supports {} ranges: {:?}", model.to_str(), ranges.len(), ranges);
+    log::debug!(
+        "Model {} supports {} ranges: {:?}",
+        model.to_str(),
+        ranges.len(),
+        ranges
+    );
     ranges
 }
