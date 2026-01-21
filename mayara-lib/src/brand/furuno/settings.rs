@@ -118,6 +118,46 @@ pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version:
             .unit("Deg")
             .wire_offset(-1.),
     );
+
+    // Add NXT-specific controls for NXT models
+    if matches!(
+        model,
+        RadarModel::DRS4DNXT | RadarModel::DRS6ANXT | RadarModel::DRS12ANXT | RadarModel::DRS25ANXT
+    ) {
+        // Noise Reduction (Signal Processing feature 3)
+        info.controls.insert(
+            ControlType::NoiseRejection,
+            Control::new_numeric(ControlType::NoiseRejection, 0., 1.)
+                .unit("boolean"),
+        );
+
+        // Interference Rejection (Signal Processing feature 0)
+        info.controls.insert(
+            ControlType::InterferenceRejection,
+            Control::new_numeric(ControlType::InterferenceRejection, 0., 1.)
+                .unit("boolean"),
+        );
+
+        // Target Separation (RezBoost / Beam Sharpening)
+        info.controls.insert(
+            ControlType::TargetSeparation,
+            Control::new_numeric(ControlType::TargetSeparation, 0., 3.)
+                .unit("level"),
+        );
+
+        // Bird Mode
+        info.controls.insert(
+            ControlType::BirdMode,
+            Control::new_numeric(ControlType::BirdMode, 0., 3.)
+                .unit("level"),
+        );
+
+        // Doppler (Target Analyzer): Off, Target, Rain
+        info.controls.insert(
+            ControlType::Doppler,
+            Control::new_list(ControlType::Doppler, &["Off", "Target", "Rain"]),
+        );
+    }
 }
 
 /// Range table for DRS-NXT series (in meters)

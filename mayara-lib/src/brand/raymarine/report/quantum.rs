@@ -9,7 +9,7 @@ use crate::brand::raymarine::{hd_to_pixel_values, settings, RaymarineModel};
 use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::range::{Range, Ranges};
 use crate::radar::spoke::{to_protobuf_spoke, GenericSpoke};
-use crate::radar::{DopplerMode, SpokeBearing, Status};
+use crate::radar::{SpokeBearing, Status};
 use crate::settings::ControlType;
 
 use super::{RaymarineReportReceiver, ReceiverState};

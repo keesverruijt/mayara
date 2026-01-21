@@ -584,6 +584,89 @@ impl FurunoReportReceiver {
                 let percent = (numbers[0] as i32 * 100) / 255;
                 self.set_value(&ControlType::MainBangSuppression, percent as f32);
             }
+
+            // NXT-specific features
+            CommandId::SignalProcessing => {
+                // Response format (varies):
+                // - From SET echo: $N67,0,{feature},{value},{screen} (4 args)
+                // - From REQUEST: $N67,{feature},{value},{screen} (3 args)
+                // feature 0: Interference Rejection (0=OFF, 2=ON)
+                // feature 3: Noise Reduction (0=OFF, 1=ON)
+                let (feature, value) = if numbers.len() >= 4 && numbers[0] == 0.0 {
+                    // SET echo format
+                    (numbers[1] as i32, numbers[2] as i32)
+                } else if numbers.len() >= 2 {
+                    // REQUEST response format
+                    (numbers[0] as i32, numbers[1] as i32)
+                } else {
+                    bail!(
+                        "Insufficient ({}) arguments for SignalProcessing command",
+                        numbers.len()
+                    );
+                };
+
+                match feature {
+                    0 => {
+                        // Interference Rejection: value 2=ON, 0=OFF
+                        let enabled = if value == 2 { 1.0 } else { 0.0 };
+                        self.set_value(&ControlType::InterferenceRejection, enabled);
+                    }
+                    3 => {
+                        // Noise Reduction: value 1=ON, 0=OFF
+                        let enabled = if value == 1 { 1.0 } else { 0.0 };
+                        self.set_value(&ControlType::NoiseRejection, enabled);
+                    }
+                    _ => {
+                        log::debug!("Unknown SignalProcessing feature {}: value {}", feature, value);
+                    }
+                }
+            }
+            CommandId::RezBoost => {
+                // Response format: $NEE,{level},{screen}
+                // level: 0=OFF, 1=Low, 2=Medium, 3=High
+                if numbers.len() < 1 {
+                    bail!(
+                        "Insufficient ({}) arguments for RezBoost command",
+                        numbers.len()
+                    );
+                }
+                self.set_value(&ControlType::TargetSeparation, numbers[0]);
+            }
+            CommandId::BirdMode => {
+                // Response format: $NED,{level},{screen}
+                // level: 0=OFF, 1=Low, 2=Medium, 3=High
+                if numbers.len() < 1 {
+                    bail!(
+                        "Insufficient ({}) arguments for BirdMode command",
+                        numbers.len()
+                    );
+                }
+                self.set_value(&ControlType::BirdMode, numbers[0]);
+            }
+            CommandId::TargetAnalyzer => {
+                // Response format: $NEF,{enabled},{mode},{screen}
+                // Wire format: enabled=0/1, mode=0(Target)/1(Rain)
+                // Control value: 0=Off, 1=Target, 2=Rain
+                if numbers.len() < 2 {
+                    bail!(
+                        "Insufficient ({}) arguments for TargetAnalyzer command",
+                        numbers.len()
+                    );
+                }
+                let enabled = numbers[0] as i32;
+                let mode = numbers[1] as i32;
+
+                let value = if enabled == 0 {
+                    0.0 // Off
+                } else if mode == 0 {
+                    1.0 // Target
+                } else {
+                    2.0 // Rain
+                };
+
+                self.set_value(&ControlType::Doppler, value);
+            }
+
             CommandId::AliveCheck => {}
             _ => {
                 bail!("TODO: Handle command {:?} values {:?}", command_id, numbers);

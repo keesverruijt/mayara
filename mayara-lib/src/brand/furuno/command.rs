@@ -21,7 +21,7 @@ pub(crate) enum CommandId {
     Sea = 0x64,
     Rain = 0x65,
     CustomPictureAll = 0x66,
-    CustomPicture = 0x67,
+    SignalProcessing = 0x67,  // Multi-purpose: NoiseReduction, InterferenceRejection, etc.
     Status = 0x69,
     U6D = 0x6D,
     AntennaType = 0x6E,
@@ -53,8 +53,10 @@ pub(crate) enum CommandId {
     CustomATFSettings = 0xE0,
     AliveCheck = 0xE3,
     ATFSettings = 0xEA,
-    BearingResolutionSetting = 0xEE,
-    AccuShip = 0xF0,
+    BirdMode = 0xED,
+    RezBoost = 0xEE,        // Target Separation (beam sharpening)
+    TargetAnalyzer = 0xEF,  // Doppler mode
+    AutoAcquire = 0xF0,
     RangeSelect = 0xFE,
 }
 
@@ -266,6 +268,22 @@ impl Command {
         self.send(CommandMode::Request, CommandId::BlindSector, &[])
             .await?; // $R77
 
+        // NXT-specific features (query signal processing features)
+        self.send(CommandMode::Request, CommandId::SignalProcessing, &[0, 3])
+            .await?; // $R67,0,3 - Noise Reduction
+
+        self.send(CommandMode::Request, CommandId::SignalProcessing, &[0, 0])
+            .await?; // $R67,0,0 - Interference Rejection
+
+        self.send(CommandMode::Request, CommandId::RezBoost, &[])
+            .await?; // $REE - Beam sharpening (Target Separation)
+
+        self.send(CommandMode::Request, CommandId::BirdMode, &[])
+            .await?; // $RED - Bird mode
+
+        self.send(CommandMode::Request, CommandId::TargetAnalyzer, &[])
+            .await?; // $REF - Target Analyzer (Doppler)
+
         Ok(())
     }
 
@@ -396,6 +414,58 @@ impl CommandSender for Command {
                 cmd.push(value_255);
                 cmd.push(0);
                 CommandId::MainBangSize
+            }
+
+            // NXT-specific features
+            ControlType::NoiseRejection => {
+                // Format: $S67,0,3,{enabled},0
+                // Feature 3 = Noise Reduction
+                let enabled = if value > 0 { 1 } else { 0 };
+                cmd.push(0);
+                cmd.push(3);
+                cmd.push(enabled);
+                cmd.push(0);
+                CommandId::SignalProcessing
+            }
+            ControlType::InterferenceRejection => {
+                // Format: $S67,0,0,{enabled},0
+                // Feature 0 = Interference Rejection
+                // Note: enabled=2 (not 1) per protocol spec
+                let enabled = if value > 0 { 2 } else { 0 };
+                cmd.push(0);
+                cmd.push(0);
+                cmd.push(enabled);
+                cmd.push(0);
+                CommandId::SignalProcessing
+            }
+            ControlType::TargetSeparation => {
+                // Format: $SEE,{level},0
+                // RezBoost (beam sharpening): 0=OFF, 1=Low, 2=Medium, 3=High
+                cmd.push(value);
+                cmd.push(0); // screen: 0=Primary
+                CommandId::RezBoost
+            }
+            ControlType::BirdMode => {
+                // Format: $SED,{level},0
+                // BirdMode: 0=OFF, 1=Low, 2=Medium, 3=High
+                cmd.push(value);
+                cmd.push(0); // screen: 0=Primary
+                CommandId::BirdMode
+            }
+            ControlType::Doppler => {
+                // Format: $SEF,{enabled},{mode},0
+                // Target Analyzer: value 0=Off, 1=Target, 2=Rain
+                // Wire format: enabled=0/1, mode=0(Target)/1(Rain)
+                let (enabled, mode) = match value {
+                    0 => (0, 0), // Off
+                    1 => (1, 0), // Target
+                    2 => (1, 1), // Rain
+                    _ => (0, 0), // Invalid, default to Off
+                };
+                cmd.push(enabled);
+                cmd.push(mode);
+                cmd.push(0); // screen: 0=Primary
+                CommandId::TargetAnalyzer
             }
 
             // Non-hardware settings
