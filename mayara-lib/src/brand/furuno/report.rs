@@ -469,22 +469,76 @@ impl FurunoReportReceiver {
                 self.set_value(&ControlType::Status, generic_state as i32 as f32);
             }
             CommandId::Gain => {
-                if numbers.len() < 5 {
+                // Response format: $N63,{auto},{value},0,80,0
+                // auto=0: Manual, auto=1: Auto
+                // value: 0-100
+                if numbers.len() < 2 {
                     bail!(
                         "Insufficient ({}) arguments for Gain command",
                         numbers.len()
                     );
                 }
-                let auto = numbers[2] as u8;
-                let gain = if auto > 0 { numbers[3] } else { numbers[1] };
-                log::trace!(
-                    "Gain: {} auto {} values[1]={} values[3]={}",
-                    gain,
-                    auto,
-                    numbers[1],
-                    numbers[3]
-                );
+                let auto = numbers[0] as u8;
+                let gain = numbers[1];
                 self.set_value_auto(&ControlType::Gain, gain, auto);
+            }
+            CommandId::Sea => {
+                // Response format: $N64,{auto},{value},50,0,0,0
+                if numbers.len() < 2 {
+                    bail!(
+                        "Insufficient ({}) arguments for Sea command",
+                        numbers.len()
+                    );
+                }
+                let auto = numbers[0] as u8;
+                let sea = numbers[1];
+                self.set_value_auto(&ControlType::Sea, sea, auto);
+            }
+            CommandId::Rain => {
+                // Response format: $N65,{auto},{value},0,0,0,0
+                if numbers.len() < 2 {
+                    bail!(
+                        "Insufficient ({}) arguments for Rain command",
+                        numbers.len()
+                    );
+                }
+                let auto = numbers[0] as u8;
+                let rain = numbers[1];
+                self.set_value_auto(&ControlType::Rain, rain, auto);
+            }
+            CommandId::ScanSpeed => {
+                // Response format: $N89,{mode},0
+                // mode: 0=24RPM, 2=Auto
+                if numbers.len() < 1 {
+                    bail!(
+                        "Insufficient ({}) arguments for ScanSpeed command",
+                        numbers.len()
+                    );
+                }
+                let mode = numbers[0];
+                self.set_value(&ControlType::ScanSpeed, mode);
+            }
+            CommandId::BlindSector => {
+                // Response format: $N77,{s2_enable},{s1_start},{s1_width},{s2_start},{s2_width}
+                if numbers.len() < 5 {
+                    bail!(
+                        "Insufficient ({}) arguments for BlindSector command",
+                        numbers.len()
+                    );
+                }
+                let s1_start = numbers[1];
+                let s1_width = numbers[2];
+                let s2_start = numbers[3];
+                let s2_width = numbers[4];
+
+                // Convert from start/width to start/end
+                let s1_end = (s1_start + s1_width) % 360.0;
+                let s2_end = (s2_start + s2_width) % 360.0;
+
+                self.set_value(&ControlType::NoTransmitStart1, s1_start);
+                self.set_value(&ControlType::NoTransmitEnd1, s1_end);
+                self.set_value(&ControlType::NoTransmitStart2, s2_start);
+                self.set_value(&ControlType::NoTransmitEnd2, s2_end);
             }
             CommandId::Range => {
                 if numbers.len() < 3 {
@@ -516,6 +570,19 @@ impl FurunoReportReceiver {
             CommandId::TxTime => {
                 let hours = numbers[0] / 3600.0;
                 self.set_value(&ControlType::TransmitHours, hours);
+            }
+            CommandId::MainBangSize => {
+                // Response format: $N83,{value},0
+                // value: 0-255 (raw value, needs conversion to 0-100%)
+                if numbers.len() < 1 {
+                    bail!(
+                        "Insufficient ({}) arguments for MainBangSize command",
+                        numbers.len()
+                    );
+                }
+                // Convert 0-255 to 0-100%
+                let percent = (numbers[0] as i32 * 100) / 255;
+                self.set_value(&ControlType::MainBangSuppression, percent as f32);
             }
             CommandId::AliveCheck => {}
             _ => {

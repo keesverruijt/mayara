@@ -389,6 +389,14 @@ impl CommandSender for Command {
                 cmd.push(0);
                 CommandId::AntennaHeight
             }
+            ControlType::MainBangSuppression => {
+                // Format: $S83,{value_255},0
+                // Map 0-100% to 0-255
+                let value_255 = (value * 255) / 100;
+                cmd.push(value_255);
+                cmd.push(0);
+                CommandId::MainBangSize
+            }
 
             // Non-hardware settings
             _ => return Err(RadarError::CannotSetControlType(cv.id)),
