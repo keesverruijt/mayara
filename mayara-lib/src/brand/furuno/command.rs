@@ -57,6 +57,60 @@ pub(crate) enum CommandId {
     RangeSelect = 0xFE,
 }
 
+/// Furuno wire index to meters mapping table
+/// CRITICAL: Wire indices are NON-SEQUENTIAL! The radar uses specific wire index values.
+/// Verified via Wireshark captures from TimeZero ↔ DRS4D-NXT
+///
+/// Example: To set 1/16nm range, you send wire_index=21 (NOT 0!)
+///          To set 36nm range, you send wire_index=19 (NOT 16!)
+pub const WIRE_INDEX_TABLE: [(i32, i32); 18] = [
+    (21, 116),   // 1/16 nm = 116m (minimum range) - wire index 21!
+    (0, 231),    // 1/8 nm = 231m
+    (1, 463),    // 1/4 nm = 463m
+    (2, 926),    // 1/2 nm = 926m
+    (3, 1389),   // 3/4 nm = 1389m
+    (4, 1852),   // 1 nm = 1852m
+    (5, 2778),   // 1.5 nm = 2778m
+    (6, 3704),   // 2 nm = 3704m
+    (7, 5556),   // 3 nm = 5556m
+    (8, 7408),   // 4 nm = 7408m
+    (9, 11112),  // 6 nm = 11112m
+    (10, 14816), // 8 nm = 14816m
+    (11, 22224), // 12 nm = 22224m
+    (12, 29632), // 16 nm = 29632m
+    (13, 44448), // 24 nm = 44448m
+    (14, 59264), // 32 nm = 59264m
+    (19, 66672), // 36 nm = 66672m (OUT OF SEQUENCE! wire index 19!)
+    (15, 88896), // 48 nm = 88896m (maximum range)
+];
+
+/// Convert meters to Furuno wire index
+/// Uses exact match lookup in the WIRE_INDEX_TABLE.
+pub fn meters_to_wire_index(meters: i32) -> i32 {
+    // Try exact match first
+    for (wire_idx, m) in WIRE_INDEX_TABLE.iter() {
+        if *m == meters {
+            return *wire_idx;
+        }
+    }
+    // If no exact match, find the closest one that's >= requested meters
+    for (wire_idx, m) in WIRE_INDEX_TABLE.iter() {
+        if *m >= meters {
+            return *wire_idx;
+        }
+    }
+    // Fallback to max range (48nm = wire index 15)
+    15
+}
+
+/// Convert Furuno wire index to meters
+pub fn wire_index_to_meters(wire_index: i32) -> Option<i32> {
+    WIRE_INDEX_TABLE
+        .iter()
+        .find(|(idx, _)| *idx == wire_index)
+        .map(|(_, meters)| *meters)
+}
+
 pub(crate) struct Command {
     key: String,
     write: Option<WriteHalf<TcpStream>>,
@@ -271,19 +325,10 @@ impl CommandSender for Command {
             }
 
             ControlType::Range => {
-                let ranges = &self.ranges;
-                cmd.push(if value < ranges.len() as i32 {
-                    value
-                } else {
-                    let mut i = 0;
-                    for r in ranges.all.iter() {
-                        if r.distance() >= value {
-                            break;
-                        }
-                        i += 1;
-                    }
-                    i
-                });
+                // CRITICAL: Must use wire index, not array position!
+                // Wire indices are non-sequential (21=min, 0-15=normal, 19=36nm out of order)
+                let wire_index = meters_to_wire_index(value);
+                cmd.push(wire_index);
                 cmd.push(0);
                 cmd.push(0);
                 CommandId::Range

@@ -496,15 +496,18 @@ impl FurunoReportReceiver {
                 if numbers[2] != 0. {
                     bail!("Cannot handle radar not set to NM range");
                 }
-                let index = numbers[0] as usize;
-                let range = self.common.info.ranges.all.get(index).with_context(|| {
-                    format!(
-                        "Range index {} out of bounds for ranges {}",
-                        index, self.common.info.ranges,
-                    )
-                })?;
+                // CRITICAL: numbers[0] is a WIRE INDEX (non-sequential: 21, 0-15, 19)
+                // NOT an array position! Must convert to meters first.
+                let wire_index = numbers[0] as i32;
+                let range_meters = super::command::wire_index_to_meters(wire_index)
+                    .with_context(|| {
+                        format!(
+                            "Unknown wire index {} from radar range response",
+                            wire_index
+                        )
+                    })?;
 
-                self.set_value(&ControlType::Range, range.distance() as f32);
+                self.set_value(&ControlType::Range, range_meters as f32);
             }
             CommandId::OnTime => {
                 let hours = numbers[0] / 3600.0;
@@ -954,18 +957,17 @@ impl FurunoReportReceiver {
         let encoding = (data[11] & 0x18) >> 3;
         let v2 = (data[11] & 0x20) >> 5;
         let v3 = (data[11] & 0xc0) >> 6;
-        let range_index = data[12] as usize;
+        // CRITICAL: data[12] is a WIRE INDEX (non-sequential: 21, 0-15, 19)
+        // NOT an array position! Must convert to meters.
+        let wire_index = data[12] as i32;
         let have_heading = ((data[15] & 0x30) >> 3) as u8;
 
         // Now do stuff with the data
-        let range = ranges
-            .all
-            .get(range_index)
-            .map(|r| r.distance())
+        let range = super::command::wire_index_to_meters(wire_index)
             .unwrap_or_else(|| {
                 log::warn!(
-                    "Unknown range index {} in header: {:?}",
-                    range_index,
+                    "Unknown wire index {} in spoke header: {:?}",
+                    wire_index,
                     &data[0..20]
                 );
                 0

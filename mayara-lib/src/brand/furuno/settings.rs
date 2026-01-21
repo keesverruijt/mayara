@@ -17,8 +17,8 @@ pub fn new(session: Session) -> SharedControls {
     );
 
     let max_value = 120. * NAUTICAL_MILE as f32;
-    let mut range_control = Control::new_numeric(ControlType::Range, 0., max_value).unit("m");
-    range_control.set_valid_values(FURUNO_RADAR_RANGES.into());
+    let range_control = Control::new_numeric(ControlType::Range, 0., max_value).unit("m");
+    // Note: valid range values are set per-model in update_when_model_known()
     controls.insert(ControlType::Range, range_control);
 
     controls.insert(
@@ -120,97 +120,118 @@ pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version:
     );
 }
 
-fn get_ranges_by_model(model: &RadarModel) -> Vec<i32> {
-    let mut ranges = Vec::new();
-
-    let allowed = get_ranges_nm_by_model(model);
-    for i in 0..allowed.len() {
-        if allowed[i] {
-            ranges.push(FURUNO_RADAR_RANGES[i]);
-        }
-    }
-    log::debug!("Model {} supports ranges {:?}", model.to_str(), ranges);
-    return ranges;
-}
-
-// From MaxSea.Radar.BusinessObjects.RadarRanges
-static FURUNO_RADAR_RANGES: [i32; 22] = [
-    115,  // 1/16nm
-    231,  // 1/8nm
-    463,  // 1/4nm
-    926,  // 1/2nm
-    1389, // 3/4nm
-    NAUTICAL_MILE,
-    2778, // 1,5nm
-    NAUTICAL_MILE * 2,
-    NAUTICAL_MILE * 3,
-    NAUTICAL_MILE * 4,
-    NAUTICAL_MILE * 6,
-    NAUTICAL_MILE * 8,
-    NAUTICAL_MILE * 12,
-    NAUTICAL_MILE * 16,
-    NAUTICAL_MILE * 24,
-    NAUTICAL_MILE * 32,
-    NAUTICAL_MILE * 36,
-    NAUTICAL_MILE * 48,
-    NAUTICAL_MILE * 64,
-    NAUTICAL_MILE * 72,
-    NAUTICAL_MILE * 96,
-    NAUTICAL_MILE * 120,
+/// Range table for DRS-NXT series (in meters)
+/// Ranges: 1/16, 1/8, 1/4, 1/2, 3/4, 1, 1.5, 2, 3, 4, 6, 8, 12, 16, 24, 32, 36, 48 NM
+static RANGE_TABLE_DRS_NXT: &[i32] = &[
+    116,   // 1/16 NM
+    231,   // 1/8 NM
+    463,   // 1/4 NM
+    926,   // 1/2 NM
+    1389,  // 3/4 NM
+    1852,  // 1 NM
+    2778,  // 1.5 NM
+    3704,  // 2 NM
+    5556,  // 3 NM
+    7408,  // 4 NM
+    11112, // 6 NM
+    14816, // 8 NM
+    22224, // 12 NM
+    29632, // 16 NM
+    44448, // 24 NM
+    59264, // 32 NM
+    66672, // 36 NM
+    88896, // 48 NM
 ];
 
-// See Far.Wrapper.SensorProperty._availableRangeCodeListsForNm etc.
-fn get_ranges_nm_by_model(model: &RadarModel) -> &'static [bool; 22] {
-    static RANGES_NM_UNKNOWN: [bool; 22] = [
-        true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
-        true, true, true, true, true, true, false,
-    ];
-    static RANGES_NM_FAR21X7: [bool; 22] = [
-        false, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
-        true, false, true, false, false, true, false,
-    ];
-    static RANGES_NM_FAR3000: [bool; 22] = [
-        false, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
-        true, false, true, false, false, true, false,
-    ];
-    static RANGES_NM_DRS4_DNXT: [bool; 22] = [
-        true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
-        true, true, false, false, false, false, false,
-    ];
-    static RANGES_NM_DRS6_ANXT: [bool; 22] = [
-        true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
-        true, true, true, true, true, false, false,
-    ];
-    static RANGES_NM_FAR15X3: [bool; 22] = [
-        false, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
-        true, false, true, false, false, true, false,
-    ];
-    static RANGES_NM_FAR14X6: [bool; 22] = [
-        false, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
-        true, false, true, false, false, true, false,
-    ];
-    static RANGES_NM_DRS12_ANXT: [bool; 22] = [
-        true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
-        true, true, true, true, true, false, false,
-    ];
-    static RANGES_NM_DRS25_ANXT: [bool; 22] = [
-        true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
-        true, true, true, true, true, false, false,
-    ];
+/// Extended range table for DRS12A/DRS25A-NXT (adds 64, 72, 96 NM)
+static RANGE_TABLE_DRS_NXT_EXTENDED: &[i32] = &[
+    116,    // 1/16 NM
+    231,    // 1/8 NM
+    463,    // 1/4 NM
+    926,    // 1/2 NM
+    1389,   // 3/4 NM
+    1852,   // 1 NM
+    2778,   // 1.5 NM
+    3704,   // 2 NM
+    5556,   // 3 NM
+    7408,   // 4 NM
+    11112,  // 6 NM
+    14816,  // 8 NM
+    22224,  // 12 NM
+    29632,  // 16 NM
+    44448,  // 24 NM
+    59264,  // 32 NM
+    66672,  // 36 NM
+    88896,  // 48 NM
+    118528, // 64 NM
+    133344, // 72 NM
+    177792, // 96 NM
+];
 
-    match model {
+/// Range table for standard DRS series (non-NXT, up to 36 NM)
+static RANGE_TABLE_DRS: &[i32] = &[
+    116,   // 1/16 NM
+    231,   // 1/8 NM
+    463,   // 1/4 NM
+    926,   // 1/2 NM
+    1389,  // 3/4 NM
+    1852,  // 1 NM
+    2778,  // 1.5 NM
+    3704,  // 2 NM
+    5556,  // 3 NM
+    7408,  // 4 NM
+    11112, // 6 NM
+    14816, // 8 NM
+    22224, // 12 NM
+    29632, // 16 NM
+    44448, // 24 NM
+    59264, // 32 NM
+    66672, // 36 NM
+];
+
+/// Range table for FAR series commercial radars (different range increments)
+static RANGE_TABLE_FAR: &[i32] = &[
+    231,  // 1/8 NM
+    463,  // 1/4 NM
+    926,  // 1/2 NM
+    1389, // 3/4 NM
+    1852, // 1 NM
+    2778, // 1.5 NM
+    3704,  // 2 NM
+    5556,  // 3 NM
+    7408,  // 4 NM
+    11112, // 6 NM
+    14816, // 8 NM
+    22224, // 12 NM
+    29632, // 16 NM
+    44448, // 24 NM
+    59264, // 32 NM
+    88896, // 48 NM
+    177792, // 96 NM
+];
+
+/// Get the range table for a specific model
+fn get_ranges_by_model(model: &RadarModel) -> Vec<i32> {
+    let range_table: &[i32] = match model {
+        // DRS-NXT series with extended ranges
+        RadarModel::DRS12ANXT | RadarModel::DRS25ANXT => RANGE_TABLE_DRS_NXT_EXTENDED,
+
+        // DRS-NXT series (standard)
+        RadarModel::DRS4DNXT | RadarModel::DRS6ANXT => RANGE_TABLE_DRS_NXT,
+
+        // FAR series (commercial radars)
+        RadarModel::FAR21x7 | RadarModel::FAR3000 | RadarModel::FAR15x3 | RadarModel::FAR14x6 | RadarModel::FAR14x7 => {
+            RANGE_TABLE_FAR
+        }
+
+        // Standard DRS series and unknown models
         RadarModel::Unknown
         | RadarModel::DRS
-        | RadarModel::FAR14x7
         | RadarModel::DRS4DL
-        | RadarModel::DRS6AXCLASS => &RANGES_NM_UNKNOWN,
-        RadarModel::FAR21x7 => &RANGES_NM_FAR21X7,
-        RadarModel::FAR3000 => &RANGES_NM_FAR3000,
-        RadarModel::DRS4DNXT => &RANGES_NM_DRS4_DNXT,
-        RadarModel::DRS6ANXT => &RANGES_NM_DRS6_ANXT,
-        RadarModel::FAR15x3 => &RANGES_NM_FAR15X3,
-        RadarModel::FAR14x6 => &RANGES_NM_FAR14X6,
-        RadarModel::DRS12ANXT => &RANGES_NM_DRS12_ANXT,
-        RadarModel::DRS25ANXT => &RANGES_NM_DRS25_ANXT,
-    }
+        | RadarModel::DRS6AXCLASS => RANGE_TABLE_DRS,
+    };
+
+    let ranges: Vec<i32> = range_table.to_vec();
+    log::debug!("Model {} supports {} ranges: {:?}", model.to_str(), ranges.len(), ranges);
+    ranges
 }
