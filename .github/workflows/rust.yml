@@ -33,20 +33,6 @@ jobs:
         name: Mayara Linux x86_64
         path: target/release/mayara
 
-  macos:
-    runs-on: macos-13
-    steps:
-    - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --release
-    - name: Run tests
-      run: cargo test --release --verbose
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: Mayara macOS Intel
-        path: target/release/mayara
-
   macos_arm64:
     runs-on: macos-14
     steps:
