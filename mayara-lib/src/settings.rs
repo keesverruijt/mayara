@@ -354,6 +354,12 @@ impl SharedControls {
         locked.controls.get(control_type).cloned()
     }
 
+    pub fn contains_key(&self, control_type: &ControlType) -> bool {
+        let locked = self.controls.read().unwrap();
+
+        locked.controls.contains_key(control_type)
+    }
+
     pub fn set_refresh(&self, control_type: &ControlType) {
         let mut locked = self.controls.write().unwrap();
         if let Some(control) = locked.controls.get_mut(control_type) {

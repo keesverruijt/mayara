@@ -254,7 +254,7 @@ impl Session {
 
         let locator = Locator::new(session.clone(), radars);
 
-        let (tx_ip_change, rx_ip_change) = broadcast::channel(1);
+        let (tx_ip_change, _rx_ip_change) = broadcast::channel(1);
         let mut navdata = navdata::NavigationData::new(session.clone());
 
         let rx_ip_change_clone = tx_ip_change.subscribe();

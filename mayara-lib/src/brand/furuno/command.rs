@@ -21,7 +21,7 @@ pub(crate) enum CommandId {
     Sea = 0x64,
     Rain = 0x65,
     CustomPictureAll = 0x66,
-    SignalProcessing = 0x67,  // Multi-purpose: NoiseReduction, InterferenceRejection, etc.
+    SignalProcessing = 0x67, // Multi-purpose: NoiseReduction, InterferenceRejection, etc.
     Status = 0x69,
     U6D = 0x6D,
     AntennaType = 0x6E,
@@ -54,8 +54,8 @@ pub(crate) enum CommandId {
     AliveCheck = 0xE3,
     ATFSettings = 0xEA,
     BirdMode = 0xED,
-    RezBoost = 0xEE,        // Target Separation (beam sharpening)
-    TargetAnalyzer = 0xEF,  // Doppler mode
+    RezBoost = 0xEE,       // Target Separation (beam sharpening)
+    TargetAnalyzer = 0xEF, // Doppler mode
     AutoAcquire = 0xF0,
     RangeSelect = 0xFE,
 }
@@ -201,10 +201,14 @@ impl Command {
         let mut cmd = Vec::with_capacity(5);
 
         // Get current values
-        let s1_start = sector1_start.unwrap_or_else(|| self.get_angle_value(&ControlType::NoTransmitStart1));
-        let s1_end = sector1_end.unwrap_or_else(|| self.get_angle_value(&ControlType::NoTransmitEnd1));
-        let s2_start = sector2_start.unwrap_or_else(|| self.get_angle_value(&ControlType::NoTransmitStart2));
-        let s2_end = sector2_end.unwrap_or_else(|| self.get_angle_value(&ControlType::NoTransmitEnd2));
+        let s1_start =
+            sector1_start.unwrap_or_else(|| self.get_angle_value(&ControlType::NoTransmitStart1));
+        let s1_end =
+            sector1_end.unwrap_or_else(|| self.get_angle_value(&ControlType::NoTransmitEnd1));
+        let s2_start =
+            sector2_start.unwrap_or_else(|| self.get_angle_value(&ControlType::NoTransmitStart2));
+        let s2_end =
+            sector2_end.unwrap_or_else(|| self.get_angle_value(&ControlType::NoTransmitEnd2));
 
         // Calculate widths from start/end angles
         let s1_width = if s1_end >= s1_start {
@@ -253,8 +257,7 @@ impl Command {
         self.send(CommandMode::Request, CommandId::Gain, &[])
             .await?; // $R63
 
-        self.send(CommandMode::Request, CommandId::Sea, &[])
-            .await?; // $R64
+        self.send(CommandMode::Request, CommandId::Sea, &[]).await?; // $R64
 
         self.send(CommandMode::Request, CommandId::Rain, &[])
             .await?; // $R65
@@ -268,22 +271,23 @@ impl Command {
         self.send(CommandMode::Request, CommandId::BlindSector, &[])
             .await?; // $R77
 
-        // NXT-specific features (query signal processing features)
-        self.send(CommandMode::Request, CommandId::SignalProcessing, &[0, 3])
-            .await?; // $R67,0,3 - Noise Reduction
+        if self.controls.contains_key(&ControlType::BirdMode) {
+            // NXT-specific features (query signal processing features)
+            self.send(CommandMode::Request, CommandId::SignalProcessing, &[0, 3])
+                .await?; // $R67,0,3 - Noise Reduction
 
-        self.send(CommandMode::Request, CommandId::SignalProcessing, &[0, 0])
-            .await?; // $R67,0,0 - Interference Rejection
+            self.send(CommandMode::Request, CommandId::SignalProcessing, &[0, 0])
+                .await?; // $R67,0,0 - Interference Rejection
 
-        self.send(CommandMode::Request, CommandId::RezBoost, &[])
-            .await?; // $REE - Beam sharpening (Target Separation)
+            self.send(CommandMode::Request, CommandId::RezBoost, &[])
+                .await?; // $REE - Beam sharpening (Target Separation)
 
-        self.send(CommandMode::Request, CommandId::BirdMode, &[])
-            .await?; // $RED - Bird mode
+            self.send(CommandMode::Request, CommandId::BirdMode, &[])
+                .await?; // $RED - Bird mode
 
-        self.send(CommandMode::Request, CommandId::TargetAnalyzer, &[])
-            .await?; // $REF - Target Analyzer (Doppler)
-
+            self.send(CommandMode::Request, CommandId::TargetAnalyzer, &[])
+                .await?; // $REF - Target Analyzer (Doppler)
+        }
         Ok(())
     }
 
@@ -292,6 +296,7 @@ impl Command {
 
         self.send(CommandMode::Request, CommandId::AliveCheck, &[])
             .await?;
+        self.init().await?;
         Ok(())
     }
 }
