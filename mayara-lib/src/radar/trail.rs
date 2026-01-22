@@ -21,7 +21,6 @@ struct GeoPositionPixels {
 }
 
 pub struct TrailBuffer {
-    session: Session,
     target_mode: TargetMode,
     legend: Legend,
     spokes_per_revolution: usize,
@@ -49,7 +48,6 @@ impl TrailBuffer {
         let legend = info.legend.clone();
         let spokes_per_revolution = info.spokes_per_revolution as usize;
         let max_spoke_len = info.max_spoke_len as usize;
-        let minimal_legend_value = info.legend.strong_return;
         let trail_size: i16 = (info.max_spoke_len as i16 * 2 + MARGIN_I16 * 2) as i16;
         let cartesian_lookup = PolarToCartesianLookup::new(
             info.spokes_per_revolution as usize,
@@ -71,7 +69,6 @@ impl TrailBuffer {
         }
 
         TrailBuffer {
-            session: session.clone(),
             target_mode,
             legend,
             spokes_per_revolution,

@@ -11,7 +11,7 @@ use std::{
 use thiserror::Error;
 
 use crate::{
-    radar::{range::Ranges, CommonRadar, DopplerMode, Legend, RadarError, Status},
+    radar::{range::Ranges, RadarError, Status},
     Session, TargetMode,
 };
 

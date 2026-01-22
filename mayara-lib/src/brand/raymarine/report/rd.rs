@@ -50,15 +50,6 @@ struct SpokeHeader1 {
 
 #[derive(Deserialize, Debug, Clone, Copy)]
 #[repr(packed)]
-struct Header4 {
-    // No idea what is in there
-    _field01: u32, // 0x00000002
-    _length: u32,  // 0x0000001c
-    _zero_2: [u32; 5],
-}
-
-#[derive(Deserialize, Debug, Clone, Copy)]
-#[repr(packed)]
 struct SpokeHeader3 {
     field01: u32, // 0x00000003
     length: u32,

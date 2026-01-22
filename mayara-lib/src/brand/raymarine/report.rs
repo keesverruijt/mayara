@@ -10,9 +10,7 @@ use crate::brand::raymarine::RaymarineModel;
 use crate::network::create_udp_multicast_listen;
 use crate::radar::range::Ranges;
 use crate::radar::trail::TrailBuffer;
-use crate::radar::{
-    CommonRadar, DopplerMode, Legend, RadarError, RadarInfo, SharedRadars, BYTE_LOOKUP_LENGTH,
-};
+use crate::radar::{CommonRadar, Legend, RadarError, RadarInfo, SharedRadars, BYTE_LOOKUP_LENGTH};
 use crate::settings::ControlType;
 use crate::Session;
 

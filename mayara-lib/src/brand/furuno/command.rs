@@ -10,8 +10,6 @@ use crate::radar::range::Ranges;
 use crate::radar::{CommandSender, RadarError, RadarInfo, Status};
 use crate::settings::{ControlType, ControlValue, SharedControls};
 
-const RADAR_A: i32 = 0;
-
 #[derive(Primitive, PartialEq, Eq, Debug, Clone)]
 pub(crate) enum CommandId {
     Connect = 0x60,

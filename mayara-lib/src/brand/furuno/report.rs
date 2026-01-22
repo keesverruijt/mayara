@@ -1103,8 +1103,6 @@ impl FurunoReportReceiver {
     // [2, 250, 0, 1, 0, 0, 0, 0, 36, 49, 116, 59, 0, 0, 240, 9]
 
     fn parse_metadata_header(&self, data: &[u8]) -> FurunoSpokeMetadata {
-        let ranges = &self.common.info.ranges;
-
         // Extract all the fields from the header
         let v1 = (data[8] as u32 + (data[9] as u32 & 0x01) * 256) * 4 + 4;
         let sweep_count = (data[9] >> 1) as u32;

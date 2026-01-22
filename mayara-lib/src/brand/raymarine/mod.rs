@@ -26,7 +26,7 @@ const QUANTUM_SPOKE_LEN: usize = 252;
 
 const NON_HD_PIXEL_VALUES: u8 = 16; // Old radars have one nibble
 const HD_PIXEL_VALUES_RAW: u16 = 256; // New radars have one byte pixels
-const HD_PIXEL_VALUES: u8 = 128; // ... but we drop the last bit so we have space for other data
+const HD_PIXEL_VALUES: u8 = (HD_PIXEL_VALUES_RAW / 2) as u8; // ... but we drop the last bit so we have space for other data
 
 const RAYMARINE_BEACON_ADDRESS: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(224, 0, 0, 1)), 5800);
@@ -246,7 +246,7 @@ impl RaymarineLocatorState {
                         from,
                         link_id,
                         report,
-                        info.model
+                        info.model_name.as_deref().unwrap_or("<unknown>")
                     );
                     log::trace!("{}: data {:?}", from, data);
 
