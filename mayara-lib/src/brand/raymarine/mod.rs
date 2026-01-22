@@ -661,7 +661,7 @@ mod tests {
         assert!(r.is_some());
         let r = r.unwrap();
         log::debug!("Radar: {:?}", r);
-        assert_eq!(r.controls.model_name(), Some("QuantumRadar".to_string()));
+        assert_eq!(r.controls.model_name(), Some("Quantum".to_string()));
         assert_eq!(r.serial_no, None);
         assert_eq!(
             r.send_command_addr,
@@ -689,7 +689,7 @@ mod tests {
         assert!(r.is_some());
         let r = r.unwrap();
         log::debug!("Radar: {:?}", r);
-        assert_eq!(r.controls.model_name(), Some("QuantumRadar".to_string()));
+        assert_eq!(r.controls.model_name(), Some("Quantum".to_string()));
         assert_eq!(r.serial_no, None);
         assert_eq!(
             r.send_command_addr,
@@ -717,7 +717,7 @@ mod tests {
         assert!(r.is_some());
         let r = r.unwrap();
         log::debug!("Radar: {:?}", r);
-        assert_eq!(r.controls.model_name(), Some("RD/HD/Eseries".to_string()));
+        assert_eq!(r.controls.model_name(), Some("RD".to_string()));
         assert_eq!(r.serial_no, None);
         assert_eq!(
             r.send_command_addr,

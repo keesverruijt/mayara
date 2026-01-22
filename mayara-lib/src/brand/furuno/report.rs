@@ -127,7 +127,7 @@ impl FurunoReportReceiver {
         let mut command_rx = self.common.info.control_update_subscribe();
 
         let stream = self.stream.take().unwrap();
-        let (reader, mut writer) = tokio::io::split(stream);
+        let (reader, writer) = tokio::io::split(stream);
         if let Some(ref mut cs) = self.command_sender {
             cs.set_writer(writer);
         }
@@ -485,10 +485,7 @@ impl FurunoReportReceiver {
             CommandId::Sea => {
                 // Response format: $N64,{auto},{value},50,0,0,0
                 if numbers.len() < 2 {
-                    bail!(
-                        "Insufficient ({}) arguments for Sea command",
-                        numbers.len()
-                    );
+                    bail!("Insufficient ({}) arguments for Sea command", numbers.len());
                 }
                 let auto = numbers[0] as u8;
                 let sea = numbers[1];
@@ -553,8 +550,8 @@ impl FurunoReportReceiver {
                 // CRITICAL: numbers[0] is a WIRE INDEX (non-sequential: 21, 0-15, 19)
                 // NOT an array position! Must convert to meters first.
                 let wire_index = numbers[0] as i32;
-                let range_meters = super::command::wire_index_to_meters(wire_index)
-                    .with_context(|| {
+                let range_meters =
+                    super::command::wire_index_to_meters(wire_index).with_context(|| {
                         format!(
                             "Unknown wire index {} from radar range response",
                             wire_index
@@ -617,7 +614,11 @@ impl FurunoReportReceiver {
                         self.set_value(&ControlType::NoiseRejection, enabled);
                     }
                     _ => {
-                        log::debug!("Unknown SignalProcessing feature {}: value {}", feature, value);
+                        log::debug!(
+                            "Unknown SignalProcessing feature {}: value {}",
+                            feature,
+                            value
+                        );
                     }
                 }
             }
@@ -1117,15 +1118,14 @@ impl FurunoReportReceiver {
         let have_heading = ((data[15] & 0x30) >> 3) as u8;
 
         // Now do stuff with the data
-        let range = super::command::wire_index_to_meters(wire_index)
-            .unwrap_or_else(|| {
-                log::warn!(
-                    "Unknown wire index {} in spoke header: {:?}",
-                    wire_index,
-                    &data[0..20]
-                );
-                0
-            });
+        let range = super::command::wire_index_to_meters(wire_index).unwrap_or_else(|| {
+            log::warn!(
+                "Unknown wire index {} in spoke header: {:?}",
+                wire_index,
+                &data[0..20]
+            );
+            0
+        });
         let range = range as u32;
         let metadata = FurunoSpokeMetadata {
             sweep_count,

@@ -1378,7 +1378,7 @@ mod test {
 
     #[test]
     fn serialize_control_value() {
-        let json = r#"{"id":"3","value":"49","auto":true,"enabled":false}"#;
+        let json = r#"{"id":"4","value":"49","auto":true,"enabled":false}"#;
 
         match serde_json::from_str::<ControlValue>(&json) {
             Ok(cv) => {
@@ -1391,7 +1391,7 @@ mod test {
                 panic!("Error {e}");
             }
         }
-        let json = r#"{"id":"3","value":"49"}"#;
+        let json = r#"{"id":"4","value":"49"}"#;
 
         match serde_json::from_str::<ControlValue>(&json) {
             Ok(cv) => {
