@@ -14,7 +14,7 @@ use std::{
 };
 use tokio::{io::AsyncBufReadExt, net::UdpSocket, time::sleep};
 use tokio::{io::AsyncWriteExt, net::TcpStream};
-use tokio::{io::BufReader, sync::mpsc::Receiver};
+use tokio::{io::BufReader, sync::broadcast::Receiver};
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::{

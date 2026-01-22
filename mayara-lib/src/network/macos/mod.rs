@@ -8,12 +8,21 @@ use system_configuration::core_foundation::base::TCFType;
 use system_configuration::core_foundation::string::CFString;
 use system_configuration::dynamic_store::{SCDynamicStore, SCDynamicStoreBuilder};
 use system_configuration::sys::dynamic_store::SCDynamicStoreCreateRunLoopSource;
+use tokio::sync::broadcast::Sender;
 use tokio_util::sync::CancellationToken;
 
 use crate::radar::RadarError;
 
-pub(crate) async fn wait_for_ip_addr_change(
+pub async fn spawn_wait_for_ip_addr_change(
+    cancel_token: CancellationToken,
+    tx_ip_change: Sender<()>,
+) {
+    tokio::task::spawn_blocking(move || wait_for_ip_addr_change(cancel_token, tx_ip_change));
+}
+
+fn wait_for_ip_addr_change(
     cancellation_token: CancellationToken,
+    tx_ip_change: Sender<()>,
 ) -> Result<(), RadarError> {
     // Create a dynamic store session
     let store: SCDynamicStore = SCDynamicStoreBuilder::new("IPChangeMonitor").build();
@@ -63,7 +72,7 @@ pub(crate) async fn wait_for_ip_addr_change(
             core_foundation::runloop::CFRunLoopRunResult::HandledSource => {
                 log::trace!("CFRunLoop handled source.");
                 log::debug!("IP address changed.");
-                break;
+                let _ = tx_ip_change.send(());
             }
         }
         if cancellation_token.is_cancelled() {

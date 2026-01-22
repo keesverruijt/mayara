@@ -1,31 +1,76 @@
 extern crate windows;
 
 use std::ptr::null_mut;
-use tokio::sync::mpsc;
+use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use w32_error::W32Error;
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_IO_PENDING, ERROR_SERVICE_NOT_ACTIVE, ERROR_SUCCESS, HANDLE, WAIT_OBJECT_0,
+    CloseHandle, ERROR_IO_PENDING, ERROR_SERVICE_NOT_ACTIVE, ERROR_SUCCESS, HANDLE, WAIT_EVENT,
 };
 use windows::Win32::NetworkManagement::IpHelper::NotifyAddrChange;
-use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject, INFINITE};
+use windows::Win32::System::Threading::{CreateEventW, SetEvent, WaitForMultipleObjects, INFINITE};
 use windows::Win32::System::IO::OVERLAPPED;
 
 use crate::radar::RadarError;
 
-pub async fn wait_for_ip_addr_change(cancel_token: CancellationToken) -> Result<(), RadarError> {
-    let (tx, mut rx) = mpsc::channel(1);
+/// Create a manual‑reset, initially non‑signaled event.
+fn new_manual_event() -> Result<HANDLE, std::io::Error> {
+    let handle = unsafe { CreateEventW(None, true, false, None)? };
+    Ok(handle)
+}
 
-    let handle = unsafe {
-        // Spawn a blocking task to wait for the event
-        let handle = tokio::task::spawn_blocking(move || match create_ip_addr_change_event() {
-            Ok(event) => {
-                log::debug!("IP address change event created");
-                let result = WaitForSingleObject(event, INFINITE);
+/// Signal the given event.  Returns `Err` if the call fails.
+fn signal_event(event: HANDLE) -> Result<(), std::io::Error> {
+    unsafe {
+        SetEvent(event)?;
+        Ok(())
+    }
+}
+
+/// Listens on the channel and signals `h_chan` whenever a message arrives.
+async fn bridge_channel_to_event(
+    cancel_token: CancellationToken,
+    tx_ip_change: broadcast::Sender<()>,
+) {
+    let cancel_handle = new_manual_event().unwrap().0 as usize;
+
+    tokio::task::spawn_blocking(move || wait_for_ip_addr_change(cancel_handle, tx_ip_change));
+
+    cancel_token.cancelled().await;
+    // We ignore the payload – we just need to wake up the Windows wait.
+    let cancel_handle = HANDLE(cancel_handle as *mut core::ffi::c_void);
+
+    if let Err(e) = signal_event(cancel_handle) {
+        log::error!("Failed to signal event from channel: {}", e);
+    }
+}
+
+pub async fn spawn_wait_for_ip_addr_change(
+    cancel_token: CancellationToken,
+    tx_ip_change: broadcast::Sender<()>,
+) {
+    tokio::task::spawn(bridge_channel_to_event(cancel_token, tx_ip_change));
+}
+
+fn wait_for_ip_addr_change(
+    cancel_handle: usize,
+    tx_ip_change: broadcast::Sender<()>,
+) -> Result<(), RadarError> {
+    let cancel_handle = HANDLE(cancel_handle as *mut core::ffi::c_void);
+
+    match create_ip_addr_change_event() {
+        Ok(event) => {
+            log::debug!("IP address change event created");
+            loop {
+                let result =
+                    unsafe { WaitForMultipleObjects(&[event, cancel_handle], false, INFINITE) };
                 match result {
-                    WAIT_OBJECT_0 => {
+                    WAIT_EVENT(0) => {
                         log::debug!("IP address change event handled");
-                        let _ = tx.send(Ok(()));
+                        let _ = tx_ip_change.send(());
+                    }
+                    WAIT_EVENT(1) => {
+                        break;
                     }
                     _ => {
                         let windows_error = W32Error::last_thread_error();
@@ -33,40 +78,16 @@ pub async fn wait_for_ip_addr_change(cancel_token: CancellationToken) -> Result<
                             "IP address change event failed with error: {}",
                             windows_error
                         );
-                        let _ = tx.send(Err(RadarError::OSError(windows_error.to_string())));
                     }
                 }
-                let _ = CloseHandle(event);
             }
-            Err(e) => {
-                log::error!("Failed to create IP address change event: {}", e);
-                let _ = tx.send(Err(e));
-            }
-        });
-        handle
+            let _ = unsafe { CloseHandle(event) };
+        }
+        Err(e) => {
+            log::error!("Failed to create IP address change event: {}", e);
+        }
     };
-
-    // Wait asynchronously for a change or cancellation
-    tokio::select! {
-        _ = cancel_token.cancelled() => {
-            log::warn!("IP address change monitoring cancelling");
-            // Cancel the operation
-            handle.abort();
-            log::warn!("IP address change monitoring cancelled");
-            return Err(RadarError::Shutdown);
-        }
-        result = rx.recv() => {
-            log::error!("Received result: {:?}", result);
-            match result {
-                Some(Ok(())) | None => {
-                    return Ok(());
-                }
-                Some(Err(e)) => {
-                    return Err(e);
-                }
-            }
-        }
-    }
+    Ok(())
 }
 
 fn create_ip_addr_change_event() -> Result<HANDLE, RadarError> {

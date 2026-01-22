@@ -16,7 +16,7 @@ use miette::Result;
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use serde::Serialize;
 use tokio::sync::{broadcast, mpsc};
-use tokio::{net::UdpSocket, sync::mpsc::Sender, task::JoinSet, time::sleep};
+use tokio::{net::UdpSocket, task::JoinSet, time::sleep};
 use tokio_graceful_shutdown::SubsystemHandle;
 
 #[cfg(feature = "furuno")]
@@ -136,8 +136,8 @@ impl Locator {
     pub async fn run(
         self,
         subsys: SubsystemHandle,
-        tx_ip_change: Sender<()>,
-        tx_interface_request: broadcast::Sender<Option<Sender<InterfaceApi>>>,
+        tx_ip_change: broadcast::Sender<()>,
+        tx_interface_request: broadcast::Sender<Option<mpsc::Sender<InterfaceApi>>>,
     ) -> Result<(), RadarError> {
         let radars = &self.radars;
 
@@ -163,12 +163,13 @@ impl Locator {
             .collect::<Vec<(SocketAddr, Vec<&[u8]>)>>();
         log::debug!("beacon_messages = {:?}", beacon_messages);
 
+        let cancellation_token = subsys.create_cancellation_token();
+        network::spawn_wait_for_ip_addr_change(cancellation_token.clone(), tx_ip_change.clone())
+            .await;
+
         loop {
             let mut set = JoinSet::new();
-
-            let cancellation_token = subsys.create_cancellation_token();
-            let child_token = cancellation_token.child_token();
-            let tx_ip_change = tx_ip_change.clone();
+            let cancellation_token = cancellation_token.clone();
 
             if self.args.multiple_radar || !radars.have_active() {
                 // actively listening for new radars
@@ -195,20 +196,12 @@ impl Locator {
                 cancellation_token.cancelled().await;
                 Err(RadarError::Shutdown)
             });
+            let mut rx_ip_change = tx_ip_change.subscribe();
             set.spawn(async move {
-                if let Err(e) = network::wait_for_ip_addr_change(child_token).await {
-                    match e {
-                        RadarError::Shutdown => {
-                            return Err(RadarError::Shutdown);
-                        }
-                        _ => {
-                            log::error!("FailRed to wait for IP change: {e}");
-                            sleep(Duration::from_secs(30)).await;
-                        }
-                    }
-                }
-                let _ = tx_ip_change.send(()).await;
-
+                rx_ip_change
+                    .recv()
+                    .await
+                    .map_err(|_| RadarError::Shutdown)?;
                 Err(RadarError::IPAddressChanged)
             });
 
@@ -275,15 +268,12 @@ impl Locator {
                                             )
                                             .await;
                                         }
-                                        if self.args.multiple_radar || radars.have_active() {
-                                            // Respawn this task
-                                            set.spawn(async move {
-                                                sleep(Duration::from_secs(20)).await;
-                                                Err(RadarError::Timeout)
-                                            });
-                                        } else {
-                                            break; // Restart the loop but now with locators
-                                        }
+
+                                        // Respawn this task
+                                        set.spawn(async move {
+                                            sleep(Duration::from_secs(20)).await;
+                                            Err(RadarError::Timeout)
+                                        });
                                     }
                                     _ => {
                                         log::warn!("receive error: {}", e);
@@ -303,7 +293,7 @@ impl Locator {
     async fn reply_with_interface_state(
         &self,
         interface_state: &InterfaceState,
-        reply_channel: Sender<InterfaceApi>,
+        reply_channel: mpsc::Sender<InterfaceApi>,
     ) {
         let mut interface_api = interface_state.interface_api.clone();
 
@@ -534,7 +524,7 @@ impl Locator {
 
 fn spawn_interface_request_handler(
     set: &mut JoinSet<std::result::Result<ResultType, RadarError>>,
-    tx_interface_request: &broadcast::Sender<Option<Sender<InterfaceApi>>>,
+    tx_interface_request: &broadcast::Sender<Option<mpsc::Sender<InterfaceApi>>>,
 ) {
     let mut rx_interface_request = tx_interface_request.subscribe();
     set.spawn(async move {

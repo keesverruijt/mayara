@@ -4,6 +4,7 @@ use futures::stream::StreamExt;
 use libc::{RTM_DELADDR, RTM_NEWADDR};
 use netlink_sys::{AsyncSocket, SocketAddr};
 use rtnetlink::new_connection;
+use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
 const RTNLGRP_IPV4_IFADDR: u32 = 5;
@@ -19,9 +20,21 @@ const fn nl_mgrp(group: u32) -> u32 {
     }
 }
 
+pub async fn spawn_wait_for_ip_addr_change(
+    cancel_token: CancellationToken,
+    tx_ip_change: broadcast::Sender<()>,
+) {
+    tokio::spawn(wait_for_ip_addr_change(cancel_token, tx_ip_change));
+}
+
 /// Waits asynchronously for an IPv4 address change on Linux.
-/// Completes when an address change is detected or the cancellation token is triggered.
-pub async fn wait_for_ip_addr_change(cancel_token: CancellationToken) -> Result<(), RadarError> {
+/// Completes when the cancellation token is triggered.
+/// Sends an empty message on tx_ip_change every time a change is detected
+///
+async fn wait_for_ip_addr_change(
+    cancel_token: CancellationToken,
+    tx_ip_change: broadcast::Sender<()>,
+) -> Result<(), RadarError> {
     let (mut conn, mut _handle, mut messages) = new_connection().map_err(|e| RadarError::Io(e))?;
 
     // These flags specify what kinds of broadcast messages we want to listen
@@ -51,7 +64,7 @@ pub async fn wait_for_ip_addr_change(cancel_token: CancellationToken) -> Result<
                 if let Some((message, _)) = result {
                     if message.header.message_type == RTM_NEWADDR || message.header.message_type == RTM_DELADDR{
                         log::trace!("Received IP address change");
-                        return Ok(());
+                        let _ = tx_ip_change.send(());
                     }
                     else {
                         log::trace!("Received message_type {}", message.header.message_type);

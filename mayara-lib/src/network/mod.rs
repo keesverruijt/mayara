@@ -270,14 +270,14 @@ pub fn match_ipv4(addr: &Ipv4Addr, bcast: &Ipv4Addr, netmask: &Ipv4Addr) -> bool
 #[cfg(target_os = "macos")]
 pub(crate) use macos::is_wireless_interface;
 #[cfg(target_os = "macos")]
-pub(crate) use macos::wait_for_ip_addr_change;
+pub(crate) use macos::spawn_wait_for_ip_addr_change;
 
 #[cfg(target_os = "linux")]
 pub(crate) use linux::is_wireless_interface;
 #[cfg(target_os = "linux")]
-pub(crate) use linux::wait_for_ip_addr_change;
+pub(crate) use linux::spawn_wait_for_ip_addr_change;
 
 #[cfg(target_os = "windows")]
 pub(crate) use windows::is_wireless_interface;
 #[cfg(target_os = "windows")]
-pub(crate) use windows::wait_for_ip_addr_change;
+pub(crate) use windows::spawn_wait_for_ip_addr_change;
