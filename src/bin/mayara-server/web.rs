@@ -37,12 +37,15 @@ const INTERFACE_URI: &str = "/v1/api/interfaces";
 const SPOKES_URI: &str = "/v1/api/spokes/";
 const CONTROL_URI: &str = "/v1/api/control/";
 
+const RADAR_V3_URI: &str = "/v3/api/radars";
+const INTERFACE_V3_URI: &str = "/v3/api/interfaces";
+
 #[derive(RustEmbed, Clone)]
 #[folder = "web/"]
 struct Assets;
 
 #[derive(RustEmbed, Clone)]
-#[folder = "$OUT_DIR/web/"]
+#[folder = "$OUT_DIR/bin/web/"]
 struct ProtoWebAssets;
 
 #[derive(Error, Debug)]
@@ -85,6 +88,8 @@ impl Web {
             .route(INTERFACE_URI, get(get_interfaces))
             .route(&format!("{}{}", SPOKES_URI, "{key}"), get(spokes_handler))
             .route(&format!("{}{}", CONTROL_URI, "{key}"), get(control_handler))
+            .route(RADAR_V3_URI, get(get_radars_v2))
+            .route(INTERFACE_V3_URI, get(get_interfaces))
             .nest_service("/protobuf", proto_web_assets)
             .nest_service("/proto", proto_assets)
             .fallback_service(serve_assets)
@@ -149,7 +154,7 @@ impl RadarApi {
 
 //
 // Signal K radar API says this returns something like:
-//    {"radar-0":{"id":"radar-0","name":"Navico","spokes_per_revolution":2048,"maxSpokeLen":1024,"streamUrl":"http://localhost:3001/v1/api/stream/radar-0"}}
+//    {"radar-0":{"id":"radar-0","name":"Navico","streamUrl":"http://localhost:3001/v1/api/stream/radar-0"}}
 //
 #[debug_handler]
 async fn get_radars(
@@ -200,6 +205,82 @@ async fn get_radars(
             control_url,
             legend.clone(),
             info.controls.clone(),
+        );
+
+        api.insert(id.to_owned(), v);
+    }
+    Json(api).into_response()
+}
+
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RadarApiV3 {
+    id: String,
+    name: String,
+    brand: String,
+    stream_url: String,
+}
+
+impl RadarApiV3 {
+    fn new(id: String, name: String, brand: String, stream_url: String) -> Self {
+        RadarApiV3 {
+            id,
+            name,
+            brand
+            stream_url,
+        }
+    }
+}
+
+//
+// Signal K radar API says this returns something like:
+//    {"radar-0":{"id":"radar-0","name":"Navico","streamUrl":"http://localhost:3001/v1/api/stream/radar-0"}}
+//
+#[debug_handler]
+async fn get_radars_v3(
+    State(state): State<Web>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: hyper::header::HeaderMap,
+) -> Response {
+    let host: String = match headers.get(axum::http::header::HOST) {
+        Some(host) => host.to_str().unwrap_or("localhost").to_string(),
+        None => "localhost".to_string(),
+    };
+
+    debug!("Radar state request from {} for host '{}'", addr, host);
+
+    let host = format!(
+        "{}:{}",
+        match Uri::from_str(&host) {
+            Ok(uri) => uri.host().unwrap_or("localhost").to_string(),
+            Err(_) => "localhost".to_string(),
+        },
+        state.session.read().unwrap().args.port
+    );
+
+    debug!("target host = '{}'", host);
+
+    let mut api: HashMap<String, RadarApi> = HashMap::new();
+    for info in state
+        .session
+        .read()
+        .unwrap()
+        .radars
+        .as_ref()
+        .unwrap()
+        .get_active()
+        .clone()
+    {
+        let legend = &info.legend;
+        let id = format!("radar-{}", info.id);
+        let stream_url = format!("ws://{}{}{}", host, SPOKES_URI, id);
+        let name = info.controls.user_name();
+        let v = RadarApiV3::new(
+            id.to_owned(),
+            name,
+            info.brand.to_string(),
+            stream_url,
         );
 
         api.insert(id.to_owned(), v);

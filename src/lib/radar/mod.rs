@@ -182,7 +182,7 @@ pub struct RadarInfo {
     key: String,
     pub id: usize,
     pub(crate) locator_id: LocatorId,
-    pub(crate) brand: Brand,
+    pub brand: Brand,
     pub(crate) serial_no: Option<String>, // Serial # for this radar
     pub(crate) which: Option<String>,     // "A", "B" or None
     pub(crate) pixel_values: u8,          // How many values per pixel, 0..220 or so
