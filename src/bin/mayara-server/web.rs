@@ -88,7 +88,7 @@ impl Web {
             .route(INTERFACE_URI, get(get_interfaces))
             .route(&format!("{}{}", SPOKES_URI, "{key}"), get(spokes_handler))
             .route(&format!("{}{}", CONTROL_URI, "{key}"), get(control_handler))
-            .route(RADAR_V3_URI, get(get_radars_v2))
+            .route(RADAR_V3_URI, get(get_radars_v3))
             .route(INTERFACE_V3_URI, get(get_interfaces))
             .nest_service("/protobuf", proto_web_assets)
             .nest_service("/proto", proto_assets)
@@ -212,7 +212,6 @@ async fn get_radars(
     Json(api).into_response()
 }
 
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RadarApiV3 {
@@ -227,7 +226,7 @@ impl RadarApiV3 {
         RadarApiV3 {
             id,
             name,
-            brand
+            brand,
             stream_url,
         }
     }
@@ -261,7 +260,7 @@ async fn get_radars_v3(
 
     debug!("target host = '{}'", host);
 
-    let mut api: HashMap<String, RadarApi> = HashMap::new();
+    let mut api: HashMap<String, RadarApiV3> = HashMap::new();
     for info in state
         .session
         .read()
@@ -272,16 +271,11 @@ async fn get_radars_v3(
         .get_active()
         .clone()
     {
-        let legend = &info.legend;
         let id = format!("radar-{}", info.id);
         let stream_url = format!("ws://{}{}{}", host, SPOKES_URI, id);
         let name = info.controls.user_name();
-        let v = RadarApiV3::new(
-            id.to_owned(),
-            name,
-            info.brand.to_string(),
-            stream_url,
-        );
+        let brand = info.brand.to_string();
+        let v = RadarApiV3::new(id.to_owned(), name, brand, stream_url);
 
         api.insert(id.to_owned(), v);
     }
