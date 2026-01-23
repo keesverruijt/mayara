@@ -1,8 +1,8 @@
 [package]
 name = "mayara"
-version = "0.3.0"
-edition = "2021"
-rust-version = "1.80.1"
+version = "3.0.0"
+edition = "2024"
+rust-version = "1.90"
 
 [lib]
 name = "mayara"
@@ -73,6 +73,7 @@ tokio-tungstenite = { git = "https://github.com/keesverruijt/tokio-tungstenite",
 tokio-util = "0.7.13"
 tower = "0.5.2"
 tungstenite = { git = "https://github.com/keesverruijt/tungstenite-rs.git", branch = "permessage-deflate", features = [ "deflate" ] }
+axum-openapi3 = "0.2.1"
 # tungstenite = { path = "../tungstenite-rs", features = [ "handshake", "deflate" ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

@@ -105,8 +105,10 @@ pub(crate) struct Information {
     counter: u16,
 }
 
-unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
-    ::core::slice::from_raw_parts((p as *const T) as *const u8, ::core::mem::size_of::<T>())
+fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
+    unsafe {
+        ::core::slice::from_raw_parts((p as *const T) as *const u8, ::core::mem::size_of::<T>())
+    }
 }
 
 impl Information {
@@ -178,7 +180,7 @@ impl Information {
                 u07: [0; 5],                   // 5 bytes of unknown data
             };
 
-            let bytes: &[u8] = unsafe { any_as_u8_slice(&heading_packet) };
+            let bytes: &[u8] = any_as_u8_slice(&heading_packet);
             self.counter = self.counter.wrapping_add(1);
 
             self.send(SocketIndex::HeadingAndNavigation as usize, bytes)
@@ -205,7 +207,7 @@ impl Information {
                 u04: [0xff, 0xff],      // 5 bytes of unknown data
             };
 
-            let bytes: &[u8] = unsafe { any_as_u8_slice(&heading_packet) };
+            let bytes: &[u8] = any_as_u8_slice(&heading_packet);
             self.counter = self.counter.wrapping_add(1);
 
             self.send(SocketIndex::HeadingAndNavigation as usize, bytes)
@@ -226,7 +228,7 @@ impl Information {
                 u01: [0x00, 0x00, 0x01, 0x33, 0x00, 0x00, 0x00],
             };
 
-            let bytes: &[u8] = unsafe { any_as_u8_slice(&speed_packet) };
+            let bytes: &[u8] = any_as_u8_slice(&speed_packet);
 
             self.send(SocketIndex::SpeedA as usize, bytes).await?;
             self.send(SocketIndex::SpeedB as usize, bytes).await?;

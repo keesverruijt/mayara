@@ -25,14 +25,9 @@ pub mod protos;
 pub mod radar;
 pub mod settings;
 pub mod util;
-use rust_embed::RustEmbed;
 use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-#[derive(RustEmbed, Clone)]
-#[folder = "$OUT_DIR/web/"]
-pub struct ProtoAssets;
 
 #[derive(clap::ValueEnum, Clone, Default, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]

@@ -1,44 +1,51 @@
 use axum::{
-    debug_handler,
+    Json, Router, debug_handler,
     extract::{ConnectInfo, Path, State},
-    http::Uri,
     response::{IntoResponse, Response},
     routing::get,
-    Json, Router,
 };
 use axum_embed::ServeEmbed;
-use hyper;
+use axum_openapi3::utoipa::openapi::{InfoBuilder, OpenApiBuilder};
+// use axum_openapi3::utoipa::*; // Needed for ToSchema and IntoParams derive
+use axum_openapi3::{
+    build_openapi, // function for building the openapi spec
+    endpoint,      // macro for defining endpoints
+    reset_openapi, // function for cleaning the openapi cache (mostly used for testing)
+};
 use log::{debug, trace};
 use miette::Result;
 use rust_embed::RustEmbed;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::{
-    collections::HashMap,
     io,
     net::{IpAddr, Ipv4Addr, SocketAddr},
-    str::FromStr,
 };
 use thiserror::Error;
-use tokio::{net::TcpListener, sync::broadcast, sync::mpsc};
+use tokio::{net::TcpListener, sync::broadcast};
 use tokio_graceful_shutdown::SubsystemHandle;
 
 mod axum_fix;
+mod v1;
+mod v3;
 
 use axum_fix::{Message, WebSocket, WebSocketUpgrade};
-
 use mayara::{
-    radar::{Legend, RadarError, RadarInfo},
-    settings::SharedControls,
-    ProtoAssets, Session,
+    Session,
+    radar::{RadarError, RadarInfo},
 };
+#[derive(RustEmbed, Clone)]
+#[folder = "$OUT_DIR/bin/web/"]
+pub struct ProtoAssets;
 
 const RADAR_URI: &str = "/v1/api/radars";
 const INTERFACE_URI: &str = "/v1/api/interfaces";
 const SPOKES_URI: &str = "/v1/api/spokes/";
 const CONTROL_URI: &str = "/v1/api/control/";
 
-const RADAR_V3_URI: &str = "/v3/api/radars";
-const INTERFACE_V3_URI: &str = "/v3/api/interfaces";
+//
+// New v3 API endpoints are dispersed in the code and can be found under
+// http://{host}:{port}/v3/openapi.json
+//
 
 #[derive(RustEmbed, Clone)]
 #[folder = "web/"]
@@ -71,6 +78,8 @@ impl Web {
     }
 
     pub async fn run(self, subsys: SubsystemHandle) -> Result<(), WebError> {
+        reset_openapi(); // clean the openapi cache. Mostly used for testing
+
         let port = self.session.read().unwrap().args.port.clone();
         let listener =
             TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port))
@@ -83,13 +92,13 @@ impl Web {
         let mut shutdown_rx = self.shutdown_tx.subscribe();
         let shutdown_tx = self.shutdown_tx.clone(); // Clone as self used in with_state() and with_graceful_shutdown() below
 
-        let app = Router::new()
-            .route(RADAR_URI, get(get_radars))
-            .route(INTERFACE_URI, get(get_interfaces))
+        let router = Router::new()
             .route(&format!("{}{}", SPOKES_URI, "{key}"), get(spokes_handler))
-            .route(&format!("{}{}", CONTROL_URI, "{key}"), get(control_handler))
-            .route(RADAR_V3_URI, get(get_radars_v3))
-            .route(INTERFACE_V3_URI, get(get_interfaces))
+            .route(&format!("{}{}", CONTROL_URI, "{key}"), get(control_handler));
+        let router = v1::routes(router);
+        let router = v3::routes(router);
+
+        let app = router
             .nest_service("/protobuf", proto_web_assets)
             .nest_service("/proto", proto_assets)
             .fallback_service(serve_assets)
@@ -115,200 +124,19 @@ impl Web {
     }
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RadarApi {
-    id: String,
-    name: String,
-    spokes_per_revolution: u16,
-    max_spoke_len: u16,
-    stream_url: String,
-    control_url: String,
-    legend: Legend,
-    controls: SharedControls,
+#[endpoint(
+    method = "GET",
+    path = "/v3/api/openapi.json",
+    description = "OpenAPI spec"
+)]
+async fn openapi(State(_state): State<Web>) -> impl IntoResponse {
+    // `build_openapi` caches the openapi spec, so it's not necessary to call it every time
+    let openapi = build_openapi(|| {
+        OpenApiBuilder::new().info(InfoBuilder::new().title("My Webserver").version("0.1.0"))
+    });
+
+    Json(openapi)
 }
-
-impl RadarApi {
-    fn new(
-        id: String,
-        name: String,
-        spokes_per_revolution: u16,
-        max_spoke_len: u16,
-        stream_url: String,
-        control_url: String,
-        legend: Legend,
-        controls: SharedControls,
-    ) -> Self {
-        RadarApi {
-            id: id,
-            name: name,
-            spokes_per_revolution,
-            max_spoke_len,
-            stream_url,
-            control_url,
-            legend,
-            controls,
-        }
-    }
-}
-
-//
-// Signal K radar API says this returns something like:
-//    {"radar-0":{"id":"radar-0","name":"Navico","streamUrl":"http://localhost:3001/v1/api/stream/radar-0"}}
-//
-#[debug_handler]
-async fn get_radars(
-    State(state): State<Web>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    headers: hyper::header::HeaderMap,
-) -> Response {
-    let host: String = match headers.get(axum::http::header::HOST) {
-        Some(host) => host.to_str().unwrap_or("localhost").to_string(),
-        None => "localhost".to_string(),
-    };
-
-    debug!("Radar state request from {} for host '{}'", addr, host);
-
-    let host = format!(
-        "{}:{}",
-        match Uri::from_str(&host) {
-            Ok(uri) => uri.host().unwrap_or("localhost").to_string(),
-            Err(_) => "localhost".to_string(),
-        },
-        state.session.read().unwrap().args.port
-    );
-
-    debug!("target host = '{}'", host);
-
-    let mut api: HashMap<String, RadarApi> = HashMap::new();
-    for info in state
-        .session
-        .read()
-        .unwrap()
-        .radars
-        .as_ref()
-        .unwrap()
-        .get_active()
-        .clone()
-    {
-        let legend = &info.legend;
-        let id = format!("radar-{}", info.id);
-        let stream_url = format!("ws://{}{}{}", host, SPOKES_URI, id);
-        let control_url = format!("ws://{}{}{}", host, CONTROL_URI, id);
-        let name = info.controls.user_name();
-        let v = RadarApi::new(
-            id.to_owned(),
-            name,
-            info.spokes_per_revolution,
-            info.max_spoke_len,
-            stream_url,
-            control_url,
-            legend.clone(),
-            info.controls.clone(),
-        );
-
-        api.insert(id.to_owned(), v);
-    }
-    Json(api).into_response()
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RadarApiV3 {
-    id: String,
-    name: String,
-    brand: String,
-    stream_url: String,
-}
-
-impl RadarApiV3 {
-    fn new(id: String, name: String, brand: String, stream_url: String) -> Self {
-        RadarApiV3 {
-            id,
-            name,
-            brand,
-            stream_url,
-        }
-    }
-}
-
-//
-// Signal K radar API says this returns something like:
-//    {"radar-0":{"id":"radar-0","name":"Navico","streamUrl":"http://localhost:3001/v1/api/stream/radar-0"}}
-//
-#[debug_handler]
-async fn get_radars_v3(
-    State(state): State<Web>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    headers: hyper::header::HeaderMap,
-) -> Response {
-    let host: String = match headers.get(axum::http::header::HOST) {
-        Some(host) => host.to_str().unwrap_or("localhost").to_string(),
-        None => "localhost".to_string(),
-    };
-
-    debug!("Radar state request from {} for host '{}'", addr, host);
-
-    let host = format!(
-        "{}:{}",
-        match Uri::from_str(&host) {
-            Ok(uri) => uri.host().unwrap_or("localhost").to_string(),
-            Err(_) => "localhost".to_string(),
-        },
-        state.session.read().unwrap().args.port
-    );
-
-    debug!("target host = '{}'", host);
-
-    let mut api: HashMap<String, RadarApiV3> = HashMap::new();
-    for info in state
-        .session
-        .read()
-        .unwrap()
-        .radars
-        .as_ref()
-        .unwrap()
-        .get_active()
-        .clone()
-    {
-        let id = format!("radar-{}", info.id);
-        let stream_url = format!("ws://{}{}{}", host, SPOKES_URI, id);
-        let name = info.controls.user_name();
-        let brand = info.brand.to_string();
-        let v = RadarApiV3::new(id.to_owned(), name, brand, stream_url);
-
-        api.insert(id.to_owned(), v);
-    }
-    Json(api).into_response()
-}
-
-#[debug_handler]
-async fn get_interfaces(
-    State(state): State<Web>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    headers: hyper::header::HeaderMap,
-) -> Response {
-    let host: String = match headers.get(axum::http::header::HOST) {
-        Some(host) => host.to_str().unwrap_or("localhost").to_string(),
-        None => "localhost".to_string(),
-    };
-
-    debug!("Interface state request from {} for host '{}'", addr, host);
-
-    let (tx, mut rx) = mpsc::channel(1);
-    state
-        .session
-        .read()
-        .unwrap()
-        .tx_interface_request
-        .send(Some(tx))
-        .unwrap();
-    match rx.recv().await {
-        Some(api) => Json(api).into_response(),
-        _ => Json(Vec::<String>::new()).into_response(),
-    }
-}
-
 #[derive(Deserialize)]
 struct WebSocketHandlerParameters {
     key: String,
