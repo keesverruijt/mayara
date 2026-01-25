@@ -29,12 +29,18 @@ The code shall:
 The following radars are fully supported right now:
 
 * Navico: all digital models e.g. BR24, 3G, 4G, HALO20, HALO24, HALO3/4/6, HALO3000+. 
+* Raymarine Quantum 2 (Q24C, Q24D).
+
+We are working on:
+
+* Furuno, many models, but certainly and primarily DRS4D-NXT.
 
 Full support is planned for:
 
-* Furuno, many models, but certainly and primarily DRS4D-NXT.
-* Raymarine Quantum 2 and older digital radars.
+* Raymarine HD digital radars and possibly even older radars connected to an E series display with Ethernet.
 * Garmin (x)HD.
+
+We are actively looking for people to add new radars. If your radar is not on the "fully supported" list, contact us!
 
 ## Status
 
