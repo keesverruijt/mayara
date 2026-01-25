@@ -1,6 +1,7 @@
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::FromPrimitive;
-use serde::{Deserialize, Deserializer, Serialize, de::Visitor};
+use serde::{Deserialize, Deserializer, Serialize, de::Visitor, ser::Serializer};
+use std::cell::RefCell;
 use std::{
     borrow::Cow,
     collections::HashMap,
@@ -16,6 +17,25 @@ use crate::{
     Session, TargetMode,
     radar::{RadarError, Status, range::Ranges},
 };
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ApiVersion {
+    V1 = 1,
+    V3 = 3,
+}
+
+thread_local! {
+    static API_VERSION: RefCell<ApiVersion> = RefCell::new(ApiVersion::V3);
+}
+
+pub fn set_api_version(version: ApiVersion) {
+    API_VERSION.with(|v| {
+        *v.borrow_mut() = version;
+    });
+}
+pub fn get_api_version() -> ApiVersion {
+    API_VERSION.with(|v| v.borrow().clone())
+}
 
 ///
 /// Radars have settings. There are some common ones that every radar supports:
@@ -1216,7 +1236,6 @@ impl ControlDefinition {
     Copy,
     Clone,
     Debug,
-    Serialize,
     FromPrimitive,
     ToPrimitive,
     EnumIter,
@@ -1224,8 +1243,7 @@ impl ControlDefinition {
     IntoStaticStr,
 )]
 #[repr(u8)]
-#[strum(serialize_all = "camelCase", ascii_case_insensitive)]
-#[serde(rename_all = "camelCase")]
+#[strum(ascii_case_insensitive)]
 // The order is the one in which we deem the representation is "right"
 // when present as a straight list of controls. This is the same order
 // as shown in the radar page for HALO on NOS MFDs.
@@ -1521,6 +1539,33 @@ where
 
     // Case-insensitive name lookup (Strum)
     ControlType::from_str(&s).map_err(|_| E::custom("invalid ControlType name"))
+}
+
+impl Serialize for ControlType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match get_api_version() {
+            ApiVersion::V3 => {
+                // camelCase string, zero allocation
+                let name: &'static str = (*self).into();
+                log::debug!("Serializing V3 ControlType {:?} as string {}", self, name);
+
+                serializer.serialize_str(name)
+            }
+            ApiVersion::V1 => {
+                // numeric discriminant rendered as string
+                // stack-only formatting
+
+                let mut buf = itoa::Buffer::new();
+                let s = buf.format(*self as u8);
+
+                log::debug!("Serializing V1 ControlType {:?} as number {}", self, s);
+                serializer.serialize_str(s)
+            }
+        }
+    }
 }
 
 #[cfg(test)]

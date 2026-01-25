@@ -16,7 +16,7 @@ use web::Web;
 mod web;
 
 use mayara;
-use mayara::{network, Cli, Session};
+use mayara::{Cli, Session, network};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -24,12 +24,9 @@ async fn main() -> Result<()> {
 
     let log_level = args.verbose.log_level_filter();
     env_logger::Builder::from_env(Env::default())
-        .filter_level(log_level)
-        .filter_module("tungstenite", log::LevelFilter::Info)
-        .filter_module("mdns_sd", log::LevelFilter::Info)
-        .filter_module("polling", log::LevelFilter::Info)
-        .filter_module("netlink_proto", log::LevelFilter::Info)
-        .filter_module("tokio_tungstenite", log::LevelFilter::Info)
+        // Only log mayara and mayara_server modules at the selected level
+        .filter_module("mayara_server", log_level)
+        .filter_module("mayara", log_level)
         .init();
 
     network::set_replay(args.replay);

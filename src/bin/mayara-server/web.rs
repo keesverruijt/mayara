@@ -32,7 +32,9 @@ use axum_fix::{Message, WebSocket, WebSocketUpgrade};
 use mayara::{
     Session,
     radar::{RadarError, RadarInfo},
+    settings::{ApiVersion, get_api_version, set_api_version},
 };
+
 #[derive(RustEmbed, Clone)]
 #[folder = "$OUT_DIR/bin/web/"]
 pub struct ProtoAssets;
@@ -241,7 +243,8 @@ async fn control_handler(
 }
 
 /// Actual websocket statemachine (one will be spawned per connection)
-
+/// This websocket handler is only for the v1 API, as v2/v3 uses REST for controls
+///
 async fn control_stream(
     mut socket: WebSocket,
     radar: RadarInfo,
@@ -259,12 +262,12 @@ async fn control_stream(
         return;
     }
 
-    debug!("Started /control websocket");
+    log::debug!("Started /control v1 websocket");
 
     loop {
         tokio::select! {
             _ = shutdown_rx.recv() => {
-                debug!("Shutdown of /control websocket");
+                log::debug!("Shutdown of /control websocket");
                 break;
             },
             // this is where we receive directed control messages meant just for us, they
@@ -273,8 +276,10 @@ async fn control_stream(
             r = reply_rx.recv() => {
                 match r {
                     Some(message) => {
-                        let message = serde_json::to_string(&message).unwrap();
-                        log::trace!("Sending {:?}", message);
+                        // Note: temporarily set API version to V1 for serialization, no await in between
+                        set_api_version(ApiVersion::V1);
+                        let message: String = serde_json::to_string(&message).unwrap();
+                        set_api_version(ApiVersion::V3);
                         let ws_message = Message::Text(message.into());
 
                         if let Err(e) = socket.send(ws_message).await {
@@ -292,8 +297,10 @@ async fn control_stream(
             r = broadcast_control_rx.recv() => {
                 match r {
                     Ok(message) => {
+                        // Note: temporarily set API version to V1 for serialization, no await in between
+                        set_api_version(ApiVersion::V1);
                         let message: String = serde_json::to_string(&message).unwrap();
-                        log::debug!("Sending {:?}", message);
+                        set_api_version(ApiVersion::V3);
                         let ws_message = Message::Text(message.into());
 
                         if let Err(e) = socket.send(ws_message).await {
@@ -316,7 +323,7 @@ async fn control_stream(
                         match message {
                             Message::Text(message) => {
                                 if let Ok(control_value) = serde_json::from_str(&message) {
-                                    log::info!("Received ControlValue {:?}", control_value);
+                                    log::debug!("Received ControlValue {:?}", control_value);
                                     let _ = radar.controls.process_client_request(control_value, reply_tx.clone()).await;
                                 } else {
                                     log::error!("Unknown JSON string '{}'", message);
