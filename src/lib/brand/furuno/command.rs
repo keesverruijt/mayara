@@ -318,7 +318,7 @@ impl CommandSender for Command {
         let mut cmd = Vec::with_capacity(6);
 
         let id: CommandId = match cv.id {
-            ControlType::Status => {
+            ControlType::Power => {
                 let value = match Status::from_str(&cv.value).unwrap_or(Status::Standby) {
                     Status::Transmit => 2,
                     _ => 1,

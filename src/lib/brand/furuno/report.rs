@@ -466,7 +466,7 @@ impl FurunoReportReceiver {
                     _ => Status::Off,
                 };
                 // TODO check values with generic values [1 = Standby, 2 = Transmit but the others...]
-                self.set_value(&ControlType::Status, generic_state as i32 as f32);
+                self.set_value(&ControlType::Power, generic_state as i32 as f32);
             }
             CommandId::Gain => {
                 // Response format: $N63,{auto},{value},0,80,0

@@ -44,7 +44,7 @@ pub async fn set_control(
     let mut cmd = Vec::with_capacity(6);
 
     match cv.id {
-        ControlType::Status => {
+        ControlType::Power => {
             let value = match Status::from_str(&cv.value).unwrap_or(Status::Standby) {
                 Status::Transmit => 1,
                 _ => 0,

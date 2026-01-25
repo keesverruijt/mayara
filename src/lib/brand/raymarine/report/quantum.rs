@@ -4,11 +4,11 @@ use std::mem::size_of;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::brand::raymarine::command::Command;
-use crate::brand::raymarine::report::{pixel_to_blob, LookupDoppler, PixelToBlobType};
-use crate::brand::raymarine::{hd_to_pixel_values, settings, RaymarineModel};
+use crate::brand::raymarine::report::{LookupDoppler, PixelToBlobType, pixel_to_blob};
+use crate::brand::raymarine::{RaymarineModel, hd_to_pixel_values, settings};
 use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::range::{Range, Ranges};
-use crate::radar::spoke::{to_protobuf_spoke, GenericSpoke};
+use crate::radar::spoke::{GenericSpoke, to_protobuf_spoke};
 use crate::radar::{SpokeBearing, Status};
 use crate::settings::ControlType;
 
@@ -243,7 +243,7 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
             Status::Standby // Default to Standby if unknown
         }
     };
-    receiver.set_value(&ControlType::Status, status as i32 as f32);
+    receiver.set_value(&ControlType::Power, status as i32 as f32);
 
     if receiver.common.info.ranges.is_empty() {
         let mut ranges = Ranges::empty();

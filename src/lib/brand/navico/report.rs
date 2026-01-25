@@ -998,7 +998,7 @@ impl NavicoReportReceiver {
     }
 
     async fn send_status(&mut self, status: Status) -> Result<(), RadarError> {
-        let cv = ControlValue::new(ControlType::Status, (status as i32).to_string());
+        let cv = ControlValue::new(ControlType::Power, (status as i32).to_string());
         self.command_sender
             .as_mut()
             .unwrap() // Safe, as we only create a range detection when replay is false
@@ -1152,7 +1152,7 @@ impl NavicoReportReceiver {
                 bail!("{}: Unknown radar status {}", self.common.key, status);
             }
         };
-        self.set_value(&ControlType::Status, status as i32 as f32);
+        self.set_value(&ControlType::Power, status as i32 as f32);
         Ok(())
     }
 

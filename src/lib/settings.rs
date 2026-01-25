@@ -209,12 +209,12 @@ impl SharedControls {
     pub fn new(session: Session, mut controls: HashMap<ControlType, Control>) -> Self {
         // All radars must have the same Status control
         let mut control = Control::new_list(
-            ControlType::Status,
+            ControlType::Power,
             &["Off", "Standby", "Transmit", "Preparing"],
         )
         .send_always();
         control.set_valid_values([1, 2].to_vec()); // Only allow setting to Standby (index 1) and Transmit (index 2)
-        controls.insert(ControlType::Status, control);
+        controls.insert(ControlType::Power, control);
 
         SharedControls {
             controls: Arc::new(RwLock::new(Controls::new_base(session, controls))),
@@ -639,7 +639,7 @@ impl SharedControls {
 
     pub(crate) fn get_status(&self) -> Option<Status> {
         let locked = self.controls.read().unwrap();
-        if let Some(control) = locked.controls.get(&ControlType::Status) {
+        if let Some(control) = locked.controls.get(&ControlType::Power) {
             return Status::from_str(&control.value()).ok();
         }
 
@@ -1248,7 +1248,7 @@ impl ControlDefinition {
 // when present as a straight list of controls. This is the same order
 // as shown in the radar page for HALO on NOS MFDs.
 pub enum ControlType {
-    Status,
+    Power,
     WarmupTime,
     Range,
     Mode,
@@ -1366,7 +1366,7 @@ impl ControlType {
             ControlType::NoTransmitStart2 => "Start angle of the second no-transmit sector",
             ControlType::NoTransmitStart3 => "Start angle of the third no-transmit sector",
             ControlType::NoTransmitStart4 => "Start angle of the fourth no-transmit sector",
-            ControlType::Status => "Whether the radar is transmitting, standby, off, etc.",
+            ControlType::Power => "Whether the radar is transmitting, standby, off, etc.",
             ControlType::WarmupTime => "How long the radar needs to warm up before transmitting",
             ControlType::Range => "Maximum distance the radar is looking at",
             ControlType::Sea => "Sea clutter suppression",
@@ -1448,7 +1448,7 @@ impl Display for ControlType {
             // ControlType::Stc => "Sensitivity Time Control",
             // ControlType::StcCurve => "STC curve",
             ControlType::SignalStrength => "Signal strength",
-            ControlType::Status => "Status",
+            ControlType::Power => "Status",
             ControlType::TargetBoost => "Target boost",
             ControlType::TargetExpansion => "Target expansion",
             ControlType::TargetSeparation => "Target separation",
