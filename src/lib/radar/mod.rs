@@ -3,8 +3,8 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use enum_primitive_derive::Primitive;
 use protobuf::Message;
-use serde::ser::{SerializeMap, Serializer};
 use serde::Serialize;
+use serde::ser::{SerializeMap, Serializer};
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 use std::{
@@ -17,10 +17,10 @@ use thiserror::Error;
 use tokio::sync::broadcast;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
-pub(crate) mod range;
-pub(crate) mod spoke;
-pub(crate) mod target;
-pub(crate) mod trail;
+pub mod range;
+pub mod spoke;
+pub mod target;
+pub mod trail;
 
 use crate::config::Persistence;
 use crate::locator::LocatorId;
@@ -30,13 +30,13 @@ use crate::settings::{ControlError, ControlType, ControlUpdate, ControlValue, Sh
 use crate::{Brand, Session, TargetMode};
 use range::{RangeDetection, Ranges};
 
-pub(crate) const NAUTICAL_MILE: i32 = 1852; // 1 nautical mile in meters
-pub(crate) const NAUTICAL_MILE_F64: f64 = 1852.; // 1 nautical mile in meters
+pub const NAUTICAL_MILE: i32 = 1852; // 1 nautical mile in meters
+pub const NAUTICAL_MILE_F64: f64 = 1852.; // 1 nautical mile in meters
 
 // A "native to radar" bearing, usually [0..2048] or [0..4096] or [0..8192]
-pub(crate) type SpokeBearing = u16;
+pub type SpokeBearing = u16;
 
-pub(crate) const BYTE_LOOKUP_LENGTH: usize = (u8::MAX as usize) + 1;
+pub const BYTE_LOOKUP_LENGTH: usize = (u8::MAX as usize) + 1;
 
 #[derive(Error, Debug)]
 pub enum RadarError {
@@ -159,13 +159,13 @@ impl Serialize for Legend {
 /// Longitude is positive in the eastern hemisphere, negative in the western.
 /// The range for latitude is -90 to 90, and for longitude is -180 to 180.
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub(crate) struct GeoPosition {
+pub struct GeoPosition {
     lat: f64,
     lon: f64,
 }
 
 impl GeoPosition {
-    pub(crate) fn new(lat: f64, lon: f64) -> Self {
+    pub fn new(lat: f64, lon: f64) -> Self {
         GeoPosition { lat, lon }
     }
 }
@@ -181,23 +181,24 @@ pub struct RadarInfo {
     session: Session,
     key: String,
     pub id: usize,
-    pub(crate) locator_id: LocatorId,
+    pub locator_id: LocatorId,
     pub brand: Brand,
-    pub(crate) serial_no: Option<String>, // Serial # for this radar
-    pub(crate) which: Option<String>,     // "A", "B" or None
-    pub(crate) pixel_values: u8,          // How many values per pixel, 0..220 or so
-    pub spokes_per_revolution: u16,       // How many spokes per rotation
-    pub max_spoke_len: u16,               // Fixed for some radars, variable for others
-    pub(crate) addr: SocketAddrV4,        // The IP address of the radar
-    pub(crate) nic_addr: Ipv4Addr,        // IPv4 address of NIC via which radar can be reached
-    pub(crate) spoke_data_addr: SocketAddrV4, // Where the radar will send data spokes
-    pub(crate) report_addr: SocketAddrV4, // Where the radar will send reports
-    pub(crate) send_command_addr: SocketAddrV4, // Where displays will send commands to the radar
-    pub legend: Legend,                   // What pixel values mean
-    pub controls: SharedControls,         // Which controls there are, not complete in beginning
-    pub ranges: Ranges,                   // Ranges for this radar, empty in beginning
+    pub serial_no: Option<String>,       // Serial # for this radar
+    pub which: Option<String>,           // "A", "B" or None
+    pub pixel_values: u8,                // How many values per pixel, 0..220 or so
+    pub spokes_per_revolution: u16,      // How many spokes per rotation
+    pub max_spoke_len: u16,              // Fixed for some radars, variable for others
+    pub addr: SocketAddrV4,              // The IP address of the radar
+    pub nic_addr: Ipv4Addr,              // IPv4 address of NIC via which radar can be reached
+    pub spoke_data_addr: SocketAddrV4,   // Where the radar will send data spokes
+    pub report_addr: SocketAddrV4,       // Where the radar will send reports
+    pub send_command_addr: SocketAddrV4, // Where displays will send commands to the radar
+    pub legend: Legend,                  // What pixel values mean
+    pub controls: SharedControls,        // Which controls there are, not complete in beginning
+    pub ranges: Ranges,                  // Ranges for this radar, empty in beginning
     pub(crate) range_detection: Option<RangeDetection>, // if Some, then ranges are flexible, detected and persisted
-    pub(crate) doppler: bool,                           // Does it support Doppler?
+    pub doppler: bool,                                  // Does it support Doppler?
+    pub dual_range: bool,                               // Is it dual range capable?
     rotation_timestamp: Instant,
 
     // Channels
@@ -263,6 +264,7 @@ impl RadarInfo {
             range_detection: None,
             controls,
             doppler,
+            dual_range: false,
             rotation_timestamp: Instant::now() - Duration::from_secs(2),
         };
 
@@ -340,14 +342,14 @@ impl RadarInfo {
         }
     }
 
-    pub(crate) fn set_ranges(&mut self, ranges: Ranges) -> Result<(), RadarError> {
+    pub fn set_ranges(&mut self, ranges: Ranges) -> Result<(), RadarError> {
         self.controls
             .set_valid_ranges(&ControlType::Range, &ranges)?;
         self.ranges = ranges;
         Ok(())
     }
 
-    pub(crate) fn broadcast_radar_message(&self, message: RadarMessage) {
+    pub fn broadcast_radar_message(&self, message: RadarMessage) {
         let mut bytes = Vec::new();
         message
             .write_to_vec(&mut bytes)
@@ -446,7 +448,7 @@ impl SharedRadars {
     }
 
     // A radar has been found
-    pub(crate) fn located(&self, mut new_info: RadarInfo) -> Option<RadarInfo> {
+    pub fn located(&self, mut new_info: RadarInfo) -> Option<RadarInfo> {
         let key = new_info.key.to_owned();
         let mut radars = self.radars.write().unwrap();
 
@@ -574,7 +576,7 @@ impl SharedRadars {
         }
     }
 
-    pub(crate) fn is_active_radar(&self, brand: &Brand, ip: &Ipv4Addr) -> bool {
+    pub fn is_active_radar(&self, brand: &Brand, ip: &Ipv4Addr) -> bool {
         let radars = self.radars.read().unwrap();
         for (_, info) in radars.info.iter() {
             log::trace!(
@@ -632,7 +634,7 @@ impl Statistics {
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) enum Status {
+pub enum Status {
     Off,
     Standby,
     Transmit,
@@ -832,7 +834,7 @@ mod tests {
 }
 
 #[async_trait]
-pub(crate) trait CommandSender {
+pub trait CommandSender {
     async fn set_control(
         &mut self,
         cv: &ControlValue,
@@ -840,7 +842,7 @@ pub(crate) trait CommandSender {
     ) -> Result<(), RadarError>;
 }
 
-pub(crate) struct CommonRadar {
+pub struct CommonRadar {
     pub key: String,
     pub info: RadarInfo,
     pub radars: SharedRadars,
@@ -851,7 +853,7 @@ pub(crate) struct CommonRadar {
 }
 
 impl CommonRadar {
-    pub(crate) fn new(
+    pub fn new(
         key: String,
         info: RadarInfo,
         radars: SharedRadars,
@@ -870,7 +872,7 @@ impl CommonRadar {
         }
     }
 
-    pub(crate) async fn process_control_update<T: CommandSender>(
+    pub async fn process_control_update<T: CommandSender>(
         &mut self,
         control_update: ControlUpdate,
         command_sender: &mut Option<T>,

@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
 use crate::{
-    radar::{range::Ranges, RadarInfo, NAUTICAL_MILE},
-    settings::{Control, ControlType, SharedControls, HAS_AUTO_NOT_ADJUSTABLE},
     Session,
+    radar::{NAUTICAL_MILE, RadarInfo, range::Ranges},
+    settings::{Control, ControlType, HAS_AUTO_NOT_ADJUSTABLE, SharedControls},
 };
 
-use super::{RadarModel, FURUNO_SPOKES};
+use super::{FURUNO_SPOKES, RadarModel};
 
 pub fn new(session: Session) -> SharedControls {
     let mut controls = HashMap::new();
@@ -137,6 +137,8 @@ pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version:
         model,
         RadarModel::DRS4DNXT | RadarModel::DRS6ANXT | RadarModel::DRS12ANXT | RadarModel::DRS25ANXT
     ) {
+        info.dual_range = true;
+
         // Noise Reduction (Signal Processing feature 3)
         info.controls.insert(
             ControlType::NoiseRejection,

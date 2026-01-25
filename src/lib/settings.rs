@@ -1,18 +1,20 @@
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::FromPrimitive;
-use serde::{Deserialize, Deserializer, Serialize};
-use serde_repr::*;
+use serde::{Deserialize, Deserializer, Serialize, de::Visitor};
 use std::{
+    borrow::Cow,
     collections::HashMap,
+    convert::From,
     fmt::{self, Display},
     str::FromStr,
     sync::{Arc, RwLock},
 };
+use strum::{EnumIter, EnumString, IntoStaticStr};
 use thiserror::Error;
 
 use crate::{
-    radar::{range::Ranges, RadarError, Status},
     Session, TargetMode,
+    radar::{RadarError, Status, range::Ranges},
 };
 
 ///
@@ -34,7 +36,7 @@ use crate::{
 /// subscribe to any changes made to it.
 ///
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct Controls {
     #[serde(skip)]
     session: Session,
@@ -139,6 +141,15 @@ impl Controls {
             control_update_tx,
         }
     }
+
+    pub fn clone(&self) -> Self {
+        Controls {
+            session: self.session.clone(),
+            controls: self.controls.clone(),
+            all_clients_tx: self.all_clients_tx.clone(),
+            control_update_tx: self.control_update_tx.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -194,6 +205,13 @@ impl SharedControls {
         let locked = self.controls.read().unwrap();
 
         locked.control_update_tx.clone()
+    }
+
+    pub fn get_controls(&self) -> Option<HashMap<ControlType, Control>> {
+        match self.controls.read() {
+            Ok(locked) => Some(locked.controls.clone()),
+            Err(_) => None,
+        }
     }
 
     pub(crate) fn all_clients_rx(&self) -> tokio::sync::broadcast::Receiver<ControlValue> {
@@ -619,7 +637,6 @@ pub struct ControlUpdate {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlValue {
-    #[serde(deserialize_with = "deserialize_enum_from_string")]
     pub id: ControlType,
     pub value: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -734,25 +751,23 @@ impl Control {
     pub fn new_numeric(control_type: ControlType, min_value: f32, max_value: f32) -> Self {
         let min_value = Some(min_value);
         let max_value = Some(max_value);
-        let control = Self::new(ControlDefinition {
+        let control = Self::new(ControlDefinition::new(
             control_type,
-            name: control_type.to_string(),
-            automatic: None,
-            has_enabled: false,
-            default_value: min_value,
+            ControlDataType::Number,
+            min_value,
+            None,
+            false,
             min_value,
             max_value,
-            step_value: None,
-            wire_scale_factor: max_value,
-            wire_offset: None,
-            unit: None,
-            descriptions: None,
-            valid_values: None,
-            is_read_only: false,
-            data_type: ControlDataType::Number,
-            is_send_always: false,
-            destination: ControlDestination::Command,
-        });
+            None,
+            max_value,
+            None,
+            None,
+            None,
+            None,
+            false,
+            false,
+        ));
         control
     }
 
@@ -764,122 +779,110 @@ impl Control {
     ) -> Self {
         let min_value = Some(min_value);
         let max_value = Some(max_value);
-        Self::new(ControlDefinition {
+        Self::new(ControlDefinition::new(
             control_type,
-            name: control_type.to_string(),
-            automatic: Some(automatic),
-            has_enabled: false,
-            default_value: min_value,
+            ControlDataType::Number,
+            min_value,
+            Some(automatic),
+            false,
             min_value,
             max_value,
-            step_value: None,
-            wire_scale_factor: max_value,
-            wire_offset: None,
-            unit: None,
-            descriptions: None,
-            valid_values: None,
-            is_read_only: false,
-            data_type: ControlDataType::Number,
-            is_send_always: false,
-            destination: ControlDestination::Command,
-        })
+            None,
+            max_value,
+            None,
+            None,
+            None,
+            None,
+            false,
+            false,
+        ))
     }
 
     pub fn new_list(control_type: ControlType, descriptions: &[&str]) -> Self {
         let description_count = ((descriptions.len() as i32) - 1) as f32;
-        Self::new(ControlDefinition {
+        Self::new(ControlDefinition::new(
             control_type,
-            name: control_type.to_string(),
-            automatic: None,
-            has_enabled: false,
-            default_value: Some(0.),
-            min_value: Some(0.),
-            max_value: Some(description_count),
-            step_value: None,
-            wire_scale_factor: Some(description_count),
-            wire_offset: None,
-            unit: None,
-            descriptions: Some(
+            ControlDataType::Number,
+            Some(0.),
+            None,
+            false,
+            Some(0.),
+            Some(description_count),
+            None,
+            Some(description_count),
+            None,
+            None,
+            Some(
                 descriptions
                     .into_iter()
                     .enumerate()
                     .map(|(i, n)| (i as i32, n.to_string()))
                     .collect(),
             ),
-            valid_values: None,
-            is_read_only: false,
-            data_type: ControlDataType::Number,
-            is_send_always: false,
-            destination: ControlDestination::Command,
-        })
+            None,
+            false,
+            false,
+        ))
     }
 
     pub fn new_map(control_type: ControlType, descriptions: HashMap<i32, String>) -> Self {
-        Self::new(ControlDefinition {
+        Self::new(ControlDefinition::new(
             control_type,
-            name: control_type.to_string(),
-            automatic: None,
-            has_enabled: false,
-            default_value: Some(0.),
-            min_value: Some(0.),
-            max_value: Some(((descriptions.len() as i32) - 1) as f32),
-            step_value: None,
-            wire_scale_factor: Some(((descriptions.len() as i32) - 1) as f32),
-            wire_offset: None,
-            unit: None,
-            descriptions: Some(descriptions),
-            valid_values: None,
-            is_read_only: false,
-            data_type: ControlDataType::Number,
-            is_send_always: false,
-            destination: ControlDestination::Command,
-        })
+            ControlDataType::Number,
+            Some(0.),
+            None,
+            false,
+            Some(0.),
+            Some(((descriptions.len() as i32) - 1) as f32),
+            None,
+            Some(((descriptions.len() as i32) - 1) as f32),
+            None,
+            None,
+            Some(descriptions),
+            None,
+            false,
+            false,
+        ))
     }
 
     pub fn new_string(control_type: ControlType) -> Self {
-        let control = Self::new(ControlDefinition {
+        Self::new(ControlDefinition::new(
             control_type,
-            name: control_type.to_string(),
-            automatic: None,
-            has_enabled: false,
-            default_value: None,
-            min_value: None,
-            max_value: None,
-            step_value: None,
-            wire_scale_factor: None,
-            wire_offset: None,
-            unit: None,
-            descriptions: None,
-            valid_values: None,
-            is_read_only: true,
-            data_type: ControlDataType::String,
-            is_send_always: false,
-            destination: ControlDestination::Command,
-        });
-        control
+            ControlDataType::String,
+            None,
+            None,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            true,
+            false,
+        ))
     }
 
     pub fn new_button(control_type: ControlType) -> Self {
-        let control = Self::new(ControlDefinition {
+        Self::new(ControlDefinition::new(
             control_type,
-            name: control_type.to_string(),
-            automatic: None,
-            has_enabled: false,
-            default_value: None,
-            min_value: None,
-            max_value: None,
-            step_value: None,
-            wire_scale_factor: None,
-            wire_offset: None,
-            unit: None,
-            descriptions: None,
-            valid_values: None,
-            is_read_only: false,
-            data_type: ControlDataType::Button,
-            is_send_always: false,
-            destination: ControlDestination::Command,
-        });
-        control
+            ControlDataType::Button,
+            None,
+            None,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+            false,
+        ))
     }
 
     /// Read-only access to the definition of the control
@@ -1121,9 +1124,11 @@ pub enum ControlDestination {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlDefinition {
+    pub(crate) id: u8,
     #[serde(skip)]
     pub(crate) control_type: ControlType,
     name: String,
+    description: &'static str,
     pub(crate) data_type: ControlDataType,
     //#[serde(skip)]
     //has_off: bool,
@@ -1161,7 +1166,47 @@ fn is_false(v: &bool) -> bool {
     !*v
 }
 
-impl ControlDefinition {}
+impl ControlDefinition {
+    fn new(
+        control_type: ControlType,
+        data_type: ControlDataType,
+        default_value: Option<f32>,
+        automatic: Option<AutomaticValue>,
+        has_enabled: bool,
+        min_value: Option<f32>,
+        max_value: Option<f32>,
+        step_value: Option<f32>,
+        wire_scale_factor: Option<f32>,
+        wire_offset: Option<f32>,
+        unit: Option<String>,
+        descriptions: Option<HashMap<i32, String>>,
+        valid_values: Option<Vec<i32>>,
+        is_read_only: bool,
+        is_send_always: bool,
+    ) -> Self {
+        ControlDefinition {
+            id: control_type as u8,
+            control_type,
+            name: control_type.to_string(),
+            description: control_type.get_description(),
+            data_type,
+            automatic,
+            has_enabled,
+            default_value,
+            min_value,
+            max_value,
+            step_value,
+            wire_scale_factor,
+            wire_offset,
+            unit,
+            descriptions,
+            valid_values,
+            is_read_only,
+            is_send_always,
+            destination: ControlDestination::Command,
+        }
+    }
+}
 
 #[derive(
     Eq,
@@ -1171,12 +1216,16 @@ impl ControlDefinition {}
     Copy,
     Clone,
     Debug,
-    Serialize_repr,
-    Deserialize_repr,
+    Serialize,
     FromPrimitive,
     ToPrimitive,
+    EnumIter,
+    EnumString,
+    IntoStaticStr,
 )]
 #[repr(u8)]
+#[strum(serialize_all = "camelCase", ascii_case_insensitive)]
+#[serde(rename_all = "camelCase")]
 // The order is the one in which we deem the representation is "right"
 // when present as a straight list of controls. This is the same order
 // as shown in the radar page for HALO on NOS MFDs.
@@ -1252,6 +1301,78 @@ pub enum ControlType {
     SerialNumber,
     Spokes,
     UserName,
+}
+
+impl ControlType {
+    pub fn from_u8(value: u8) -> ControlType {
+        FromPrimitive::from_u8(value).unwrap()
+    }
+
+    pub fn get_description(&self) -> &'static str {
+        match self {
+            ControlType::AccentLight => "Strength of the accent light",
+            ControlType::AntennaHeight => "Height of the antenna above waterline",
+            ControlType::BearingAlignment => {
+                "Alignment of the antenna relative to the vessel's bow"
+            }
+            ControlType::ClearTargets => "Clear all ARPA targets",
+            ControlType::ClearTrails => "Clear target trails",
+            ControlType::ColorGain => "Adjust the color curve relative to gain",
+            ControlType::DisplayTiming => "Display timing",
+            ControlType::Doppler => {
+                "Targets coming towards or going awayfrom own ship shown in different colors"
+            }
+            ControlType::DopplerMode => "For what type of targets Doppler is used",
+            ControlType::DopplerAutoTrack => {
+                "Convert all Doppler targets to ARPA targets automatically"
+            }
+            ControlType::DopplerSpeedThreshold => "Threshold speed above which Doppler is applied",
+            ControlType::DopplerTrailsOnly => "Convert only Doppler targets to target trails",
+            ControlType::FirmwareVersion => "Version of the radar firmware",
+            ControlType::Ftc => "FTC",
+            ControlType::Gain => "How sensitive the radar is to returning echoes",
+            ControlType::InterferenceRejection => "How much interference rejection is applied",
+            ControlType::LocalInterferenceRejection => {
+                "How much local interference rejection is applied"
+            }
+            ControlType::BirdMode => "Level of optimization for bird targets",
+            ControlType::MagnetronCurrent => "The current supplied to the magnetron",
+            ControlType::MainBangSuppression => "Main bang suppression",
+            ControlType::Mode => "Choice of radar mode tuning to certain conditions, or custom",
+            ControlType::ModelName => "Manufacturer model name of the radar",
+            ControlType::NoTransmitEnd1 => "End angle of the (first) no-transmit sector",
+            ControlType::NoTransmitEnd2 => "End angle of the second no-transmit sector",
+            ControlType::NoTransmitEnd3 => "End angle of the third no-transmit sector",
+            ControlType::NoTransmitEnd4 => "End angle of the fourth no-transmit sector",
+            ControlType::NoTransmitStart1 => "Start angle of the (first) no-transmit sector",
+            ControlType::NoTransmitStart2 => "Start angle of the second no-transmit sector",
+            ControlType::NoTransmitStart3 => "Start angle of the third no-transmit sector",
+            ControlType::NoTransmitStart4 => "Start angle of the fourth no-transmit sector",
+            ControlType::Status => "Whether the radar is transmitting, standby, off, etc.",
+            ControlType::WarmupTime => "How long the radar needs to warm up before transmitting",
+            ControlType::Range => "Maximum distance the radar is looking at",
+            ControlType::Sea => "Sea clutter suppression",
+            ControlType::SeaState => "Sea state for sea clutter suppression",
+            ControlType::Rain => "Rain clutter suppression",
+            ControlType::TargetTrails => "Whether target trails are shown",
+            ControlType::TrailsMotion => "How target trails behave",
+            ControlType::NoiseRejection => "Level of noise rejection",
+            ControlType::TargetBoost => "Level of how much small targets are boosted",
+            ControlType::TargetExpansion => "Level of how much small targets are expanded",
+            ControlType::TargetSeparation => "Level of software enhanced target separation",
+            ControlType::ScanSpeed => "Desired rotation speed of the radar antenna",
+            ControlType::SideLobeSuppression => "Level of side lobe suppression",
+            ControlType::Tune => "Method to finely tune the radar receiver",
+            ControlType::SeaClutterCurve => "Sea clutter curve",
+            ControlType::RotationSpeed => "How quickly the radar antenna rotates",
+            ControlType::SignalStrength => "Signal strength of the radar",
+            ControlType::OperatingHours => "How many hours the radar has been operating",
+            ControlType::TransmitHours => "How many hours the radar has been transmitting",
+            ControlType::SerialNumber => "Manufacturer serial number of the radar",
+            ControlType::Spokes => "How many spokes the radar transmits per rotation",
+            ControlType::UserName => "User defined name for the radar",
+        }
+    }
 }
 
 impl Display for ControlType {
@@ -1346,36 +1467,60 @@ pub enum ControlError {
     NoPosition(ControlType, &'static str),
 }
 
-pub fn deserialize_number_from_string<'de, T, D>(deserializer: D) -> Result<T, D::Error>
-where
-    D: Deserializer<'de>,
-    T: FromStr + serde::Deserialize<'de>,
-    <T as FromStr>::Err: Display,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum StringOrInt<T> {
-        String(String),
-        Number(T),
-    }
-
-    match StringOrInt::<T>::deserialize(deserializer)? {
-        StringOrInt::String(s) => s.parse::<T>().map_err(serde::de::Error::custom),
-        StringOrInt::Number(i) => Ok(i),
+impl<'de> Deserialize<'de> for ControlType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_str(ControlTypeVisitor)
     }
 }
 
-pub fn deserialize_enum_from_string<'de, T, D>(deserializer: D) -> Result<T, D::Error>
-where
-    D: Deserializer<'de>,
-    T: FromPrimitive + serde::Deserialize<'de>,
-{
-    let n = deserialize_number_from_string::<usize, D>(deserializer)?;
+struct ControlTypeVisitor;
 
-    match T::from_usize(n) {
-        Some(ct) => Ok(ct),
-        None => Err(serde::de::Error::custom("Invalid valid for enum")),
+impl<'de> Visitor<'de> for ControlTypeVisitor {
+    type Value = ControlType;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("a string containing a ControlType name or numeric discriminant")
     }
+
+    fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        parse_control_type(Cow::Borrowed(v))
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        parse_control_type(Cow::Borrowed(v))
+    }
+
+    fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        parse_control_type(Cow::Owned(v))
+    }
+}
+
+fn parse_control_type<E>(s: Cow<'_, str>) -> Result<ControlType, E>
+where
+    E: serde::de::Error,
+{
+    // Numeric discriminant encoded as string
+    if let Ok(num) = s.parse::<u8>() {
+        return match FromPrimitive::from_u8(num) {
+            Some(ct) => Ok(ct),
+            None => Err(E::custom("invalid ControlType discriminant")),
+        };
+    }
+
+    // Case-insensitive name lookup (Strum)
+    ControlType::from_str(&s).map_err(|_| E::custom("invalid ControlType name"))
 }
 
 #[cfg(test)]
@@ -1384,7 +1529,20 @@ mod test {
 
     #[test]
     fn serialize_control_value() {
-        let json = r#"{"id":"4","value":"49","auto":true,"enabled":false}"#;
+        // Check that the ControlValue serializes correctly
+        let ct = ControlType::Gain;
+        println!("ControlType as string: {}", ct.to_string());
+        match ControlType::from_str(ct.to_string().as_str()) {
+            Ok(c) => {
+                assert_eq!(c, ct);
+            }
+            Err(e) => {
+                panic!("Error {e}");
+            }
+        }
+
+        // Check with optional fields and V3 ID
+        let json = r#"{"id":"gain","value":"49","auto":true,"enabled":false}"#;
 
         match serde_json::from_str::<ControlValue>(&json) {
             Ok(cv) => {
@@ -1397,6 +1555,8 @@ mod test {
                 panic!("Error {e}");
             }
         }
+
+        // Check without optional fields and with v1 ID
         let json = r#"{"id":"4","value":"49"}"#;
 
         match serde_json::from_str::<ControlValue>(&json) {
@@ -1410,6 +1570,11 @@ mod test {
                 panic!("Error {e}");
             }
         }
+
+        // Check with illegal negative v1 ID
+        let json = r#"{"id":"-1","value":"49"}"#;
+
+        assert!(serde_json::from_str::<ControlValue>(&json).is_err());
     }
 
     #[test]

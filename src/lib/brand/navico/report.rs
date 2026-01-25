@@ -1,4 +1,4 @@
-use anyhow::{bail, Error};
+use anyhow::{Error, bail};
 use bincode::deserialize;
 use serde::Deserialize;
 use std::cmp::min;
@@ -8,13 +8,14 @@ use std::net::SocketAddr;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::net::UdpSocket;
-use tokio::time::{sleep_until, Instant};
+use tokio::time::{Instant, sleep_until};
 use tokio_graceful_shutdown::SubsystemHandle;
 
-use super::command::Command;
 use super::Model;
+use super::command::Command;
 use super::{NAVICO_SPOKES, NAVICO_SPOKES_RAW, RADAR_LINE_DATA_LENGTH, SPOKES_PER_FRAME};
 
+use crate::Session;
 use crate::brand::navico::info::{
     HaloHeadingPacket, HaloNavigationPacket, HaloSpeedPacket, Information,
 };
@@ -23,17 +24,16 @@ use crate::locator::LocatorId;
 use crate::network::create_udp_multicast_listen;
 use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::range::{RangeDetection, RangeDetectionResult};
-use crate::radar::spoke::{to_protobuf_spoke, GenericSpoke};
+use crate::radar::spoke::{GenericSpoke, to_protobuf_spoke};
 use crate::radar::target::MS_TO_KN;
 use crate::radar::trail::TrailBuffer;
 use crate::radar::{
-    CommandSender, CommonRadar, DopplerMode, Legend, RadarError, RadarInfo, SharedRadars,
-    SpokeBearing, Status, BYTE_LOOKUP_LENGTH,
+    BYTE_LOOKUP_LENGTH, CommandSender, CommonRadar, DopplerMode, Legend, RadarError, RadarInfo,
+    SharedRadars, SpokeBearing, Status,
 };
 use crate::settings::{ControlType, ControlValue};
 use crate::util::PrintableSpoke;
 use crate::util::{c_string, c_wide_string};
-use crate::Session;
 
 /*
  Heading on radar. Observed in field:
@@ -774,8 +774,13 @@ impl NavicoReportReceiver {
                     self.common.statistics.missing_spokes +=
                         (angle + NAVICO_SPOKES as u16 - self.prev_angle - 1) as usize
                             % NAVICO_SPOKES as usize;
-                    log::trace!("{}: Spoke angle {} is not consecutive to previous angle {}, new missing spokes {}",
-                        self.common.key, angle, self.prev_angle, self.common.statistics.missing_spokes);
+                    log::trace!(
+                        "{}: Spoke angle {} is not consecutive to previous angle {}, new missing spokes {}",
+                        self.common.key,
+                        angle,
+                        self.prev_angle,
+                        self.common.statistics.missing_spokes
+                    );
                 }
                 self.common.statistics.received_spokes += 1;
                 self.prev_angle = angle;

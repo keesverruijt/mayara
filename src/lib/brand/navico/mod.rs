@@ -8,8 +8,8 @@ use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState}
 use crate::network::NetworkSocketAddrV4;
 use crate::radar::{RadarInfo, SharedRadars};
 use crate::settings::ControlType;
-use crate::util::c_string;
 use crate::util::PrintableSlice;
+use crate::util::c_string;
 use crate::{Brand, Session};
 
 mod command;
@@ -100,7 +100,7 @@ struct NavicoBeaconSingle {
     a: NavicoBeaconRadar,
 }
 
-// As seen on all dual range radar (4G, HALO 20+, 24, 3, etc)
+// As seen on all dual radar (4G, HALO 20+, 24, 3, etc)
 #[derive(Deserialize, Debug, Copy, Clone)]
 #[repr(packed)]
 struct NavicoBeaconDual {

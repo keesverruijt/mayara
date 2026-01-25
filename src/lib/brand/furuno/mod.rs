@@ -11,7 +11,7 @@ use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
 use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState};
 use crate::radar::{RadarInfo, SharedRadars};
-use crate::util::{c_string, PrintableSlice};
+use crate::util::{PrintableSlice, c_string};
 use crate::{Brand, Session};
 
 mod command;

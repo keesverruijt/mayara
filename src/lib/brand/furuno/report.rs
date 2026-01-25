@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Error};
+use anyhow::{Context, Error, bail};
 use num_traits::FromPrimitive;
 use protobuf::Message;
 use std::io;
@@ -10,23 +10,23 @@ use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tokio::net::UdpSocket;
 use tokio::net::{TcpSocket, TcpStream};
-use tokio::time::{sleep, sleep_until, Instant};
+use tokio::time::{Instant, sleep, sleep_until};
 use tokio_graceful_shutdown::SubsystemHandle;
 
+use super::RadarModel;
 use super::command::{Command, CommandId};
 use super::settings;
-use super::RadarModel;
 use super::{FURUNO_DATA_BROADCAST_ADDRESS, FURUNO_SPOKE_LEN};
+use crate::Session;
 use crate::network::{create_udp_listen, create_udp_multicast_listen};
-use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::protos::RadarMessage::RadarMessage;
-use crate::radar::trail::TrailBuffer;
+use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::radar::CommonRadar;
 use crate::radar::SpokeBearing;
+use crate::radar::trail::TrailBuffer;
 use crate::radar::{RadarError, RadarInfo, Status};
 use crate::settings::ControlType;
 use crate::util::PrintableSpoke;
-use crate::Session;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum ReceiveAddressType {
@@ -695,6 +695,7 @@ impl FurunoReportReceiver {
                 model.to_str(),
                 version
             );
+
             settings::update_when_model_known(&mut self.common.info, model, version);
             if let Some(cs) = &mut self.command_sender {
                 cs.set_ranges(self.common.info.ranges.clone());
