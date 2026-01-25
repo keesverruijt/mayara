@@ -32,7 +32,7 @@ use axum_fix::{Message, WebSocket, WebSocketUpgrade};
 use mayara::{
     Session,
     radar::{RadarError, RadarInfo},
-    settings::{ApiVersion, get_api_version, set_api_version},
+    settings::{ApiVersion, set_api_version},
 };
 
 #[derive(RustEmbed, Clone)]
