@@ -1149,6 +1149,7 @@ pub struct ControlDefinition {
     pub(crate) control_type: ControlType,
     name: String,
     description: &'static str,
+    category: Category,
     pub(crate) data_type: ControlDataType,
     //#[serde(skip)]
     //has_off: bool,
@@ -1204,11 +1205,18 @@ impl ControlDefinition {
         is_read_only: bool,
         is_send_always: bool,
     ) -> Self {
+        let step_value = if data_type == ControlDataType::Number {
+            step_value.or(Some(1.0))
+        } else {
+            step_value
+        };
+
         ControlDefinition {
             id: control_type as u8,
             control_type,
             name: control_type.to_string(),
             description: control_type.get_description(),
+            category: control_type.get_category(),
             data_type,
             automatic,
             has_enabled,
@@ -1243,7 +1251,7 @@ impl ControlDefinition {
     IntoStaticStr,
 )]
 #[repr(u8)]
-#[strum(ascii_case_insensitive)]
+#[strum(ascii_case_insensitive, serialize_all = "camelCase")]
 // The order is the one in which we deem the representation is "right"
 // when present as a straight list of controls. This is the same order
 // as shown in the radar page for HALO on NOS MFDs.
@@ -1321,9 +1329,57 @@ pub enum ControlType {
     UserName,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub enum Category {
+    Base,
+    Advanced,
+    Installation,
+    Info,
+}
+
 impl ControlType {
     pub fn from_u8(value: u8) -> ControlType {
         FromPrimitive::from_u8(value).unwrap()
+    }
+
+    pub fn get_category(&self) -> Category {
+        match self {
+            ControlType::Power
+            | ControlType::BirdMode
+            | ControlType::Range
+            | ControlType::Mode
+            | ControlType::Gain
+            | ControlType::ColorGain
+            | ControlType::Sea
+            | ControlType::SeaState
+            | ControlType::Rain
+            | ControlType::Doppler
+            | ControlType::DopplerMode
+            | ControlType::TargetTrails
+            | ControlType::ClearTargets
+            | ControlType::ClearTrails => Category::Base,
+            ControlType::AccentLight
+            | ControlType::AntennaHeight
+            | ControlType::BearingAlignment
+            | ControlType::NoTransmitEnd1
+            | ControlType::NoTransmitEnd2
+            | ControlType::NoTransmitEnd3
+            | ControlType::NoTransmitEnd4
+            | ControlType::NoTransmitStart1
+            | ControlType::NoTransmitStart2
+            | ControlType::NoTransmitStart3
+            | ControlType::NoTransmitStart4 => Category::Installation,
+            ControlType::ModelName
+            | ControlType::WarmupTime
+            | ControlType::FirmwareVersion
+            | ControlType::OperatingHours
+            | ControlType::TransmitHours
+            | ControlType::MagnetronCurrent
+            | ControlType::RotationSpeed
+            | ControlType::SerialNumber
+            | ControlType::SignalStrength => Category::Info,
+            _ => Category::Advanced,
+        }
     }
 
     pub fn get_description(&self) -> &'static str {
@@ -1338,7 +1394,7 @@ impl ControlType {
             ControlType::ColorGain => "Adjust the color curve relative to gain",
             ControlType::DisplayTiming => "Display timing",
             ControlType::Doppler => {
-                "Targets coming towards or going awayfrom own ship shown in different colors"
+                "Targets coming towards or going away from own ship shown in different colors"
             }
             ControlType::DopplerMode => "For what type of targets Doppler is used",
             ControlType::DopplerAutoTrack => {
@@ -1366,8 +1422,10 @@ impl ControlType {
             ControlType::NoTransmitStart2 => "Start angle of the second no-transmit sector",
             ControlType::NoTransmitStart3 => "Start angle of the third no-transmit sector",
             ControlType::NoTransmitStart4 => "Start angle of the fourth no-transmit sector",
-            ControlType::Power => "Whether the radar is transmitting, standby, off, etc.",
-            ControlType::WarmupTime => "How long the radar needs to warm up before transmitting",
+            ControlType::Power => "Radar operational state",
+            ControlType::WarmupTime => {
+                "How long the radar still needs to warm up before transmitting"
+            }
             ControlType::Range => "Maximum distance the radar is looking at",
             ControlType::Sea => "Sea clutter suppression",
             ControlType::SeaState => "Sea state for sea clutter suppression",
@@ -1448,7 +1506,7 @@ impl Display for ControlType {
             // ControlType::Stc => "Sensitivity Time Control",
             // ControlType::StcCurve => "STC curve",
             ControlType::SignalStrength => "Signal strength",
-            ControlType::Power => "Status",
+            ControlType::Power => "Power",
             ControlType::TargetBoost => "Target boost",
             ControlType::TargetExpansion => "Target expansion",
             ControlType::TargetSeparation => "Target separation",
