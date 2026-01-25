@@ -31,7 +31,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: Mayara Linux x86_64
-        path: target/release/mayara
+        path: target/release/mayara-server
 
   macos_arm64:
     runs-on: macos-14
@@ -45,7 +45,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: Mayara macOS Apple Silicon
-        path: target/release/mayara
+        path: target/release/mayara-server
 
   windows:
     runs-on: windows-latest
@@ -59,4 +59,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: Mayara Windows x86_64
-        path: target/release/mayara.exe
+        path: target/release/mayara-server.exe
