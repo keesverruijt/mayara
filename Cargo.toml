@@ -75,6 +75,7 @@ tower = "0.5.2"
 tungstenite = { git = "https://github.com/keesverruijt/tungstenite-rs.git", branch = "permessage-deflate", features = [ "deflate" ] }
 axum-openapi3 = "0.2.1"
 itoa = "1.0.17"
+utoipa = "5.4.0"
 # tungstenite = { path = "../tungstenite-rs", features = [ "handshake", "deflate" ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

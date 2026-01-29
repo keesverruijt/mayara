@@ -1,24 +1,26 @@
 use axum::{
     Json,
-    extract::{ConnectInfo, Path, State},
+    extract::{self, ConnectInfo, Path, State},
     http::Uri,
     response::{IntoResponse, Response},
 };
-use axum_openapi3::utoipa::openapi::{InfoBuilder, OpenApiBuilder};
-// use axum_openapi3::utoipa::*; // Needed for ToSchema and IntoParams derive
 use axum_openapi3::{
     AddRoute,      // `add` method for Router to add routes also to the openapi spec
     build_openapi, // function for building the openapi spec
     endpoint,      // function for cleaning the openapi cache (mostly used for testing)
+    utoipa::{
+        ToSchema,
+        openapi::{InfoBuilder, OpenApiBuilder},
+    },
 };
+use http::StatusCode;
 use hyper;
 use log::debug;
 use mayara::{
-    radar::Legend,
-    radar::RadarInfo,
-    settings::{Control, ControlType},
+    radar::{Legend, RadarError, RadarInfo},
+    settings::{Control, ControlType, ControlValue},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr, str::FromStr};
 use tokio::sync::mpsc;
 
@@ -29,6 +31,7 @@ pub(super) fn routes(axum: axum::Router<Web>) -> axum::Router<Web> {
     axum.add(get_radars())
         .add(get_interfaces())
         .add(get_radar())
+        .add(set_control_value())
         .add(openapi())
 }
 
@@ -224,17 +227,13 @@ impl Capabilities {
     }
 }
 
-//
-// Signal K radar API says this returns something like:
-//    {"radar-0":{"id":"radar-0","name":"Navico","streamUrl":"http://localhost:3001/v1/api/stream/radar-0"}}
-//
 #[endpoint(
     method = "GET",
-    path = "/v3/api/radar/{key}/capabilities",
+    path = "/v3/api/radars/{radar_id}/capabilities",
     description = "Get all static information about a specific radar"
 )]
 async fn get_radar(
-    Path(key): Path<String>,
+    Path(radar_id): Path<String>,
     State(state): State<Web>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: hyper::header::HeaderMap,
@@ -264,7 +263,7 @@ async fn get_radar(
         .radars
         .as_ref()
         .unwrap()
-        .get_by_id(&key)
+        .get_by_id(&radar_id)
         .clone()
     {
         let id = format!("radar-{}", info.id);
@@ -278,4 +277,174 @@ async fn get_radar(
         }
     }
     Json(()).into_response()
+}
+
+// =============================================================================
+// Control Value REST API Handler
+// =============================================================================
+
+/// Parameters for control-specific endpoints
+#[derive(Deserialize, ToSchema)]
+#[allow(dead_code)] // Instantiation hidden in extractor
+struct RadarControlIdParam {
+    radar_id: String,
+    control_id: String,
+}
+
+/// Request body for PUT /radars/{id}/controls/{control_id}
+#[derive(Deserialize, Clone, Debug, ToSchema)]
+#[allow(dead_code)] // Instantiation hidden in extractor
+struct SetControlRequest {
+    auto: Option<bool>,
+    value: serde_json::Value,
+}
+
+/// PUT /v2/api/radars/{radar_id}/controls/{control_id}
+/// Sets a control value on the radar
+#[endpoint(
+    method = "PUT",
+    path = "/v3/api/radars/{radar_id}/controls/{control_id}",
+    description = "Set the value of a radar control"
+)]
+async fn set_control_value(
+    Path(params): Path<RadarControlIdParam>,
+    State(state): State<Web>,
+    extract::Json(request): extract::Json<SetControlRequest>,
+) -> Response {
+    let (radar_id, control_id) = (params.radar_id, params.control_id);
+    log::debug!(
+        "PUT control {} = {:?} for radar {}",
+        control_id,
+        request,
+        radar_id
+    );
+
+    // Get the radar info and control type without holding the lock across await
+    let (controls, control_type) = {
+        let session = state.session.read().unwrap();
+        let radars = session.radars.as_ref().unwrap();
+
+        match radars.get_by_id(&radar_id) {
+            Some(radar) => {
+                // Look up the control by name
+                let control = match radar.controls.get_by_id(&control_id) {
+                    Some(c) => c,
+                    None => {
+                        // Debug: list all available controls
+                        let available = radar.controls.get_control_keys();
+                        log::warn!(
+                            "Control '{}' not found. Available controls: {:?}",
+                            control_id,
+                            available
+                        );
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            format!(
+                                "Unknown control: {} -- use {:?} instead",
+                                control_id, available
+                            ),
+                        )
+                            .into_response();
+                    }
+                };
+
+                // Parse the value - handle compound controls {mode, value} and simple values
+                let (value_str, auto) = match &request.value {
+                    serde_json::Value::String(s) => {
+                        // Try to normalize enum values using core definition
+                        let normalized = if let Some(index) = control.enum_value_to_index(s) {
+                            control
+                                .index_to_enum_value(index)
+                                .unwrap_or_else(|| s.clone())
+                        } else {
+                            s.clone()
+                        };
+                        log::debug!("Map request {:?} to string '{}'", request, normalized);
+                        (normalized, None)
+                    }
+                    serde_json::Value::Number(n) => (n.to_string(), None),
+                    serde_json::Value::Bool(b) => (if *b { "1" } else { "0" }.to_string(), None),
+                    serde_json::Value::Object(obj) => {
+                        // Check if this is a dopplerMode compound control {"enabled": bool, "mode": "target"|"rain"}
+                        if control_id == "dopplerMode" {
+                            let enabled = obj
+                                .get("enabled")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            let mode_str =
+                                obj.get("mode").and_then(|v| v.as_str()).unwrap_or("target");
+                            // Convert mode string to numeric: "target" = 0, "rain" = 1
+                            let mode_val = match mode_str {
+                                "target" | "targets" => 0,
+                                "rain" => 1,
+                                _ => 0,
+                            };
+                            // Pass enabled state via 'auto' field (repurposed), mode as value
+                            (mode_val.to_string(), Some(enabled))
+                        } else {
+                            // Standard compound control: {"mode": "auto"|"manual", "value": N}
+                            let mode = obj.get("mode").and_then(|v| v.as_str()).unwrap_or("manual");
+                            let auto = Some(mode == "auto");
+                            let value = obj
+                                .get("value")
+                                .map(|v| match v {
+                                    serde_json::Value::Number(n) => n.to_string(),
+                                    serde_json::Value::String(s) => s.clone(),
+                                    _ => v.to_string(),
+                                })
+                                .unwrap_or_default();
+                            (value, auto)
+                        }
+                    }
+                    _ => (request.value.to_string(), None),
+                };
+
+                let mut control_value = ControlValue::new(control.item().control_type, value_str);
+                control_value.auto = auto;
+                log::debug!(
+                    "Map request {:?} to controlValue {:?}",
+                    request,
+                    control_value
+                );
+                (radar.controls.clone(), control_value)
+            }
+            None => {
+                return RadarError::NoSuchRadar(radar_id).into_response();
+            }
+        }
+    };
+    // Lock is released here
+
+    // Create a channel for the reply
+    let (reply_tx, mut reply_rx) = tokio::sync::mpsc::channel(1);
+
+    // Send the control request
+    if let Err(e) = controls
+        .process_client_request(control_type, reply_tx)
+        .await
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to send control: {:?}", e),
+        )
+            .into_response();
+    }
+
+    // Wait briefly for a reply (error response)
+    // Most controls don't reply on success, only on error
+    tokio::select! {
+        reply = reply_rx.recv() => {
+            match reply {
+                Some(cv) if cv.error.is_some() => {
+                    return (StatusCode::BAD_REQUEST, cv.error.unwrap()).into_response();
+                }
+                _ => {}
+            }
+        }
+        _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+            // No error reply within timeout, assume success
+        }
+    }
+
+    StatusCode::OK.into_response()
 }

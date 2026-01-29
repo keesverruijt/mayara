@@ -12,12 +12,54 @@ use serde::Serialize;
 use std::{collections::HashMap, net::SocketAddr, str::FromStr};
 use tokio::sync::mpsc;
 
-use super::{CONTROL_URI, INTERFACE_URI, RADAR_URI, SPOKES_URI, Web};
-use mayara::{radar::Legend, settings::Control};
+use crate::web::control_stream;
+
+use super::{
+    CONTROL_URI, INTERFACE_URI, Path, RADAR_URI, SPOKES_URI, Web, WebSocketHandlerParameters,
+    WebSocketUpgrade,
+};
+
+use mayara::{
+    radar::{Legend, RadarError},
+    settings::{ApiVersion, Control},
+};
 
 pub(super) fn routes(axum: axum::Router<Web>) -> axum::Router<Web> {
     axum.route(RADAR_URI, get(get_radars))
         .route(INTERFACE_URI, get(get_interfaces))
+        .route(&format!("{}{}", CONTROL_URI, "{key}"), get(control_handler))
+}
+
+#[debug_handler]
+async fn control_handler(
+    State(state): State<Web>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Path(params): Path<WebSocketHandlerParameters>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    debug!("control request from {} for {}", addr, params.key);
+
+    let ws = ws.accept_compression(true);
+
+    match state
+        .session
+        .read()
+        .unwrap()
+        .radars
+        .as_ref()
+        .unwrap()
+        .get_by_id(&params.key)
+        .clone()
+    {
+        Some(radar) => {
+            let shutdown_rx = state.shutdown_tx.subscribe();
+
+            // finalize the upgrade process by returning upgrade callback.
+            // we can customize the callback by sending additional info such as address.
+            ws.on_upgrade(move |socket| control_stream(socket, radar, ApiVersion::V1, shutdown_rx))
+        }
+        None => RadarError::NoSuchRadar(params.key.to_string()).into_response(),
+    }
 }
 
 #[derive(Serialize)]

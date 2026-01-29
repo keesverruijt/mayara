@@ -94,9 +94,8 @@ impl Web {
         let mut shutdown_rx = self.shutdown_tx.subscribe();
         let shutdown_tx = self.shutdown_tx.clone(); // Clone as self used in with_state() and with_graceful_shutdown() below
 
-        let router = Router::new()
-            .route(&format!("{}{}", SPOKES_URI, "{key}"), get(spokes_handler))
-            .route(&format!("{}{}", CONTROL_URI, "{key}"), get(control_handler));
+        let router =
+            Router::new().route(&format!("{}{}", SPOKES_URI, "{key}"), get(spokes_handler));
         let router = v1::routes(router);
         let router = v3::routes(router);
 
@@ -210,48 +209,19 @@ async fn spokes_stream(
     }
 }
 
-#[debug_handler]
-async fn control_handler(
-    State(state): State<Web>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Path(params): Path<WebSocketHandlerParameters>,
-    ws: WebSocketUpgrade,
-) -> Response {
-    debug!("control request from {} for {}", addr, params.key);
-
-    let ws = ws.accept_compression(true);
-
-    match state
-        .session
-        .read()
-        .unwrap()
-        .radars
-        .as_ref()
-        .unwrap()
-        .get_by_id(&params.key)
-        .clone()
-    {
-        Some(radar) => {
-            let shutdown_rx = state.shutdown_tx.subscribe();
-
-            // finalize the upgrade process by returning upgrade callback.
-            // we can customize the callback by sending additional info such as address.
-            ws.on_upgrade(move |socket| control_stream(socket, radar, shutdown_rx))
-        }
-        None => RadarError::NoSuchRadar(params.key.to_string()).into_response(),
-    }
-}
-
 /// Actual websocket statemachine (one will be spawned per connection)
 /// This websocket handler is only for the v1 API, as v2/v3 uses REST for controls
 ///
 async fn control_stream(
     mut socket: WebSocket,
     radar: RadarInfo,
+    api_version: ApiVersion,
     mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
 ) {
     let mut broadcast_control_rx = radar.all_clients_rx();
     let (reply_tx, mut reply_rx) = tokio::sync::mpsc::channel(60);
+
+    log::debug!("Starting /control v1 websocket");
 
     if radar
         .controls
@@ -277,9 +247,13 @@ async fn control_stream(
                 match r {
                     Some(message) => {
                         // Note: temporarily set API version to V1 for serialization, no await in between
-                        set_api_version(ApiVersion::V1);
+                        if api_version != ApiVersion::V3 {
+                            set_api_version(api_version);
+                        }
                         let message: String = serde_json::to_string(&message).unwrap();
-                        set_api_version(ApiVersion::V3);
+                        if api_version != ApiVersion::V3 {
+                            set_api_version(ApiVersion::V3);
+                        }
                         let ws_message = Message::Text(message.into());
 
                         if let Err(e) = socket.send(ws_message).await {
@@ -298,9 +272,13 @@ async fn control_stream(
                 match r {
                     Ok(message) => {
                         // Note: temporarily set API version to V1 for serialization, no await in between
-                        set_api_version(ApiVersion::V1);
+                        if api_version != ApiVersion::V3 {
+                            set_api_version(api_version);
+                        }
                         let message: String = serde_json::to_string(&message).unwrap();
-                        set_api_version(ApiVersion::V3);
+                        if api_version != ApiVersion::V3 {
+                            set_api_version(ApiVersion::V3);
+                        }
                         let ws_message = Message::Text(message.into());
 
                         if let Err(e) = socket.send(ws_message).await {
