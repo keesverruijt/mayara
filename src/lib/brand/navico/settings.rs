@@ -1,15 +1,16 @@
 use std::collections::HashMap;
 
-use crate::{
-    radar::{RadarInfo, NAUTICAL_MILE_F64},
-    settings::{
-        AutomaticValue, Control, ControlDestination, ControlType, SharedControls,
-        HAS_AUTO_NOT_ADJUSTABLE,
-    },
-    Session,
-};
+use strum::VariantNames;
 
-use super::Model;
+use super::{HaloMode, Model};
+use crate::{
+    Session,
+    radar::{NAUTICAL_MILE_F64, RadarInfo},
+    settings::{
+        AutomaticValue, Control, ControlDestination, ControlType, HAS_AUTO_NOT_ADJUSTABLE,
+        SharedControls,
+    },
+};
 
 pub fn new(session: Session, model: Option<&str>) -> SharedControls {
     let mut controls = HashMap::new();
@@ -137,10 +138,7 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
     if model == Model::HALO {
         controls.insert(
             ControlType::Mode,
-            Control::new_list(
-                ControlType::Mode,
-                &["Custom", "Harbor", "Offshore", "Buoy", "Weather", "Bird"],
-            ),
+            Control::new_list(ControlType::Mode, HaloMode::VARIANTS),
         );
         controls.insert(
             ControlType::AccentLight,

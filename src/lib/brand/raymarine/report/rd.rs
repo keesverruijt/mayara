@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::brand::raymarine::report::pixel_to_blob;
 use crate::brand::raymarine::{RaymarineModel, hd_to_pixel_values, settings};
 use crate::protos::RadarMessage::RadarMessage;
-use crate::radar::Status;
+use crate::radar::Power;
 use crate::radar::range::{Range, Ranges};
 use crate::radar::spoke::{GenericSpoke, to_protobuf_spoke};
 use crate::settings::ControlType;
@@ -423,13 +423,13 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
     let hd = report.field01 == 0x00018801;
 
     let status = match report.status {
-        0x00 => Status::Standby,
-        0x01 => Status::Transmit,
-        0x02 => Status::Preparing,
-        0x03 => Status::Off,
+        0x00 => Power::Standby,
+        0x01 => Power::Transmit,
+        0x02 => Power::Preparing,
+        0x03 => Power::Off,
         _ => {
             log::warn!("{}: Unknown status {}", receiver.common.key, report.status);
-            Status::Standby // Default to Standby if unknown
+            Power::Standby // Default to Standby if unknown
         }
     };
     receiver.set_value(&ControlType::Power, status as i32 as f32);

@@ -24,7 +24,7 @@ use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::radar::CommonRadar;
 use crate::radar::SpokeBearing;
 use crate::radar::trail::TrailBuffer;
-use crate::radar::{RadarError, RadarInfo, Status};
+use crate::radar::{RadarError, RadarInfo, Power};
 use crate::settings::ControlType;
 use crate::util::PrintableSpoke;
 
@@ -459,11 +459,11 @@ impl FurunoReportReceiver {
                     bail!("No arguments for Status command");
                 }
                 let generic_state = match numbers[0] {
-                    0. => Status::Preparing,
-                    1. => Status::Standby,
-                    2. => Status::Transmit,
-                    3. => Status::Off,
-                    _ => Status::Off,
+                    0. => Power::Preparing,
+                    1. => Power::Standby,
+                    2. => Power::Transmit,
+                    3. => Power::Off,
+                    _ => Power::Off,
                 };
                 // TODO check values with generic values [1 = Standby, 2 = Transmit but the others...]
                 self.set_value(&ControlType::Power, generic_state as i32 as f32);

@@ -52,6 +52,8 @@ pub enum RadarError {
     Timeout,
     #[error("Shutdown")]
     Shutdown,
+    #[error("No such control '{0}'")]
+    InvalidControlType(String),
     #[error("{0}")]
     ControlError(#[from] ControlError),
     #[error("Cannot set value for control '{0}'")]
@@ -634,28 +636,28 @@ impl Statistics {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Status {
+pub enum Power {
     Off,
     Standby,
     Transmit,
     Preparing,
 }
 
-impl fmt::Display for Status {
+impl fmt::Display for Power {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(self, f)
     }
 }
 
-impl FromStr for Status {
+impl FromStr for Power {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "Off" | "0" => Ok(Status::Off),
-            "Standby" | "1" => Ok(Status::Standby),
-            "Transmit" | "2" => Ok(Status::Transmit),
-            "Preparing" | "3" => Ok(Status::Preparing),
+            "Off" | "0" => Ok(Power::Off),
+            "Standby" | "1" => Ok(Power::Standby),
+            "Transmit" | "2" => Ok(Power::Transmit),
+            "Preparing" | "3" => Ok(Power::Preparing),
             _ => Err(format!("Unknown status: {}", s)),
         }
     }

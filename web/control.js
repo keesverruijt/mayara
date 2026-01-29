@@ -315,6 +315,18 @@ function setControl(v) {
       }
     }
 
+    if (v.hasOwnProperty('dynamicReadOnly')) {
+      let p = i.parentNode;
+      if (v.dynamicReadOnly) {
+        p.classList.add('myr_readonly');
+        i.disabled = true;
+      }
+      else {
+        p.classList.remove('myr_readonly');
+        i.disabled = false;
+      }
+    }
+
     myr_control_callbacks.forEach((cb) => {
       cb(control, v);
     });

@@ -7,7 +7,7 @@ use tokio::net::TcpStream;
 
 use super::CommandMode;
 use crate::radar::range::Ranges;
-use crate::radar::{CommandSender, RadarError, RadarInfo, Status};
+use crate::radar::{CommandSender, RadarError, RadarInfo, Power};
 use crate::settings::{ControlType, ControlValue, SharedControls};
 
 #[derive(Primitive, PartialEq, Eq, Debug, Clone)]
@@ -319,8 +319,8 @@ impl CommandSender for Command {
 
         let id: CommandId = match cv.id {
             ControlType::Power => {
-                let value = match Status::from_str(&cv.value).unwrap_or(Status::Standby) {
-                    Status::Transmit => 2,
+                let value = match Power::from_str(&cv.value).unwrap_or(Power::Standby) {
+                    Power::Transmit => 2,
                     _ => 1,
                 };
 

@@ -1,5 +1,6 @@
 use anyhow::{Error, bail};
 use bincode::deserialize;
+use num_traits::FromPrimitive;
 use serde::Deserialize;
 use std::cmp::min;
 use std::io;
@@ -13,13 +14,18 @@ use tokio_graceful_shutdown::SubsystemHandle;
 
 use super::Model;
 use super::command::Command;
-use super::{NAVICO_SPOKES, NAVICO_SPOKES_RAW, RADAR_LINE_DATA_LENGTH, SPOKES_PER_FRAME};
+use super::{
+    DYNAMIC_READ_ONLY_CONTROL_TYPES, NAVICO_SPOKES, NAVICO_SPOKES_RAW, RADAR_LINE_DATA_LENGTH,
+    SPOKES_PER_FRAME,
+};
 
 use crate::Session;
 use crate::brand::navico::info::{
     HaloHeadingPacket, HaloNavigationPacket, HaloSpeedPacket, Information,
 };
-use crate::brand::navico::{NAVICO_INFO_ADDRESS, NAVICO_SPEED_ADDRESS_A, NAVICO_SPOKE_LEN};
+use crate::brand::navico::{
+    HaloMode, NAVICO_INFO_ADDRESS, NAVICO_SPEED_ADDRESS_A, NAVICO_SPOKE_LEN,
+};
 use crate::locator::LocatorId;
 use crate::network::create_udp_multicast_listen;
 use crate::protos::RadarMessage::RadarMessage;
@@ -28,10 +34,10 @@ use crate::radar::spoke::{GenericSpoke, to_protobuf_spoke};
 use crate::radar::target::MS_TO_KN;
 use crate::radar::trail::TrailBuffer;
 use crate::radar::{
-    BYTE_LOOKUP_LENGTH, CommandSender, CommonRadar, DopplerMode, Legend, RadarError, RadarInfo,
-    SharedRadars, SpokeBearing, Status,
+    BYTE_LOOKUP_LENGTH, CommandSender, CommonRadar, DopplerMode, Legend, Power, RadarError,
+    RadarInfo, SharedRadars, SpokeBearing,
 };
-use crate::settings::{ControlType, ControlValue};
+use crate::settings::{ControlError, ControlType, ControlValue};
 use crate::util::PrintableSpoke;
 use crate::util::{c_string, c_wide_string};
 
@@ -401,6 +407,16 @@ struct RadarReport8_21 {
     doppler_speed: [u8; 2], // doppler speed threshold in values 0..1594 (in cm/s).
 }
 
+#[derive(Debug)]
+#[repr(packed)]
+struct RadarReport8_32 {
+    _old: RadarReport8_18,
+    doppler_state: u8,
+    doppler_speed: [u8; 2], // doppler speed threshold in values 0..1594 (in cm/s).
+    w: u8,
+    x: [u8; 10],
+}
+
 impl RadarReport8_18 {
     fn transmute(bytes: &[u8]) -> Result<Self, anyhow::Error> {
         // This is safe as the struct's bits are always all valid representations,
@@ -423,7 +439,18 @@ impl RadarReport8_21 {
     }
 }
 
-const REPORT_08_C4_18_OR_21_OR_22: u8 = 0x08;
+impl RadarReport8_32 {
+    fn transmute(bytes: &[u8]) -> Result<Self, anyhow::Error> {
+        // This is safe as the struct's bits are always all valid representations,
+        // or we convert them using a fail safe function
+        Ok(unsafe {
+            let report: [u8; 32] = bytes.try_into()?; // Hardwired length on purpose to verify length
+            transmute(report)
+        })
+    }
+}
+
+const REPORT_08_C4_18_OR_21_OR_22_OR_32: u8 = 0x08;
 
 impl NavicoReportReceiver {
     pub fn new(
@@ -851,15 +878,24 @@ impl NavicoReportReceiver {
         Ok(())
     }
 
+    fn set_control(
+        &mut self,
+        control_type: &ControlType,
+        value: f32,
+        auto: Option<bool>,
+    ) -> Result<Option<()>, ControlError> {
+        self.common.info.controls.set(control_type, value, auto)
+    }
+
     fn set(&mut self, control_type: &ControlType, value: f32, auto: Option<bool>) {
-        match self.common.info.controls.set(control_type, value, auto) {
+        match self.set_control(control_type, value, auto) {
             Err(e) => {
                 log::error!("{}: {}", self.common.key, e.to_string());
             }
             Ok(Some(())) => {
                 if log::log_enabled!(log::Level::Debug) {
                     let control = self.common.info.controls.get(control_type).unwrap();
-                    log::trace!(
+                    log::debug!(
                         "{}: Control '{}' new value {} auto {:?} enabled {:?}",
                         self.common.key,
                         control_type,
@@ -938,12 +974,12 @@ impl NavicoReportReceiver {
             && !self.common.replay
         {
             if let Some(status) = self.common.info.controls.get_status() {
-                if status == Status::Transmit {
+                if status == Power::Transmit {
                     log::warn!(
                         "{}: No ranges available, but radar is transmitting, standby during range detection",
                         self.common.key
                     );
-                    self.send_status(Status::Standby).await?;
+                    self.send_status(Power::Standby).await?;
                     self.transmit_after_range_detection = true;
                 }
             } else {
@@ -983,7 +1019,7 @@ impl NavicoReportReceiver {
                     self.send_range(saved_range).await?;
                     if self.transmit_after_range_detection {
                         self.transmit_after_range_detection = false;
-                        self.send_status(Status::Transmit).await?;
+                        self.send_status(Power::Transmit).await?;
                     }
                 }
                 RangeDetectionResult::NextRange(r) => {
@@ -997,7 +1033,7 @@ impl NavicoReportReceiver {
         Ok(())
     }
 
-    async fn send_status(&mut self, status: Status) -> Result<(), RadarError> {
+    async fn send_status(&mut self, status: Power) -> Result<(), RadarError> {
         let cv = ControlValue::new(ControlType::Power, (status as i32).to_string());
         self.command_sender
             .as_mut()
@@ -1114,7 +1150,7 @@ impl NavicoReportReceiver {
                     return self.process_report_06_74().await;
                 }
             }
-            REPORT_08_C4_18_OR_21_OR_22 => {
+            REPORT_08_C4_18_OR_21_OR_22_OR_32 => {
                 if self.model != Model::Unknown {
                     return self.process_report_08().await;
                 }
@@ -1144,10 +1180,10 @@ impl NavicoReportReceiver {
 
     fn set_status(&mut self, status: u8) -> Result<(), Error> {
         let status = match status {
-            0 => Status::Off,
-            1 => Status::Standby,
-            2 => Status::Transmit,
-            5 => Status::Preparing,
+            0 => Power::Off,
+            1 => Power::Standby,
+            2 => Power::Transmit,
+            5 => Power::Preparing,
             _ => {
                 bail!("{}: Unknown radar status {}", self.common.key, status);
             }
@@ -1174,7 +1210,18 @@ impl NavicoReportReceiver {
 
         self.set_value(&ControlType::Range, range as f32);
         if self.model == Model::HALO {
-            self.set_value(&ControlType::Mode, mode as f32);
+            if let Some(halo_mode) = HaloMode::from_i32(mode) {
+                self.set_value(&ControlType::Mode, mode as f32);
+                let dynamic_read_only = halo_mode != HaloMode::Custom;
+                let controls = &self.common.info.controls;
+                for ct in &DYNAMIC_READ_ONLY_CONTROL_TYPES {
+                    controls.set_dynamic_read_only(ct, dynamic_read_only);
+                }
+            } else {
+                log::error!("{}: Unsupported HALO mode {}", self.common.key, mode);
+            }
+
+            // todo!() if mode !=
         }
         self.set_value_auto(&ControlType::Gain, gain as f32, gain_auto);
         if self.model != Model::HALO {
@@ -1341,6 +1388,7 @@ impl NavicoReportReceiver {
         if data.len() != size_of::<RadarReport8_18>()
             && data.len() != size_of::<RadarReport8_21>()
             && data.len() != size_of::<RadarReport8_21>() + 1
+            && data.len() != size_of::<RadarReport8_32>()
         {
             bail!(
                 "{}: Report 0x08C4 invalid length {}",
@@ -1364,7 +1412,43 @@ impl NavicoReportReceiver {
         let auto_sea_clutter = report.auto_sea_clutter;
 
         // There are reports of size 21, but also 22. HALO new firmware sends 22. The last byte content is unknown.
-        if data.len() >= size_of::<RadarReport8_21>() {
+        if data.len() >= size_of::<RadarReport8_32>() {
+            let report = RadarReport8_32::transmute(&data[0..size_of::<RadarReport8_32>()])?;
+
+            log::debug!("{}: report {:?}", self.common.key, report);
+
+            let doppler_speed = u16::from_le_bytes(report.doppler_speed);
+            let doppler_state = report.doppler_state;
+
+            let doppler_mode: Result<DopplerMode, _> = doppler_state.try_into();
+            match doppler_mode {
+                Err(_) => {
+                    bail!(
+                        "{}: Unknown doppler state {}",
+                        self.common.key,
+                        report.doppler_state
+                    );
+                }
+                Ok(doppler_mode) => {
+                    log::debug!(
+                        "{}: doppler mode={} speed={}",
+                        self.common.key,
+                        doppler_mode,
+                        doppler_speed
+                    );
+                    self.doppler = doppler_mode;
+                }
+            }
+            self.set_value(&ControlType::Doppler, doppler_state as f32);
+            self.set_value(&ControlType::DopplerSpeedThreshold, doppler_speed as f32);
+
+            log::debug!(
+                "{}: report w={} x={:?}",
+                self.common.key,
+                report.w,
+                report.x,
+            );
+        } else if data.len() >= size_of::<RadarReport8_21>() {
             let report = RadarReport8_21::transmute(&data[0..size_of::<RadarReport8_21>()])?;
 
             log::trace!("{}: report {:?}", self.common.key, report);

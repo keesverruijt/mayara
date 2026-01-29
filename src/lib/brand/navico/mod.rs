@@ -1,7 +1,9 @@
 use bincode::deserialize;
+use num_derive::{FromPrimitive, ToPrimitive};
 use serde::Deserialize;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::{fmt, io};
+use strum::VariantNames;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
 use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState};
@@ -189,12 +191,31 @@ impl Model {
             0x0e => Model::BR24, // Davy's NorthStar BR24 from 2009
             0x0f => Model::BR24,
             0x08 => Model::Gen3,
-            0x01 => Model::Gen4,
+            0x01 => Model::HALO, // New Firmware in 2025
             0x00 => Model::HALO,
             _ => Model::Unknown,
         }
     }
 }
+
+#[derive(PartialEq, FromPrimitive, ToPrimitive, VariantNames)]
+enum HaloMode {
+    Custom = 0,
+    Harbor = 1,
+    Offshore = 2,
+    Buoy = 3,
+    Weather = 4,
+    Bird = 5,
+}
+
+/// There are some controls that turn read-only when the HaloMode is not Custom
+const DYNAMIC_READ_ONLY_CONTROL_TYPES: [ControlType; 5] = [
+    ControlType::NoiseRejection,
+    ControlType::TargetExpansion,
+    ControlType::TargetSeparation,
+    ControlType::LocalInterferenceRejection,
+    ControlType::ScanSpeed,
+];
 
 const NAVICO_BEACON_SINGLE_SIZE: usize = size_of::<NavicoBeaconSingle>();
 const NAVICO_BEACON_DUAL_SIZE: usize = size_of::<NavicoBeaconDual>();

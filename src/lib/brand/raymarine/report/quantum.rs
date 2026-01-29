@@ -9,7 +9,7 @@ use crate::brand::raymarine::{RaymarineModel, hd_to_pixel_values, settings};
 use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::range::{Range, Ranges};
 use crate::radar::spoke::{GenericSpoke, to_protobuf_spoke};
-use crate::radar::{SpokeBearing, Status};
+use crate::radar::{SpokeBearing, Power};
 use crate::settings::ControlType;
 
 use super::{RaymarineReportReceiver, ReceiverState};
@@ -234,13 +234,13 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
 
     // Update controls based on the report
     let status = match report.status {
-        0x00 => Status::Standby,
-        0x01 => Status::Transmit,
-        0x02 => Status::Preparing,
-        0x03 => Status::Off,
+        0x00 => Power::Standby,
+        0x01 => Power::Transmit,
+        0x02 => Power::Preparing,
+        0x03 => Power::Off,
         _ => {
             log::warn!("{}: Unknown status {}", receiver.common.key, report.status);
-            Status::Standby // Default to Standby if unknown
+            Power::Standby // Default to Standby if unknown
         }
     };
     receiver.set_value(&ControlType::Power, status as i32 as f32);

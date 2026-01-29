@@ -15,7 +15,7 @@ use thiserror::Error;
 
 use crate::{
     Session, TargetMode,
-    radar::{RadarError, Status, range::Ranges},
+    radar::{Power, RadarError, range::Ranges},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -327,6 +327,7 @@ impl SharedControls {
             value: control.value(),
             auto: control.auto,
             enabled: control.enabled,
+            dynamic_read_only: control.dynamic_read_only,
             error: None,
         };
 
@@ -392,6 +393,19 @@ impl SharedControls {
         locked.controls.get(control_type).cloned()
     }
 
+    pub fn get_by_id(&self, control_id: &str) -> Option<Control> {
+        match ControlType::parse_str(Cow::Borrowed(control_id)) {
+            Ok(cv) => self.get(&cv),
+            Err(_) => None,
+        }
+    }
+
+    pub fn get_control_keys(&self) -> Vec<&'static str> {
+        let locked = self.controls.read().unwrap();
+
+        locked.controls.iter().map(|(k, _)| k.into()).collect()
+    }
+
     pub fn contains_key(&self, control_type: &ControlType) -> bool {
         let locked = self.controls.read().unwrap();
 
@@ -402,6 +416,16 @@ impl SharedControls {
         let mut locked = self.controls.write().unwrap();
         if let Some(control) = locked.controls.get_mut(control_type) {
             control.needs_refresh = true;
+        }
+    }
+
+    pub fn set_dynamic_read_only(&self, control_type: &ControlType, read_only: bool) {
+        let mut locked = self.controls.write().unwrap();
+        if let Some(control) = locked.controls.get_mut(control_type) {
+            if control.dynamic_read_only != Some(read_only) {
+                control.dynamic_read_only = Some(read_only);
+                control.needs_refresh = true;
+            }
         }
     }
 
@@ -637,10 +661,10 @@ impl SharedControls {
         Ok(())
     }
 
-    pub(crate) fn get_status(&self) -> Option<Status> {
+    pub(crate) fn get_status(&self) -> Option<Power> {
         let locked = self.controls.read().unwrap();
         if let Some(control) = locked.controls.get(&ControlType::Power) {
-            return Status::from_str(&control.value()).ok();
+            return Power::from_str(&control.value()).ok();
         }
 
         None
@@ -664,6 +688,8 @@ pub struct ControlValue {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub dynamic_read_only: Option<bool>,
+    #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
@@ -674,6 +700,7 @@ impl ControlValue {
             value,
             auto: None,
             enabled: None,
+            dynamic_read_only: None,
             error: None,
         }
     }
@@ -684,6 +711,7 @@ impl ControlValue {
             value: control.value(),
             auto: control.auto,
             enabled: control.enabled,
+            dynamic_read_only: None,
             error,
         }
     }
@@ -705,6 +733,8 @@ pub struct Control {
     #[serde(skip)]
     pub enabled: Option<bool>,
     #[serde(skip)]
+    pub dynamic_read_only: Option<bool>,
+    #[serde(skip)]
     pub needs_refresh: bool, // True when it has been changed and client needs to know value (again)
 }
 
@@ -718,6 +748,7 @@ impl Control {
             auto: None,
             enabled: None,
             description: None,
+            dynamic_read_only: None,
             needs_refresh: false,
         }
     }
@@ -726,6 +757,10 @@ impl Control {
         self.item.is_read_only = is_read_only;
 
         self
+    }
+
+    pub fn set_dynamic_read_only(&mut self, dynamic_read_only: bool) {
+        self.dynamic_read_only = Some(dynamic_read_only);
     }
 
     pub fn set_destination(mut self, destination: ControlDestination) -> Self {
@@ -1103,6 +1138,28 @@ impl Control {
         }
         Ok(None)
     }
+
+    /// Look up the wire value (index) for an enum value by its string value or label
+    /// Returns None if no match found or if not an enum control
+    pub fn enum_value_to_index(&self, value_str: &str) -> Option<usize> {
+        if let Some(descriptions) = &self.item.descriptions {
+            for (idx, label) in descriptions.iter() {
+                if label.eq_ignore_ascii_case(value_str) {
+                    return Some(*idx as usize);
+                }
+            }
+        }
+        None
+    }
+
+    /// Look up the string value for an enum by its index
+    /// Returns the core definition's value if available, otherwise the label
+    pub fn index_to_enum_value(&self, index: usize) -> Option<String> {
+        if let Some(descriptions) = &self.item.descriptions {
+            return descriptions.get(&(index as i32)).cloned();
+        }
+        None
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1146,8 +1203,8 @@ pub enum ControlDestination {
 pub struct ControlDefinition {
     pub(crate) id: u8,
     #[serde(skip)]
-    pub(crate) control_type: ControlType,
-    name: String,
+    pub control_type: ControlType,
+    name: &'static str,
     description: &'static str,
     category: Category,
     pub(crate) data_type: ControlDataType,
@@ -1214,7 +1271,7 @@ impl ControlDefinition {
         ControlDefinition {
             id: control_type as u8,
             control_type,
-            name: control_type.to_string(),
+            name: control_type.get_name(),
             description: control_type.get_description(),
             category: control_type.get_category(),
             data_type,
@@ -1337,9 +1394,34 @@ pub enum Category {
     Info,
 }
 
+impl Display for ControlType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s: &'static str = self.into();
+
+        write!(f, "{}", s)
+    }
+}
+
 impl ControlType {
     pub fn from_u8(value: u8) -> ControlType {
         FromPrimitive::from_u8(value).unwrap()
+    }
+
+    pub fn parse_str(s: Cow<'_, str>) -> Result<ControlType, RadarError> {
+        // Numeric discriminant encoded as string
+        if let Ok(num) = s.parse::<u8>() {
+            return match FromPrimitive::from_u8(num) {
+                Some(ct) => Ok(ct),
+                None => Err(RadarError::InvalidControlType(
+                    "invalid ControlType discriminant".to_string(),
+                )),
+            };
+        }
+
+        // Case-insensitive name lookup (Strum)
+        ControlType::from_str(&s).map_err(|_| {
+            RadarError::InvalidControlType("invalid ControlType discriminant".to_string())
+        })
     }
 
     pub fn get_category(&self) -> Category {
@@ -1449,11 +1531,9 @@ impl ControlType {
             ControlType::UserName => "User defined name for the radar",
         }
     }
-}
 
-impl Display for ControlType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let s = match self {
+    fn get_name(&self) -> &'static str {
+        match self {
             ControlType::AccentLight => "Accent light",
             // ControlType::AllAuto => "All to Auto",
             // ControlType::AntennaForward => "Antenna forward of GPS",
@@ -1497,7 +1577,7 @@ impl Display for ControlType {
             ControlType::Range => "Range",
             ControlType::RotationSpeed => "Rotation speed",
             // ControlType::Scaling => "Scaling",
-            ControlType::ScanSpeed => "Fast scan",
+            ControlType::ScanSpeed => "Scan speed",
             ControlType::Sea => "Sea clutter",
             ControlType::SeaClutterCurve => "Sea clutter curve",
             ControlType::SeaState => "Sea state",
@@ -1519,9 +1599,7 @@ impl Display for ControlType {
             ControlType::Spokes => "Spokes",
             ControlType::UserName => "Custom name",
             ControlType::WarmupTime => "Warmup time",
-        };
-
-        write!(f, "{}", s)
+        }
     }
 }
 
@@ -1634,8 +1712,10 @@ mod test {
     fn serialize_control_value() {
         // Check that the ControlValue serializes correctly
         let ct = ControlType::Gain;
-        println!("ControlType as string: {}", ct.to_string());
-        match ControlType::from_str(ct.to_string().as_str()) {
+        let cts = ct.to_string();
+        assert_eq!(cts, "gain".to_string());
+        println!("ControlType as string: {}", cts);
+        match ControlType::parse_str(Cow::Owned(cts)) {
             Ok(c) => {
                 assert_eq!(c, ct);
             }
