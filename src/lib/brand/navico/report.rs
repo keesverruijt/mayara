@@ -1267,6 +1267,13 @@ impl NavicoReportReceiver {
                     );
                 }
             }
+            Model::HaloOrG4 => {
+                // We need to look at the length of report 8, and its content
+                // to distinguish HALO from 4G.
+                if self.model == Model::Unknown {
+                    self.model = Model::HaloOrG4;
+                }
+            }
             _ => {
                 if self.model != model {
                     log::info!("{}: Radar is model {}", self.common.key, model);
@@ -1395,6 +1402,24 @@ impl NavicoReportReceiver {
                 self.common.key,
                 data.len()
             );
+        }
+
+        let model = if data.len() >= size_of::<RadarReport8_21>() {
+            Model::HALO
+        } else if self.model == Model::HaloOrG4 {
+            Model::Gen4
+        } else {
+            self.model
+        };
+
+        if self.model != model {
+            log::info!("{}: Radar is model {}", self.common.key, model);
+            let info2 = self.common.info.clone();
+            self.model = model;
+            super::settings::update_when_model_known(&mut self.common.info.controls, model, &info2);
+            self.common.info.set_doppler(model == Model::HALO);
+
+            self.common.radars.update(&self.common.info);
         }
 
         let report = RadarReport8_18::transmute(&data[0..size_of::<RadarReport8_18>()])?;

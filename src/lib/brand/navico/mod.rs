@@ -158,6 +158,7 @@ pub enum Model {
     Gen3,
     Gen4,
     HALO,
+    HaloOrG4,
 }
 
 const BR24_MODEL_NAME: &str = "BR24";
@@ -170,6 +171,7 @@ impl fmt::Display for Model {
             Model::Gen3 => "3G",
             Model::Gen4 => "4G",
             Model::HALO => "HALO",
+            Model::HaloOrG4 => "HALO or 4G",
         };
         write!(f, "{}", s)
     }
@@ -191,7 +193,7 @@ impl Model {
             0x0e => Model::BR24, // Davy's NorthStar BR24 from 2009
             0x0f => Model::BR24,
             0x08 => Model::Gen3,
-            0x01 => Model::HALO, // New Firmware in 2025
+            0x01 => Model::HaloOrG4, // New Firmware in 2025
             0x00 => Model::HALO,
             _ => Model::Unknown,
         }

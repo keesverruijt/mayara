@@ -126,7 +126,7 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
         Model::Unknown => 96.,
         Model::BR24 => 24.,
         Model::Gen3 => 36.,
-        Model::Gen4 => 48.,
+        Model::Gen4 | Model::HaloOrG4 => 48.,
         Model::HALO => 96.,
     }) * NAUTICAL_MILE_F64 as f32;
     let mut range_control = Control::new_numeric(ControlType::Range, 50., max_value)
