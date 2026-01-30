@@ -2,18 +2,15 @@ use std::{env, fs, path::PathBuf};
 
 fn main() {
 
-    let out_dir = env::var_os("OUT_DIR").unwrap();
     let mut src_path = PathBuf::from("src");
     src_path.push("lib");
     src_path.push("protos");
     src_path.push("RadarMessage.proto");
+
+    let out_dir = env::var_os("OUT_DIR").unwrap();
     let mut dest_path = PathBuf::from(&out_dir);
     dest_path.push("lib");
     dest_path.push("protos");
-    fs::create_dir_all(&dest_path).unwrap();
-    let mut dest_path = PathBuf::from(&out_dir);
-    dest_path.push("bin");
-    dest_path.push("web");
     fs::create_dir_all(&dest_path).unwrap();
 
     protobuf_codegen::Codegen::new()
@@ -26,9 +23,21 @@ fn main() {
         .cargo_out_dir("lib/protos")
         .run_from_script();
 
-    dest_path.push("RadarMessage.proto");
-    fs::copy(&src_path, &dest_path).unwrap();
+    let mut v1_api = PathBuf::from("web");
+    v1_api.push("v1");
+    v1_api.push("api");
+    fs::create_dir_all(&v1_api).unwrap();
+    v1_api.push("RadarMessage.proto");
+    fs::copy(&src_path, &v1_api).unwrap();
 
+    let mut v3_api = PathBuf::from("web");
+    v3_api.push("v3");
+    v3_api.push("api");
+    fs::create_dir_all(&v3_api).unwrap();
+    v3_api.push("RadarMessage.proto");
+    fs::copy(&src_path, &v3_api).unwrap();
+
+    /*
     let body = reqwest::blocking::get(
         "https://cdn.rawgit.com/dcodeIO/protobuf.js/6.11.0/dist/protobuf.min.js",
     )
@@ -39,6 +48,7 @@ fn main() {
     let mut dest_path = PathBuf::from(&out_dir);
     dest_path.push("bin");
     dest_path.push("web");
+    dest_path.push("imports");
     fs::create_dir_all(&dest_path).unwrap();
     dest_path.push("protobuf.min.js");
     fs::write(&dest_path, body).unwrap();
@@ -53,8 +63,10 @@ fn main() {
     let mut dest_path = PathBuf::from(&out_dir);
     dest_path.push("bin");
     dest_path.push("web");
+    dest_path.push("imports");
     dest_path.push("protobuf.js");
     fs::write(&dest_path, body).unwrap();
+    */
 
     println!("cargo::rerun-if-changed=build.rs");
 }

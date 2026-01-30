@@ -24,7 +24,6 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr, str::FromStr};
 use tokio::sync::mpsc;
 
-use super::SPOKES_URI;
 use super::Web;
 
 pub(super) fn routes(axum: axum::Router<Web>) -> axum::Router<Web> {
@@ -113,7 +112,7 @@ async fn get_radars(
         .clone()
     {
         let id = format!("radar-{}", info.id);
-        let stream_url = format!("ws://{}{}{}", host, SPOKES_URI, id);
+        let stream_url = format!("ws://{}{}{}", host, super::v1::SPOKES_URI, id);
         let name = info.controls.user_name();
         let brand = info.brand.to_string();
         let v = RadarApiV3::new(id.to_owned(), name, brand, stream_url);
@@ -267,7 +266,7 @@ async fn get_radar(
         .clone()
     {
         let id = format!("radar-{}", info.id);
-        let stream_url = format!("ws://{}{}{}", host, SPOKES_URI, id);
+        let stream_url = format!("ws://{}{}{}", host, super::v1::SPOKES_URI, id);
         let name = info.controls.user_name();
 
         if let Some(controls) = info.controls.get_controls() {

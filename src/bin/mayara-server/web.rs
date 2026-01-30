@@ -2,7 +2,6 @@ use axum::{
     Json, Router, debug_handler,
     extract::{ConnectInfo, Path, State},
     response::{IntoResponse, Response},
-    routing::get,
 };
 use axum_embed::ServeEmbed;
 use axum_openapi3::utoipa::openapi::{InfoBuilder, OpenApiBuilder};
@@ -35,27 +34,10 @@ use mayara::{
     settings::{ApiVersion, set_api_version},
 };
 
-#[derive(RustEmbed, Clone)]
-#[folder = "$OUT_DIR/bin/web/"]
-pub struct ProtoAssets;
-
-const RADAR_URI: &str = "/v1/api/radars";
-const INTERFACE_URI: &str = "/v1/api/interfaces";
-const SPOKES_URI: &str = "/v1/api/spokes/";
-const CONTROL_URI: &str = "/v1/api/control/";
-
-//
-// New v3 API endpoints are dispersed in the code and can be found under
-// http://{host}:{port}/v3/openapi.json
-//
-
+// Embedded files from the $project/web directory
 #[derive(RustEmbed, Clone)]
 #[folder = "web/"]
 struct Assets;
-
-#[derive(RustEmbed, Clone)]
-#[folder = "$OUT_DIR/bin/web/"]
-struct ProtoWebAssets;
 
 #[derive(Error, Debug)]
 pub enum WebError {
@@ -89,19 +71,14 @@ impl Web {
                 .map_err(|e| WebError::Io(e))?;
 
         let serve_assets = ServeEmbed::<Assets>::new();
-        let proto_web_assets = ServeEmbed::<ProtoWebAssets>::new();
-        let proto_assets = ServeEmbed::<ProtoAssets>::new();
         let mut shutdown_rx = self.shutdown_tx.subscribe();
         let shutdown_tx = self.shutdown_tx.clone(); // Clone as self used in with_state() and with_graceful_shutdown() below
 
-        let router =
-            Router::new().route(&format!("{}{}", SPOKES_URI, "{key}"), get(spokes_handler));
-        let router = v1::routes(router);
-        let router = v3::routes(router);
+        let router = Router::new();
+        let router = v1::routes(router); //.route_service("/v1", generated_assets_v1);
+        let router = v3::routes(router); //.route_service("/v3", generated_assets_v3);
 
         let app = router
-            .nest_service("/protobuf", proto_web_assets)
-            .nest_service("/proto", proto_assets)
             .fallback_service(serve_assets)
             .with_state(self)
             .into_make_service_with_connect_info::<SocketAddr>();

@@ -7,7 +7,7 @@ import {
   registerRadarCallback,
   registerControlCallback,
 } from "./control.js";
-import "./protobuf/protobuf.min.js";
+import "/imports/protobuf.min.js";
 
 const prefix = "myr_";
 
@@ -86,7 +86,7 @@ window.onload = function () {
   const id = urlParams.get("id");
   const draw = urlParams.get("draw");
 
-  protobuf.load("./proto/RadarMessage.proto", function (err, root) {
+  protobuf.load("/v1/api/RadarMessage.proto", function (err, root) {
     if (err) throw err;
 
     RadarMessage = root.lookupType(".RadarMessage");

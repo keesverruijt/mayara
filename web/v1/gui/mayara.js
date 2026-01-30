@@ -1,4 +1,4 @@
-import van from "./van-1.5.2.debug.js";
+import van from "/imports/van-1.5.2.min.js";
 
 const { a, tr, td } = van.tags;
 
@@ -6,25 +6,22 @@ const RadarEntry = (id, name) =>
   tr(
     td(
       { class: "myr" },
-      a({ href: "/control.html?id=" + id }, name + " controller")
+      a({ href: "control.html?id=" + id }, name + " controller")
     ),
     td(
       { class: "myr" },
-      a({ href: "/viewer.html?id=" + id }, name + " PPI Viewer")
+      a({ href: "viewer.html?id=" + id }, name + " PPI Viewer")
     ),
     td(
       { class: "myr" },
       a(
-        { href: "/viewer.html?id=" + id + "&draw=alt" },
+        { href: "viewer.html?id=" + id + "&draw=alt" },
         name + " PPI (WebGL alt)"
       )
     ),
     td(
       { class: "myr" },
-      a(
-        { href: "/viewer.html?id=" + id + "&draw=2d" },
-        name + " PPI (WebGL 2D)"
-      )
+      a({ href: "viewer.html?id=" + id + "&draw=2d" }, name + " PPI (WebGL 2D)")
     )
   );
 

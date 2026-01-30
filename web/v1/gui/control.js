@@ -1,6 +1,6 @@
 export { loadRadar, registerRadarCallback, registerControlCallback };
 
-import van from "./van-1.5.2.js";
+import van from "/imports/van-1.5.2.min.js";
 
 const { div, label, input, button, select, option } = van.tags;
 
@@ -315,14 +315,13 @@ function setControl(v) {
       }
     }
 
-    if (v.hasOwnProperty('dynamicReadOnly')) {
+    if (v.hasOwnProperty("dynamicReadOnly")) {
       let p = i.parentNode;
       if (v.dynamicReadOnly) {
-        p.classList.add('myr_readonly');
+        p.classList.add("myr_readonly");
         i.disabled = true;
-      }
-      else {
-        p.classList.remove('myr_readonly');
+      } else {
+        p.classList.remove("myr_readonly");
         i.disabled = false;
       }
     }

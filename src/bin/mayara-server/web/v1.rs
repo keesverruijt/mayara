@@ -12,11 +12,8 @@ use serde::Serialize;
 use std::{collections::HashMap, net::SocketAddr, str::FromStr};
 use tokio::sync::mpsc;
 
-use crate::web::control_stream;
-
 use super::{
-    CONTROL_URI, INTERFACE_URI, Path, RADAR_URI, SPOKES_URI, Web, WebSocketHandlerParameters,
-    WebSocketUpgrade,
+    Path, Web, WebSocketHandlerParameters, WebSocketUpgrade, control_stream, spokes_handler,
 };
 
 use mayara::{
@@ -24,8 +21,14 @@ use mayara::{
     settings::{ApiVersion, Control},
 };
 
+const RADAR_URI: &str = "/v1/api/radars";
+const INTERFACE_URI: &str = "/v1/api/interfaces";
+pub(super) const SPOKES_URI: &str = "/v1/api/spokes/";
+const CONTROL_URI: &str = "/v1/api/control/";
+
 pub(super) fn routes(axum: axum::Router<Web>) -> axum::Router<Web> {
-    axum.route(RADAR_URI, get(get_radars))
+    axum.route(&format!("{}{}", SPOKES_URI, "{key}"), get(spokes_handler))
+        .route(RADAR_URI, get(get_radars))
         .route(INTERFACE_URI, get(get_interfaces))
         .route(&format!("{}{}", CONTROL_URI, "{key}"), get(control_handler))
 }
