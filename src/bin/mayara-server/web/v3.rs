@@ -15,16 +15,15 @@ use axum_openapi3::{
 };
 use http::StatusCode;
 use hyper;
-use log::debug;
-use mayara::{
-    radar::{Legend, RadarError, RadarInfo},
-    settings::{Control, ControlType, ControlValue},
-};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr, str::FromStr};
 use tokio::sync::mpsc;
 
 use super::Web;
+use mayara::{
+    radar::{Legend, RadarError, RadarInfo},
+    settings::{Control, ControlType, ControlValue},
+};
 
 pub(super) fn routes(axum: axum::Router<Web>) -> axum::Router<Web> {
     axum.add(get_radars())
@@ -87,7 +86,7 @@ async fn get_radars(
         None => "localhost".to_string(),
     };
 
-    debug!("Radar state request from {} for host '{}'", addr, host);
+    log::debug!("Radar state request from {} for host '{}'", addr, host);
 
     let host = format!(
         "{}:{}",
@@ -98,7 +97,7 @@ async fn get_radars(
         state.session.read().unwrap().args.port
     );
 
-    debug!("target host = '{}'", host);
+    log::debug!("target host = '{}'", host);
 
     let mut api: HashMap<String, RadarApiV3> = HashMap::new();
     for info in state
@@ -137,7 +136,7 @@ async fn get_interfaces(
         None => "localhost".to_string(),
     };
 
-    debug!("Interface state request from {} for host '{}'", addr, host);
+    log::debug!("Interface state request from {} for host '{}'", addr, host);
 
     let (tx, mut rx) = mpsc::channel(1);
     state
@@ -242,7 +241,7 @@ async fn get_radar(
         None => "localhost".to_string(),
     };
 
-    debug!("Radar state request from {} for host '{}'", addr, host);
+    log::debug!("Radar state request from {} for host '{}'", addr, host);
 
     let host = format!(
         "{}:{}",
@@ -253,7 +252,7 @@ async fn get_radar(
         state.session.read().unwrap().args.port
     );
 
-    debug!("target host = '{}'", host);
+    log::debug!("target host = '{}'", host);
 
     if let Some(info) = state
         .session
