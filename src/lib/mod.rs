@@ -198,10 +198,14 @@ impl Serialize for InterfaceId {
 pub async fn start_session(
     subsystem: &SubsystemHandle,
     args: Cli,
-    radars: SharedRadars,
-    tx_interface_request: broadcast::Sender<Option<mpsc::Sender<InterfaceApi>>>,
+) -> (
+    SharedRadars,
+    broadcast::Sender<Option<mpsc::Sender<InterfaceApi>>>,
 ) {
-    let locator = Locator::new(args.clone(), radars);
+    let radars = SharedRadars::new();
+    let (tx_interface_request, _) = broadcast::channel(10);
+
+    let locator = Locator::new(args.clone(), radars.clone());
 
     let (tx_ip_change, _rx_ip_change) = broadcast::channel(1);
     let mut navdata = navdata::NavigationData::new(args.clone());
@@ -210,7 +214,10 @@ pub async fn start_session(
     subsystem.start(SubsystemBuilder::new("NavData", |subsys| async move {
         navdata.run(subsys, rx_ip_change_clone).await
     }));
+    let tx_interface_request_clone = tx_interface_request.clone();
     subsystem.start(SubsystemBuilder::new("Locator", |subsys| {
-        locator.run(subsys, tx_ip_change, tx_interface_request)
+        locator.run(subsys, tx_ip_change, tx_interface_request_clone)
     }));
+
+    (radars, tx_interface_request)
 }

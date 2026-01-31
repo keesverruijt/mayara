@@ -10,7 +10,7 @@ use std::{
     str::FromStr,
     sync::{Arc, RwLock},
 };
-use strum::{EnumIter, EnumString, IntoStaticStr};
+use strum::{EnumCount, EnumIter, EnumString, IntoStaticStr};
 use thiserror::Error;
 
 use crate::Cli;
@@ -1311,6 +1311,7 @@ impl ControlDefinition {
     EnumIter,
     EnumString,
     IntoStaticStr,
+    EnumCount,
 )]
 #[repr(u8)]
 #[strum(ascii_case_insensitive, serialize_all = "camelCase")]

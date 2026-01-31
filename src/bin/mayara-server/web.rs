@@ -60,16 +60,8 @@ pub struct Web {
 impl Web {
     pub async fn new(subsys: &SubsystemHandle, args: Cli) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
-        let radars = SharedRadars::new();
-        let (tx_interface_request, _) = broadcast::channel(10);
 
-        start_session(
-            subsys,
-            args.clone(),
-            radars.clone(),
-            tx_interface_request.clone(),
-        )
-        .await;
+        let (radars, tx_interface_request) = start_session(subsys, args.clone()).await;
 
         Web {
             radars,
