@@ -264,10 +264,10 @@ impl FurunoLocatorState {
             if port != info.send_command_addr.port() {
                 info.send_command_addr.set_port(port);
                 info.report_addr.set_port(port);
-                radars.update(&info);
             }
 
-            // Clone everything moved into future twice or more
+            radars.update(&mut info);
+
             let report_name = info.key();
 
             info.start_forwarding_radar_messages_to_stdout(&subsys);

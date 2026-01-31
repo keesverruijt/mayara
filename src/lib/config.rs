@@ -9,8 +9,8 @@ use std::io::{BufReader, BufWriter, Write};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use crate::radar::range::Ranges;
 use crate::radar::RadarInfo;
+use crate::radar::range::Ranges;
 use crate::settings::ControlType;
 
 pub fn get_project_dirs() -> ProjectDirs {

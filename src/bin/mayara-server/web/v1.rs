@@ -185,7 +185,7 @@ async fn control_stream(
     api_version: ApiVersion,
     mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
 ) {
-    let mut broadcast_control_rx = radar.all_clients_rx();
+    let mut broadcast_control_rx = radar.new_client_subscription();
     let (reply_tx, mut reply_rx) = tokio::sync::mpsc::channel(ControlType::COUNT);
 
     log::debug!("Starting /control v1 websocket");

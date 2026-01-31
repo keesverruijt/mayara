@@ -61,14 +61,16 @@ pub fn get_api_version() -> ApiVersion {
 pub struct Controls {
     #[serde(skip)]
     replay: bool,
-    #[serde(skip)]
-    targets: TargetMode,
 
     #[serde(flatten)]
     controls: HashMap<ControlType, Control>,
 
     #[serde(skip)]
+    radar_id: Option<String>,
+    #[serde(skip)]
     all_clients_tx: tokio::sync::broadcast::Sender<ControlValue>,
+    #[serde(skip)]
+    sk_client_tx: Option<tokio::sync::broadcast::Sender<RadarControlValue>>,
     #[serde(skip)]
     control_update_tx: tokio::sync::broadcast::Sender<ControlUpdate>,
 }
@@ -159,20 +161,11 @@ impl Controls {
 
         Controls {
             replay: args.replay,
-            targets: args.targets.clone(),
             controls,
+            radar_id: None,
             all_clients_tx,
+            sk_client_tx: None,
             control_update_tx,
-        }
-    }
-
-    pub fn clone(&self) -> Self {
-        Controls {
-            replay: self.replay,
-            targets: self.targets.clone(),
-            controls: self.controls.clone(),
-            all_clients_tx: self.all_clients_tx.clone(),
-            control_update_tx: self.control_update_tx.clone(),
         }
     }
 }
@@ -226,6 +219,16 @@ impl SharedControls {
         }
     }
 
+    pub(crate) fn set_radar_info(
+        &mut self,
+        sk_client_tx: tokio::sync::broadcast::Sender<RadarControlValue>,
+        radar_id: String,
+    ) {
+        let mut locked = self.controls.write().unwrap();
+        locked.radar_id = Some(radar_id);
+        locked.sk_client_tx = Some(sk_client_tx);
+    }
+
     fn get_command_tx(&self) -> tokio::sync::broadcast::Sender<ControlUpdate> {
         let locked = self.controls.read().unwrap();
 
@@ -239,7 +242,7 @@ impl SharedControls {
         }
     }
 
-    pub(crate) fn all_clients_rx(&self) -> tokio::sync::broadcast::Receiver<ControlValue> {
+    pub(crate) fn new_client_subscription(&self) -> tokio::sync::broadcast::Receiver<ControlValue> {
         let locked = self.controls.read().unwrap();
 
         locked.all_clients_tx.subscribe()
@@ -335,9 +338,8 @@ impl SharedControls {
             dynamic_read_only: control.dynamic_read_only,
             error: None,
         };
-
         let locked = self.controls.read().unwrap();
-        match locked.all_clients_tx.send(control_value) {
+        match locked.all_clients_tx.send(control_value.clone()) {
             Err(_e) => {}
             Ok(cnt) => {
                 log::trace!(
@@ -345,6 +347,20 @@ impl SharedControls {
                     control.item().control_type,
                     cnt
                 );
+            }
+        }
+        if let (Some(radar_id), Some(sk_client_tx)) = (&locked.radar_id, &locked.sk_client_tx) {
+            let radar_control_value = RadarControlValue::new(radar_id.to_string(), control_value);
+
+            match sk_client_tx.send(radar_control_value) {
+                Err(_e) => {}
+                Ok(cnt) => {
+                    log::trace!(
+                        "Sent control value {} to {} SK clients",
+                        control.item().control_type,
+                        cnt
+                    );
+                }
             }
         }
     }
@@ -682,7 +698,7 @@ pub struct ControlUpdate {
     pub control_value: ControlValue,
 }
 
-// This is what we send back and forth to clients
+// This is what we send back and forth internally between (web) clients and radar managers for v1
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlValue {
@@ -718,6 +734,24 @@ impl ControlValue {
             enabled: control.enabled,
             dynamic_read_only: None,
             error,
+        }
+    }
+}
+
+// This is the represenation of a control value used by the Signal K (web) services
+#[derive(Deserialize, Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RadarControlValue {
+    pub radar_id: String,
+    #[serde(flatten)]
+    pub control_value: ControlValue,
+}
+
+impl RadarControlValue {
+    pub fn new(radar_id: String, control_value: ControlValue) -> Self {
+        RadarControlValue {
+            radar_id,
+            control_value,
         }
     }
 }

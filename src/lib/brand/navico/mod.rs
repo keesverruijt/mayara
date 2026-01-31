@@ -435,8 +435,8 @@ impl NavicoLocatorState {
                 let info2 = info.clone();
                 settings::update_when_model_known(&mut info.controls, model, &info2);
                 info.set_doppler(model == Model::HALO);
-                radars.update(&info);
             }
+            radars.update(&mut info);
 
             let report_name = info.key() + " reports";
 

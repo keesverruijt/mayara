@@ -465,6 +465,8 @@ async fn ws_signalk_delta(
     radars: SharedRadars,
     shutdown_tx: broadcast::Sender<()>,
 ) {
+    let mut broadcast_control_rx = radars.new_sk_client_subscription();
+
     let (reply_tx, _reply_rx) = tokio::sync::mpsc::channel(4 * ControlType::COUNT);
 
     log::debug!("Starting /stream v3 websocket");
@@ -491,6 +493,27 @@ async fn ws_signalk_delta(
             _ = shutdown_rx.recv() => {
                 log::debug!("Shutdown of /stream websocket");
                 break;
+            },
+
+            r = broadcast_control_rx.recv() => {
+                match r {
+                    Ok(message) => {
+
+                        let message: String = serde_json::to_string(&message).unwrap();
+                        let ws_message = Message::Text(message.into());
+
+                        if let Err(e) = socket.send(ws_message).await {
+                            log::error!("send to websocket client: {e}");
+                            break;
+                        }
+
+
+                    },
+                    Err(e) => {
+                        log::error!("Error on Control channel: {e}");
+                        break;
+                    }
+                }
             },
 
             // receive control values from the client

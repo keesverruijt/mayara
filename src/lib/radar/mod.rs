@@ -26,7 +26,9 @@ use crate::config::Persistence;
 use crate::locator::LocatorId;
 use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::trail::TrailBuffer;
-use crate::settings::{ControlError, ControlType, ControlUpdate, ControlValue, SharedControls};
+use crate::settings::{
+    ControlError, ControlType, ControlUpdate, ControlValue, RadarControlValue, SharedControls,
+};
 use crate::{Brand, Cli, TargetMode};
 use range::{RangeDetection, Ranges};
 
@@ -288,8 +290,8 @@ impl RadarInfo {
         info
     }
 
-    pub fn all_clients_rx(&self) -> tokio::sync::broadcast::Receiver<ControlValue> {
-        self.controls.all_clients_rx()
+    pub fn new_client_subscription(&self) -> tokio::sync::broadcast::Receiver<ControlValue> {
+        self.controls.new_client_subscription()
     }
 
     pub fn control_update_subscribe(&self) -> tokio::sync::broadcast::Receiver<ControlUpdate> {
@@ -453,10 +455,13 @@ pub struct SharedRadars {
 
 impl SharedRadars {
     pub fn new() -> Self {
+        let (sk_client_tx, _) = tokio::sync::broadcast::channel(32);
+
         SharedRadars {
             radars: Arc::new(RwLock::new(Radars {
                 info: HashMap::new(),
                 persistent_data: Persistence::new(),
+                sk_client_tx,
             })),
         }
     }
@@ -510,9 +515,13 @@ impl SharedRadars {
     ///
     /// Update radar info in radars container
     ///
-    pub fn update(&self, radar_info: &RadarInfo) {
+    pub fn update(&self, radar_info: &mut RadarInfo) {
         let mut radars = self.radars.write().unwrap();
 
+        let sk_client_tx = radars.sk_client_tx.clone();
+        radar_info
+            .controls
+            .set_radar_info(sk_client_tx, radar_info.key());
         radars
             .info
             .insert(radar_info.key.clone(), radar_info.clone());
@@ -606,12 +615,19 @@ impl SharedRadars {
         }
         false
     }
+
+    pub fn new_sk_client_subscription(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<RadarControlValue> {
+        self.radars.read().unwrap().sk_client_tx.subscribe()
+    }
 }
 
 #[derive(Clone, Debug)]
 struct Radars {
     pub info: HashMap<String, RadarInfo>,
     pub persistent_data: Persistence,
+    sk_client_tx: tokio::sync::broadcast::Sender<RadarControlValue>,
 }
 
 pub struct Statistics {
@@ -886,8 +902,8 @@ impl CommonRadar {
         }
     }
 
-    pub(crate) fn update(&self) {
-        self.radars.update(&self.info);
+    pub(crate) fn update(&mut self) {
+        self.radars.update(&mut self.info);
     }
 
     pub async fn process_control_update<T: CommandSender>(

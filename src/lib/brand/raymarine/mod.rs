@@ -434,15 +434,15 @@ impl RaymarineLocatorState {
             .set_string(&crate::settings::ControlType::UserName, info.key())
             .unwrap();
 
-        if let Some(info) = radars.located(info) {
+        if let Some(mut info) = radars.located(info) {
             // It's new, start the RadarProcessor thread
             info.start_forwarding_radar_messages_to_stdout(&subsys);
 
             let report_name = info.key();
-            let info_clone = info.clone();
+            radars.update(&mut info);
+
             let report_receiver =
-                report::RaymarineReportReceiver::new(&self.args, info_clone, radars.clone());
-            radars.update(&info);
+                report::RaymarineReportReceiver::new(&self.args, info, radars.clone());
 
             subsys.start(SubsystemBuilder::new(report_name, |s| {
                 report_receiver.run(s)
