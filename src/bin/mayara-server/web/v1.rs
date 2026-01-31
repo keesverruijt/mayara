@@ -13,7 +13,8 @@ use std::{collections::HashMap, net::SocketAddr, str::FromStr};
 use tokio::sync::mpsc;
 
 use super::{
-    Path, Web, WebSocketHandlerParameters, WebSocketUpgrade, control_stream, spokes_handler,
+    Message, Path, RadarInfo, Web, WebSocket, WebSocketHandlerParameters, WebSocketUpgrade,
+    set_api_version, spokes_handler,
 };
 
 use mayara::{
@@ -31,38 +32,6 @@ pub(super) fn routes(axum: axum::Router<Web>) -> axum::Router<Web> {
         .route(RADAR_URI, get(get_radars))
         .route(INTERFACE_URI, get(get_interfaces))
         .route(&format!("{}{}", CONTROL_URI, "{key}"), get(control_handler))
-}
-
-#[debug_handler]
-async fn control_handler(
-    State(state): State<Web>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Path(params): Path<WebSocketHandlerParameters>,
-    ws: WebSocketUpgrade,
-) -> Response {
-    debug!("control request from {} for {}", addr, params.key);
-
-    let ws = ws.accept_compression(true);
-
-    match state
-        .session
-        .read()
-        .unwrap()
-        .radars
-        .as_ref()
-        .unwrap()
-        .get_by_id(&params.key)
-        .clone()
-    {
-        Some(radar) => {
-            let shutdown_rx = state.shutdown_tx.subscribe();
-
-            // finalize the upgrade process by returning upgrade callback.
-            // we can customize the callback by sending additional info such as address.
-            ws.on_upgrade(move |socket| control_stream(socket, radar, ApiVersion::V1, shutdown_rx))
-        }
-        None => RadarError::NoSuchRadar(params.key.to_string()).into_response(),
-    }
 }
 
 #[derive(Serialize)]
@@ -195,5 +164,157 @@ async fn get_interfaces(
     match rx.recv().await {
         Some(api) => Json(api).into_response(),
         _ => Json(Vec::<String>::new()).into_response(),
+    }
+}
+
+#[debug_handler]
+async fn control_handler(
+    State(state): State<Web>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Path(params): Path<WebSocketHandlerParameters>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    debug!("control request from {} for {}", addr, params.key);
+
+    let ws = ws.accept_compression(true);
+
+    match state
+        .session
+        .read()
+        .unwrap()
+        .radars
+        .as_ref()
+        .unwrap()
+        .get_by_id(&params.key)
+        .clone()
+    {
+        Some(radar) => {
+            let shutdown_rx = state.shutdown_tx.subscribe();
+
+            // finalize the upgrade process by returning upgrade callback.
+            // we can customize the callback by sending additional info such as address.
+            ws.on_upgrade(move |socket| control_stream(socket, radar, ApiVersion::V1, shutdown_rx))
+        }
+        None => RadarError::NoSuchRadar(params.key.to_string()).into_response(),
+    }
+}
+
+/// Actual websocket statemachine (one will be spawned per connection)
+/// This websocket handler is only for the v1 API, as v2/v3 uses REST for controls
+///
+async fn control_stream(
+    mut socket: WebSocket,
+    radar: RadarInfo,
+    api_version: ApiVersion,
+    mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
+) {
+    let mut broadcast_control_rx = radar.all_clients_rx();
+    let (reply_tx, mut reply_rx) = tokio::sync::mpsc::channel(60);
+
+    log::debug!("Starting /control v1 websocket");
+
+    if radar
+        .controls
+        .send_all_controls(reply_tx.clone())
+        .await
+        .is_err()
+    {
+        return;
+    }
+
+    log::debug!("Started /control v1 websocket");
+
+    loop {
+        tokio::select! {
+            _ = shutdown_rx.recv() => {
+                log::debug!("Shutdown of /control websocket");
+                break;
+            },
+            // this is where we receive directed control messages meant just for us, they
+            // are either error replies for an invalid control value or the full list of
+            // controls.
+            r = reply_rx.recv() => {
+                match r {
+                    Some(message) => {
+                        // Note: temporarily set API version to V1 for serialization, no await in between
+                        if api_version != ApiVersion::V3 {
+                            set_api_version(api_version);
+                        }
+                        let message: String = serde_json::to_string(&message).unwrap();
+                        if api_version != ApiVersion::V3 {
+                            set_api_version(ApiVersion::V3);
+                        }
+                        let ws_message = Message::Text(message.into());
+
+                        if let Err(e) = socket.send(ws_message).await {
+                            log::error!("send to websocket client: {e}");
+                            break;
+                        }
+
+                    },
+                    None => {
+                        log::error!("Error on Control channel");
+                        break;
+                    }
+                }
+            },
+            r = broadcast_control_rx.recv() => {
+                match r {
+                    Ok(message) => {
+                        // Note: temporarily set API version to V1 for serialization, no await in between
+                        if api_version != ApiVersion::V3 {
+                            set_api_version(api_version);
+                        }
+                        let message: String = serde_json::to_string(&message).unwrap();
+                        if api_version != ApiVersion::V3 {
+                            set_api_version(ApiVersion::V3);
+                        }
+                        let ws_message = Message::Text(message.into());
+
+                        if let Err(e) = socket.send(ws_message).await {
+                            log::error!("send to websocket client: {e}");
+                            break;
+                        }
+
+
+                    },
+                    Err(e) => {
+                        log::error!("Error on Control channel: {e}");
+                        break;
+                    }
+                }
+            },
+            // receive control values from the client
+            r = socket.recv() => {
+                match r {
+                    Some(Ok(message)) => {
+                        match message {
+                            Message::Text(message) => {
+                                if let Ok(control_value) = serde_json::from_str(&message) {
+                                    log::debug!("Received ControlValue {:?}", control_value);
+                                    let _ = radar.controls.process_client_request(control_value, reply_tx.clone()).await;
+                                } else {
+                                    log::error!("Unknown JSON string '{}'", message);
+                                }
+
+                            },
+                            _ => {
+                                debug!("Dropping unexpected message {:?}", message);
+                            }
+                        }
+
+                    },
+                    None => {
+                        // Stream has closed
+                        log::debug!("Control websocket closed");
+                        break;
+                    }
+                    r => {
+                        log::error!("Error reading websocket: {:?}", r);
+                        break;
+                    }
+                }
+            }
+        }
     }
 }

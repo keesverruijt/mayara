@@ -3,6 +3,7 @@ use axum::{
     extract::{self, ConnectInfo, Path, State},
     http::Uri,
     response::{IntoResponse, Response},
+    routing::get,
 };
 use axum_openapi3::{
     AddRoute,      // `add` method for Router to add routes also to the openapi spec
@@ -17,10 +18,14 @@ use http::StatusCode;
 use hyper;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr, str::FromStr};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast::Sender, mpsc};
 
-use super::Web;
+use super::{
+    ApiVersion, Message, Web, WebSocket, WebSocketHandlerParameters, WebSocketUpgrade,
+    set_api_version,
+};
 use mayara::{
+    Session,
     radar::{Legend, RadarError, RadarInfo},
     settings::{Control, ControlType, ControlValue},
 };
@@ -30,6 +35,7 @@ pub(super) fn routes(axum: axum::Router<Web>) -> axum::Router<Web> {
         .add(get_interfaces())
         .add(get_radar())
         .add(set_control_value())
+        .route("/v3/api/stream", get(stream_handler))
         .add(openapi())
 }
 
@@ -445,4 +451,97 @@ async fn set_control_value(
     }
 
     StatusCode::OK.into_response()
+}
+
+#[derive(Deserialize)]
+struct SignalKWebSocket {
+    subscribe: Option<String>,
+}
+
+async fn stream_handler(
+    State(state): State<Web>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Path(params): Path<SignalKWebSocket>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    log::debug!(
+        "stream request from {} subscribe={:?}",
+        addr,
+        params.subscribe
+    );
+
+    let ws = ws.accept_compression(true);
+
+    let session = state.session.clone();
+    let shutdown_tx = state.shutdown_tx.clone();
+
+    // finalize the upgrade process by returning upgrade callback.
+    // we can customize the callback by sending additional info such as address.
+    ws.on_upgrade(move |socket| ws_signalk_delta(socket, params))
+}
+
+/// Actual websocket statemachine (one will be spawned per connection)
+/// This needs to handle the (complex) Signal K state, which can request data from multiple
+/// radars using a single websocket
+///
+async fn ws_signalk_delta(mut socket: WebSocket, params: SignalKWebSocket) {
+    let shutdown_tx: Sender<()> = tokio::sync::broadcast::channel(1).0;
+    // let (reply_tx, mut reply_rx) = tokio::sync::mpsc::channel(60);
+
+    log::debug!("Starting /stream v3 websocket");
+
+    /* if let Some(subscribe) = params.subscribe {
+           if subscribe != "none" {
+               for shared_radars in session.read().unwrap().radars.iter() {
+                   for radar in shared_radars.get_active() {
+                       if radar
+                           .controls
+                           .send_all_controls(reply_tx.clone())
+                           .await
+                           .is_err()
+                       {
+                           return;
+                       }
+                   }
+               }
+           }
+       }
+    */
+    loop {
+        let mut shutdown_rx = shutdown_tx.subscribe();
+
+        tokio::select! {
+            _ = shutdown_rx.recv() => {
+                log::debug!("Shutdown of /stream websocket");
+                break;
+            },
+
+            // receive control values from the client
+            r = socket.recv() => {
+                match r {
+                    Some(Ok(message)) => {
+                        match message {
+                            Message::Text(message) => {
+                                // Handle Signal K subscribe, unsubscribe, etc.
+
+                            },
+                            _ => {
+                                log::debug!("Dropping unexpected message {:?}", message);
+                            }
+                        }
+
+                    },
+                    None => {
+                        // Stream has closed
+                        log::debug!("Control websocket closed");
+                        break;
+                    }
+                    r => {
+                        log::error!("Error reading websocket: {:?}", r);
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }

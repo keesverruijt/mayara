@@ -110,7 +110,7 @@ impl Web {
 async fn openapi(State(_state): State<Web>) -> impl IntoResponse {
     // `build_openapi` caches the openapi spec, so it's not necessary to call it every time
     let openapi = build_openapi(|| {
-        OpenApiBuilder::new().info(InfoBuilder::new().title("My Webserver").version("0.1.0"))
+        OpenApiBuilder::new().info(InfoBuilder::new().title("Mayara").version("0.1.0"))
     });
 
     Json(openapi)
@@ -178,126 +178,6 @@ async fn spokes_stream(
                     },
                     Err(e) => {
                         debug!("Error on RadarMessage channel: {}", e);
-                        break;
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Actual websocket statemachine (one will be spawned per connection)
-/// This websocket handler is only for the v1 API, as v2/v3 uses REST for controls
-///
-async fn control_stream(
-    mut socket: WebSocket,
-    radar: RadarInfo,
-    api_version: ApiVersion,
-    mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
-) {
-    let mut broadcast_control_rx = radar.all_clients_rx();
-    let (reply_tx, mut reply_rx) = tokio::sync::mpsc::channel(60);
-
-    log::debug!("Starting /control v1 websocket");
-
-    if radar
-        .controls
-        .send_all_controls(reply_tx.clone())
-        .await
-        .is_err()
-    {
-        return;
-    }
-
-    log::debug!("Started /control v1 websocket");
-
-    loop {
-        tokio::select! {
-            _ = shutdown_rx.recv() => {
-                log::debug!("Shutdown of /control websocket");
-                break;
-            },
-            // this is where we receive directed control messages meant just for us, they
-            // are either error replies for an invalid control value or the full list of
-            // controls.
-            r = reply_rx.recv() => {
-                match r {
-                    Some(message) => {
-                        // Note: temporarily set API version to V1 for serialization, no await in between
-                        if api_version != ApiVersion::V3 {
-                            set_api_version(api_version);
-                        }
-                        let message: String = serde_json::to_string(&message).unwrap();
-                        if api_version != ApiVersion::V3 {
-                            set_api_version(ApiVersion::V3);
-                        }
-                        let ws_message = Message::Text(message.into());
-
-                        if let Err(e) = socket.send(ws_message).await {
-                            log::error!("send to websocket client: {e}");
-                            break;
-                        }
-
-                    },
-                    None => {
-                        log::error!("Error on Control channel");
-                        break;
-                    }
-                }
-            },
-            r = broadcast_control_rx.recv() => {
-                match r {
-                    Ok(message) => {
-                        // Note: temporarily set API version to V1 for serialization, no await in between
-                        if api_version != ApiVersion::V3 {
-                            set_api_version(api_version);
-                        }
-                        let message: String = serde_json::to_string(&message).unwrap();
-                        if api_version != ApiVersion::V3 {
-                            set_api_version(ApiVersion::V3);
-                        }
-                        let ws_message = Message::Text(message.into());
-
-                        if let Err(e) = socket.send(ws_message).await {
-                            log::error!("send to websocket client: {e}");
-                            break;
-                        }
-
-
-                    },
-                    Err(e) => {
-                        log::error!("Error on Control channel: {e}");
-                        break;
-                    }
-                }
-            },
-            // receive control values from the client
-            r = socket.recv() => {
-                match r {
-                    Some(Ok(message)) => {
-                        match message {
-                            Message::Text(message) => {
-                                if let Ok(control_value) = serde_json::from_str(&message) {
-                                    log::debug!("Received ControlValue {:?}", control_value);
-                                    let _ = radar.controls.process_client_request(control_value, reply_tx.clone()).await;
-                                } else {
-                                    log::error!("Unknown JSON string '{}'", message);
-                                }
-
-                            },
-                            _ => {
-                                debug!("Dropping unexpected message {:?}", message);
-                            }
-                        }
-
-                    },
-                    None => {
-                        // Stream has closed
-                        log::debug!("Control websocket closed");
-                        break;
-                    }
-                    r => {
-                        log::error!("Error reading websocket: {:?}", r);
                         break;
                     }
                 }
