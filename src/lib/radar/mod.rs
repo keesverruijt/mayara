@@ -840,8 +840,7 @@ mod tests {
 
     #[test]
     fn legend() {
-        let session = crate::Session::new_fake();
-        let targets = session.read().unwrap().args.targets.clone();
+        let targets = crate::TargetMode::Arpa;
         let legend = default_legend(&targets, true, 16);
         let json = serde_json::to_string_pretty(&legend).unwrap();
         println!("{}", json);

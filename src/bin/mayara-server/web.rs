@@ -20,7 +20,10 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
 };
 use thiserror::Error;
-use tokio::{net::TcpListener, sync::broadcast};
+use tokio::{
+    net::TcpListener,
+    sync::{broadcast, mpsc},
+};
 use tokio_graceful_shutdown::SubsystemHandle;
 
 mod axum_fix;
@@ -29,9 +32,10 @@ mod v3;
 
 use axum_fix::{Message, WebSocket, WebSocketUpgrade};
 use mayara::{
-    Session,
-    radar::{RadarError, RadarInfo},
-    settings::{ApiVersion, set_api_version},
+    Cli, InterfaceApi,
+    radar::{RadarError, RadarInfo, SharedRadars},
+    settings::set_api_version,
+    start_session,
 };
 
 // Embedded files from the $project/web directory
@@ -47,24 +51,38 @@ pub enum WebError {
 
 #[derive(Clone)]
 pub struct Web {
-    session: Session,
+    radars: SharedRadars,
+    args: Cli,
     shutdown_tx: broadcast::Sender<()>,
+    tx_interface_request: broadcast::Sender<Option<mpsc::Sender<InterfaceApi>>>,
 }
 
 impl Web {
-    pub fn new(session: Session) -> Self {
+    pub async fn new(subsys: &SubsystemHandle, args: Cli) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
+        let radars = SharedRadars::new();
+        let (tx_interface_request, _) = broadcast::channel(10);
+
+        start_session(
+            subsys,
+            args.clone(),
+            radars.clone(),
+            tx_interface_request.clone(),
+        )
+        .await;
 
         Web {
-            session,
+            radars,
+            args,
             shutdown_tx,
+            tx_interface_request,
         }
     }
 
     pub async fn run(self, subsys: SubsystemHandle) -> Result<(), WebError> {
         reset_openapi(); // clean the openapi cache. Mostly used for testing
 
-        let port = self.session.read().unwrap().args.port.clone();
+        let port = self.args.port.clone();
         let listener =
             TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port))
                 .await
@@ -131,14 +149,7 @@ async fn spokes_handler(
 
     let ws = ws.accept_compression(true);
 
-    match state
-        .session
-        .read()
-        .unwrap()
-        .radars
-        .get_by_id(&params.key)
-        .clone()
-    {
+    match state.radars.get_by_id(&params.key).clone() {
         Some(radar) => {
             let shutdown_rx = state.shutdown_tx.subscribe();
             let radar_message_rx = radar.message_tx.subscribe();

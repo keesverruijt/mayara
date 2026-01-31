@@ -19,16 +19,12 @@ use hyper;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr, str::FromStr};
 use tokio::sync::{
-    broadcast::{self, Sender},
+    broadcast::{self},
     mpsc,
 };
 
-use super::{
-    ApiVersion, Message, Web, WebSocket, WebSocketHandlerParameters, WebSocketUpgrade,
-    set_api_version,
-};
+use super::{Message, Web, WebSocket, WebSocketUpgrade};
 use mayara::{
-    Session,
     radar::{Legend, RadarError, RadarInfo, SharedRadars},
     settings::{Control, ControlType, ControlValue},
 };
@@ -103,13 +99,13 @@ async fn get_radars(
             Ok(uri) => uri.host().unwrap_or("localhost").to_string(),
             Err(_) => "localhost".to_string(),
         },
-        state.session.read().unwrap().args.port
+        state.args.port
     );
 
     log::debug!("target host = '{}'", host);
 
     let mut api: HashMap<String, RadarApiV3> = HashMap::new();
-    for info in state.session.read().unwrap().radars.get_active().clone() {
+    for info in state.radars.get_active().clone() {
         let id = format!("radar-{}", info.id);
         let stream_url = format!("ws://{}{}{}", host, super::v1::SPOKES_URI, id);
         let name = info.controls.user_name();
@@ -139,13 +135,7 @@ async fn get_interfaces(
     log::debug!("Interface state request from {} for host '{}'", addr, host);
 
     let (tx, mut rx) = mpsc::channel(1);
-    state
-        .session
-        .read()
-        .unwrap()
-        .tx_interface_request
-        .send(Some(tx))
-        .unwrap();
+    state.tx_interface_request.send(Some(tx)).unwrap();
     match rx.recv().await {
         Some(api) => Json(api).into_response(),
         _ => Json(Vec::<String>::new()).into_response(),
@@ -249,19 +239,12 @@ async fn get_radar(
             Ok(uri) => uri.host().unwrap_or("localhost").to_string(),
             Err(_) => "localhost".to_string(),
         },
-        state.session.read().unwrap().args.port
+        state.args.port
     );
 
     log::debug!("target host = '{}'", host);
 
-    if let Some(info) = state
-        .session
-        .read()
-        .unwrap()
-        .radars
-        .get_by_id(&radar_id)
-        .clone()
-    {
+    if let Some(info) = state.radars.get_by_id(&radar_id).clone() {
         let id = format!("radar-{}", info.id);
         let stream_url = format!("ws://{}{}{}", host, super::v1::SPOKES_URI, id);
         let name = info.controls.user_name();
@@ -317,7 +300,7 @@ async fn set_control_value(
 
     // Get the radar info and control type without holding the lock across await
     let (controls, control_type) = {
-        let radars = state.session.read().unwrap().radars.clone();
+        let radars = state.radars.clone();
 
         match radars.get_by_id(&radar_id) {
             Some(radar) => {
@@ -463,7 +446,7 @@ async fn stream_handler(
 
     let ws = ws.accept_compression(true);
 
-    let radars = state.session.read().unwrap().radars.clone();
+    let radars = state.radars.clone();
     let shutdown_tx = state.shutdown_tx.clone();
 
     // finalize the upgrade process by returning upgrade callback.

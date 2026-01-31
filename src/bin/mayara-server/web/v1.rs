@@ -94,13 +94,13 @@ async fn get_radars(
             Ok(uri) => uri.host().unwrap_or("localhost").to_string(),
             Err(_) => "localhost".to_string(),
         },
-        state.session.read().unwrap().args.port
+        state.args.port
     );
 
     debug!("target host = '{}'", host);
 
     let mut api: HashMap<String, RadarApi> = HashMap::new();
-    for info in state.session.read().unwrap().radars.get_active().clone() {
+    for info in state.radars.get_active().clone() {
         let legend = &info.legend;
         let id = format!("radar-{}", info.id);
         let stream_url = format!("ws://{}{}{}", host, SPOKES_URI, id);
@@ -145,13 +145,7 @@ async fn get_interfaces(
     debug!("Interface state request from {} for host '{}'", addr, host);
 
     let (tx, mut rx) = mpsc::channel(1);
-    state
-        .session
-        .read()
-        .unwrap()
-        .tx_interface_request
-        .send(Some(tx))
-        .unwrap();
+    state.tx_interface_request.send(Some(tx)).unwrap();
     match rx.recv().await {
         Some(api) => Json(api).into_response(),
         _ => Json(Vec::<String>::new()).into_response(),
@@ -169,14 +163,7 @@ async fn control_handler(
 
     let ws = ws.accept_compression(true);
 
-    match state
-        .session
-        .read()
-        .unwrap()
-        .radars
-        .get_by_id(&params.key)
-        .clone()
-    {
+    match state.radars.get_by_id(&params.key).clone() {
         Some(radar) => {
             let shutdown_rx = state.shutdown_tx.subscribe();
 

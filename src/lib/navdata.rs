@@ -18,8 +18,8 @@ use tokio::{io::BufReader, sync::broadcast::Receiver};
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::{
+    Cli,
     radar::{GeoPosition, RadarError},
-    Session,
 };
 
 static HEADING_TRUE: AtomicF64 = AtomicF64::new(f64::NAN);
@@ -146,7 +146,9 @@ impl ConnectionType {
                 }
             }
         }
-        panic!("Interface must be either interface name (no :) or <connection>:<address>:<port> with <connection> one of `udp_listen`, `udp` or `tcp`.");
+        panic!(
+            "Interface must be either interface name (no :) or <connection>:<address>:<port> with <connection> one of `udp_listen`, `udp` or `tcp`."
+        );
     }
 }
 
@@ -157,7 +159,7 @@ enum Stream {
 }
 
 pub(crate) struct NavigationData {
-    session: Session,
+    args: Cli,
     nmea0183_mode: bool,
     service_name: &'static str,
     what: &'static str,
@@ -165,18 +167,18 @@ pub(crate) struct NavigationData {
 }
 
 impl NavigationData {
-    pub(crate) fn new(session: Session) -> Self {
-        let nmea0183 = session.read().unwrap().args.nmea0183;
+    pub(crate) fn new(args: Cli) -> Self {
+        let nmea0183 = args.nmea0183;
         match nmea0183 {
             true => NavigationData {
-                session,
+                args,
                 nmea0183_mode: true,
                 service_name: NMEA0183_SERVICE_NAME,
                 what: "NMEA0183",
                 nmea_parser: Some(NmeaParser::new()),
             },
             false => NavigationData {
-                session,
+                args,
                 nmea0183_mode: false,
                 service_name: SIGNAL_K_SERVICE_NAME,
                 what: "Signal K",
@@ -192,7 +194,7 @@ impl NavigationData {
     ) -> Result<(), Error> {
         log::debug!("{} run_loop (re)start", self.what);
         let mut rx_ip_change = rx_ip_change;
-        let navigation_address = self.session.read().unwrap().args.navigation_address.clone();
+        let navigation_address = self.args.navigation_address.clone();
 
         loop {
             match self
@@ -270,9 +272,6 @@ impl NavigationData {
         if interface.is_some() {
             let _ = mdns.disable_interface(IfKind::All);
             let navigation_address = self
-                .session
-                .read()
-                .unwrap()
                 .args
                 .navigation_address
                 .as_ref()

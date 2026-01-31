@@ -25,7 +25,6 @@ pub mod protos;
 pub mod radar;
 pub mod settings;
 pub mod util;
-use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -196,116 +195,22 @@ impl Serialize for InterfaceId {
     }
 }
 
-pub struct SessionInner {
-    pub args: Cli,
-    pub tx_interface_request: broadcast::Sender<Option<mpsc::Sender<InterfaceApi>>>,
-    pub radars: SharedRadars,
+pub async fn start_session(
+    subsystem: &SubsystemHandle,
+    args: Cli,
+    radars: SharedRadars,
+    tx_interface_request: broadcast::Sender<Option<mpsc::Sender<InterfaceApi>>>,
+) {
+    let locator = Locator::new(args.clone(), radars);
+
+    let (tx_ip_change, _rx_ip_change) = broadcast::channel(1);
+    let mut navdata = navdata::NavigationData::new(args.clone());
+
+    let rx_ip_change_clone = tx_ip_change.subscribe();
+    subsystem.start(SubsystemBuilder::new("NavData", |subsys| async move {
+        navdata.run(subsys, rx_ip_change_clone).await
+    }));
+    subsystem.start(SubsystemBuilder::new("Locator", |subsys| {
+        locator.run(subsys, tx_ip_change, tx_interface_request)
+    }));
 }
-
-#[derive(Clone)]
-pub struct Session {
-    pub inner: Arc<RwLock<SessionInner>>,
-}
-
-impl Session {
-    pub fn read(
-        &self,
-    ) -> Result<RwLockReadGuard<'_, SessionInner>, PoisonError<RwLockReadGuard<'_, SessionInner>>>
-    {
-        self.inner.read()
-    }
-
-    pub fn write(
-        &self,
-    ) -> Result<RwLockWriteGuard<'_, SessionInner>, PoisonError<RwLockWriteGuard<'_, SessionInner>>>
-    {
-        self.inner.write()
-    }
-
-    #[cfg(test)]
-    pub fn new_fake() -> Self {
-        // This does not actually start anything - only use for testing
-
-        let (tx_interface_request, _) = broadcast::channel(10);
-        Self::new_base(
-            Cli::parse_from(["my_program"]),
-            tx_interface_request,
-            SharedRadars::new(),
-        )
-    }
-
-    fn new_base(
-        args: Cli,
-        tx_interface_request: broadcast::Sender<Option<mpsc::Sender<InterfaceApi>>>,
-        radars: SharedRadars,
-    ) -> Self {
-        let selfref = Session {
-            inner: Arc::new(RwLock::new(SessionInner {
-                args,
-                tx_interface_request,
-                radars,
-            })),
-        };
-        selfref
-    }
-
-    pub async fn new(subsystem: &SubsystemHandle, args: Cli) -> Self {
-        let radars = SharedRadars::new();
-        let (tx_interface_request, _) = broadcast::channel(10);
-
-        let session = Self::new_base(args.clone(), tx_interface_request.clone(), radars.clone());
-
-        let locator = Locator::new(args, radars);
-
-        let (tx_ip_change, _rx_ip_change) = broadcast::channel(1);
-        let mut navdata = navdata::NavigationData::new(session.clone());
-
-        let rx_ip_change_clone = tx_ip_change.subscribe();
-        subsystem.start(SubsystemBuilder::new("NavData", |subsys| async move {
-            navdata.run(subsys, rx_ip_change_clone).await
-        }));
-        subsystem.start(SubsystemBuilder::new("Locator", |subsys| {
-            locator.run(subsys, tx_ip_change, tx_interface_request)
-        }));
-
-        session
-    }
-
-    pub fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-        }
-    }
-
-    pub fn args(&self) -> Cli {
-        let args = { self.read().unwrap().args.clone() };
-        args
-    }
-}
-
-impl std::fmt::Debug for Session {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Session {{ }}")
-    }
-}
-
-/*
-#[cfg(test)]
-mod init {
-    use ctor::ctor;
-    use crate::{Cli, set_global_args};
-    use clap::Parser;
-    use once_cell::sync::OnceCell;
-
-    static GLOBAL_ARGS: OnceCell<Session> = OnceCell::new();
-
-    #[ctor]
-    fn setup() {
-        let args = Cli::parse_from(["my_program"]);
-
-        GLOBAL_ARGS.set()
-
-let _ = set_global_args(Cli::parse_from(["my_program"]));
-    }
-}
-*/

@@ -2,21 +2,16 @@ extern crate tokio;
 
 use clap::Parser;
 use env_logger::Env;
-//use locator::Locator;
 use log::{info, warn};
 use miette::Result;
-//use once_cell::sync::Lazy;
-//use radar::SharedRadars;
-//use serde::{Serialize, Serializer};
 use std::time::Duration;
-//use tokio::sync::{broadcast, mpsc};
 use tokio_graceful_shutdown::{SubsystemBuilder, Toplevel};
 use web::Web;
 
 mod web;
 
 use mayara;
-use mayara::{Cli, Session, network};
+use mayara::{Cli, network};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -60,8 +55,7 @@ async fn main() -> Result<()> {
     }
 
     Toplevel::new(|s| async move {
-        let session = Session::new(&s, args).await;
-        let web = Web::new(session.clone());
+        let web = Web::new(&s, args).await;
         s.start(SubsystemBuilder::new("Webserver", move |a| web.run(a)));
     })
     .catch_signals()
