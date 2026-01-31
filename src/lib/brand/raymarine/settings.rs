@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 
 use crate::{
+    Cli,
     brand::raymarine::RaymarineModel,
-    radar::{RadarInfo, NAUTICAL_MILE_F64},
-    settings::{Control, ControlType, SharedControls, HAS_AUTO_NOT_ADJUSTABLE},
-    Session,
+    radar::{NAUTICAL_MILE_F64, RadarInfo},
+    settings::{Control, ControlType, HAS_AUTO_NOT_ADJUSTABLE, SharedControls},
 };
 
 use super::BaseModel;
 
-pub fn new(session: Session, model: BaseModel) -> SharedControls {
+pub fn new(args: &Cli, model: BaseModel) -> SharedControls {
     let mut controls = HashMap::new();
 
     let mut control = Control::new_string(ControlType::UserName);
@@ -52,8 +52,6 @@ pub fn new(session: Session, model: BaseModel) -> SharedControls {
             .read_only(true)
             .unit("RPM"),
     );
-    /* TODO!
-     */
 
     match model {
         BaseModel::Quantum => {
@@ -148,7 +146,7 @@ pub fn new(session: Session, model: BaseModel) -> SharedControls {
             controls.insert(ControlType::Ftc, control);
         }
     }
-    SharedControls::new(session, controls)
+    SharedControls::new(args, controls)
 }
 
 pub fn update_when_model_known(

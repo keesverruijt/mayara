@@ -262,7 +262,7 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
             receiver.common.info.ranges
         );
         // Tell the UI about the range
-        receiver.common.update(&receiver.common.info);
+        receiver.common.update();
     }
     let range_meters = receiver
         .common
@@ -379,7 +379,7 @@ pub(super) fn process_info_report(receiver: &mut RaymarineReportReceiver, data: 
                 .set_pixel_values(hd_to_pixel_values(model.hd));
             receiver.common.info.set_doppler(model.doppler);
             receiver.pixel_to_blob = pixel_to_blob(&receiver.common.info.legend);
-            receiver.common.update(&receiver.common.info);
+            receiver.common.update();
 
             // If we are in replay mode, we don't need a command sender, as we will not send any commands
             let command_sender = if !receiver.common.replay {

@@ -12,7 +12,7 @@ use crate::radar::{RadarInfo, SharedRadars};
 use crate::settings::ControlType;
 use crate::util::PrintableSlice;
 use crate::util::c_string;
-use crate::{Brand, Session};
+use crate::{Brand, Cli};
 
 mod command;
 mod info;
@@ -225,7 +225,7 @@ const NAVICO_BEACON_BR24_SIZE: usize = size_of::<BR24Beacon>();
 
 #[derive(Clone)]
 struct NavicoLocatorState {
-    session: Session,
+    args: Cli,
 }
 
 impl NavicoLocatorState {
@@ -290,7 +290,7 @@ impl NavicoLocatorState {
                         let radar_report: SocketAddrV4 = data.a.report.into();
                         let radar_send: SocketAddrV4 = data.a.send.into();
                         let location_info: RadarInfo = RadarInfo::new(
-                            self.session.clone(),
+                            &self.args,
                             LocatorId::Gen3Plus,
                             Brand::Navico,
                             Some(serial_no),
@@ -303,7 +303,7 @@ impl NavicoLocatorState {
                             radar_data.into(),
                             radar_report.into(),
                             radar_send.into(),
-                            settings::new(self.session.clone(), None),
+                            settings::new(&self.args, None),
                             true,
                         );
                         self.found(location_info, radars, subsys);
@@ -312,7 +312,7 @@ impl NavicoLocatorState {
                         let radar_report: SocketAddrV4 = data.b.report.into();
                         let radar_send: SocketAddrV4 = data.b.send.into();
                         let location_info: RadarInfo = RadarInfo::new(
-                            self.session.clone(),
+                            &self.args,
                             LocatorId::Gen3Plus,
                             Brand::Navico,
                             Some(serial_no),
@@ -325,7 +325,7 @@ impl NavicoLocatorState {
                             radar_data.into(),
                             radar_report.into(),
                             radar_send.into(),
-                            settings::new(self.session.clone(), None),
+                            settings::new(&self.args, None),
                             true,
                         );
                         self.found(location_info, radars, subsys);
@@ -351,7 +351,7 @@ impl NavicoLocatorState {
                         let radar_report: SocketAddrV4 = data.a.report.into();
                         let radar_send: SocketAddrV4 = data.a.send.into();
                         let location_info: RadarInfo = RadarInfo::new(
-                            self.session.clone(),
+                            &self.args,
                             LocatorId::Gen3Plus,
                             Brand::Navico,
                             Some(serial_no),
@@ -364,7 +364,7 @@ impl NavicoLocatorState {
                             radar_data.into(),
                             radar_report.into(),
                             radar_send.into(),
-                            settings::new(self.session.clone(), None),
+                            settings::new(&self.args, None),
                             false,
                         );
                         self.found(location_info, radars, subsys);
@@ -391,7 +391,7 @@ impl NavicoLocatorState {
                         let radar_report: SocketAddrV4 = data.report.into();
                         let radar_send: SocketAddrV4 = data.send.into();
                         let location_info: RadarInfo = RadarInfo::new(
-                            self.session.clone(),
+                            &self.args,
                             LocatorId::GenBR24,
                             Brand::Navico,
                             Some(serial_no),
@@ -404,7 +404,7 @@ impl NavicoLocatorState {
                             radar_data.into(),
                             radar_report.into(),
                             radar_send.into(),
-                            settings::new(self.session.clone(), Some(BR24_MODEL_NAME)),
+                            settings::new(&self.args, Some(BR24_MODEL_NAME)),
                             false,
                         );
                         self.found(location_info, radars, subsys);
@@ -442,12 +442,8 @@ impl NavicoLocatorState {
 
             info.start_forwarding_radar_messages_to_stdout(&subsys);
 
-            let report_receiver = report::NavicoReportReceiver::new(
-                self.session.clone(),
-                info,
-                radars.clone(),
-                model,
-            );
+            let report_receiver =
+                report::NavicoReportReceiver::new(&self.args, info, radars.clone(), model);
 
             subsys.start(SubsystemBuilder::new(report_name, |s| {
                 report_receiver.run(s)
@@ -470,21 +466,21 @@ impl RadarLocatorState for NavicoLocatorState {
 
     fn clone(&self) -> Box<dyn RadarLocatorState> {
         Box::new(NavicoLocatorState {
-            session: self.session.clone(),
+            args: self.args.clone(),
         }) // Navico is stateless
     }
 }
 
 #[derive(Clone)]
 struct NavicoLocator {
-    session: Session,
+    args: Cli,
 }
 
 impl RadarLocator for NavicoLocator {
     fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
         if !addresses.iter().any(|i| i.id == LocatorId::Gen3Plus) {
             let mut beacon_request_packets: Vec<&'static [u8]> = Vec::new();
-            if !self.session.read().unwrap().args.replay {
+            if !self.args.replay {
                 beacon_request_packets.push(&NAVICO_ADDRESS_REQUEST_PACKET);
             };
             addresses.push(LocatorAddress::new(
@@ -493,28 +489,28 @@ impl RadarLocator for NavicoLocator {
                 Brand::Navico,
                 beacon_request_packets,
                 Box::new(NavicoLocatorState {
-                    session: self.session.clone(),
+                    args: self.args.clone(),
                 }),
             ));
         }
     }
 }
 
-pub fn create_locator(session: Session) -> Box<dyn RadarLocator + Send> {
-    let locator = NavicoLocator { session };
+pub fn create_locator(args: Cli) -> Box<dyn RadarLocator + Send> {
+    let locator = NavicoLocator { args };
     Box::new(locator)
 }
 
 #[derive(Clone)]
 struct NavicoBR24Locator {
-    session: Session,
+    args: Cli,
 }
 
 impl RadarLocator for NavicoBR24Locator {
     fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
         if !addresses.iter().any(|i| i.id == LocatorId::GenBR24) {
             let mut beacon_request_packets: Vec<&'static [u8]> = Vec::new();
-            if !self.session.read().unwrap().args.replay {
+            if !self.args.replay {
                 beacon_request_packets.push(&NAVICO_ADDRESS_REQUEST_PACKET);
             };
             addresses.push(LocatorAddress::new(
@@ -523,15 +519,15 @@ impl RadarLocator for NavicoBR24Locator {
                 Brand::Navico,
                 beacon_request_packets,
                 Box::new(NavicoLocatorState {
-                    session: self.session.clone(),
+                    args: self.args.clone(),
                 }),
             ));
         }
     }
 }
 
-pub fn create_br24_locator(session: Session) -> Box<dyn RadarLocator + Send> {
-    let locator = NavicoBR24Locator { session };
+pub fn create_br24_locator(args: Cli) -> Box<dyn RadarLocator + Send> {
+    let locator = NavicoBR24Locator { args };
     Box::new(locator)
 }
 

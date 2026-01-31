@@ -1,13 +1,13 @@
 use cartesian::PolarToCartesianLookup;
-use ndarray::{s, Array2};
+use ndarray::{Array2, s};
 
 mod cartesian;
 use crate::protos::RadarMessage::radar_message::Spoke;
-use crate::radar::target::{meters_per_degree_longitude, METERS_PER_DEGREE_LATITUDE};
+use crate::radar::target::{METERS_PER_DEGREE_LATITUDE, meters_per_degree_longitude};
 use crate::radar::trail::cartesian::PointInt;
-use crate::radar::{GeoPosition, Legend, SpokeBearing, BLOB_HISTORY_COLORS};
+use crate::radar::{BLOB_HISTORY_COLORS, GeoPosition, Legend, SpokeBearing};
 use crate::settings::{ControlError, ControlType, ControlValue, SharedControls};
-use crate::{Session, TargetMode};
+use crate::{Cli, TargetMode};
 
 use super::target::TargetBuffer;
 use super::{RadarError, RadarInfo};
@@ -44,7 +44,7 @@ pub struct TrailBuffer {
 }
 
 impl TrailBuffer {
-    pub fn new(session: Session, info: &RadarInfo) -> Self {
+    pub fn new(args: &Cli, info: &RadarInfo) -> Self {
         let legend = info.legend.clone();
         let spokes_per_revolution = info.spokes_per_revolution as usize;
         let max_spoke_len = info.max_spoke_len as usize;
@@ -54,9 +54,9 @@ impl TrailBuffer {
             info.max_spoke_len as usize,
         );
 
-        let target_mode = session.read().unwrap().args.targets.to_owned();
+        let target_mode = args.targets.clone();
         let targets = match target_mode {
-            TargetMode::Arpa => Some(TargetBuffer::new(session.clone(), info)),
+            TargetMode::Arpa => Some(TargetBuffer::new(args.stationary, info)),
             _ => None,
         };
 

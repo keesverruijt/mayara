@@ -17,11 +17,12 @@ use super::RadarModel;
 use super::command::{Command, CommandId};
 use super::settings;
 use super::{FURUNO_DATA_BROADCAST_ADDRESS, FURUNO_SPOKE_LEN};
-use crate::Session;
+use crate::Cli;
 use crate::network::{create_udp_listen, create_udp_multicast_listen};
 use crate::protos::RadarMessage::RadarMessage;
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::radar::CommonRadar;
+use crate::radar::SharedRadars;
 use crate::radar::SpokeBearing;
 use crate::radar::trail::TrailBuffer;
 use crate::radar::{Power, RadarError, RadarInfo};
@@ -46,7 +47,6 @@ struct FurunoSpokeMetadata {
 
 pub struct FurunoReportReceiver {
     common: CommonRadar,
-    session: Session,
     stream: Option<TcpStream>,
     command_sender: Option<Command>,
     report_request_interval: Duration,
@@ -63,12 +63,10 @@ pub struct FurunoReportReceiver {
 }
 
 impl FurunoReportReceiver {
-    pub fn new(session: Session, info: RadarInfo) -> FurunoReportReceiver {
+    pub fn new(args: &Cli, radars: SharedRadars, info: RadarInfo) -> FurunoReportReceiver {
         let key = info.key();
 
-        let args = session.read().unwrap().args.clone();
         let replay = args.replay;
-        let radars = session.read().unwrap().radars.clone();
         let command_sender = if replay {
             Some(Command::new(&info))
         } else {
@@ -78,7 +76,7 @@ impl FurunoReportReceiver {
         let control_update_rx = info.controls.control_update_subscribe();
 
         // let pixel_to_blob = Self::pixel_to_blob(&info.legend);
-        let mut trails = TrailBuffer::new(session.clone(), &info);
+        let mut trails = TrailBuffer::new(&args, &info);
         if let Some(control) = info.controls.get(&ControlType::DopplerTrailsOnly) {
             if let Some(value) = control.value {
                 let value = value > 0.;
@@ -90,7 +88,6 @@ impl FurunoReportReceiver {
 
         FurunoReportReceiver {
             common,
-            session,
             stream: None,
             command_sender,
             report_request_interval: Duration::from_millis(5000),
@@ -247,8 +244,10 @@ impl FurunoReportReceiver {
                 self.stream = None;
             } else {
                 sleep(Duration::from_millis(1000)).await;
-                self.login_to_radar()?;
-                self.start_command_stream().await?;
+                if !self.common.replay {
+                    self.login_to_radar()?;
+                    self.start_command_stream().await?;
+                }
                 self.start_data_socket().await?;
             }
         }
@@ -258,7 +257,7 @@ impl FurunoReportReceiver {
         // Furuno radars use a single TCP/IP connection to send commands and
         // receive status reports, so report_addr and send_command_addr are identical.
         // Only one of these would be enough for Furuno.
-        let port: u16 = match super::login_to_radar(self.session.clone(), self.common.info.addr) {
+        let port: u16 = match super::login_to_radar(self.common.info.addr) {
             Err(e) => {
                 log::error!(
                     "{}: Unable to connect for login: {}",
@@ -807,8 +806,7 @@ impl FurunoReportReceiver {
 
     #[cfg(target_os = "macos")]
     fn verify_source_address(&self, addr: &SocketAddr) -> bool {
-        addr.ip() == std::net::SocketAddr::V4(self.common.info.addr).ip()
-            || self.session.read().unwrap().args.replay
+        addr.ip() == std::net::SocketAddr::V4(self.common.info.addr).ip() || self.common.replay
     }
     #[cfg(not(target_os = "macos"))]
     fn verify_source_address(&self, addr: &SocketAddr) -> bool {
@@ -1021,7 +1019,7 @@ impl FurunoReportReceiver {
         heading: SpokeBearing,
         sweep: &[u8],
     ) -> Spoke {
-        if self.session.read().unwrap().args.replay {
+        if self.common.replay {
             let _ = self
                 .common
                 .info
@@ -1056,7 +1054,7 @@ impl FurunoReportReceiver {
             spoke.data[i] = b >> 2;
             i += 1;
         }
-        if self.session.read().unwrap().args.replay {
+        if self.common.replay {
             spoke.data[sweep.len() - 1] = 64;
         }
 

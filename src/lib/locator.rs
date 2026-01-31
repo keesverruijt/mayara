@@ -27,7 +27,7 @@ use crate::brand::navico;
 use crate::brand::raymarine;
 
 use crate::radar::{RadarError, SharedRadars};
-use crate::{network, Brand, Cli, InterfaceApi, InterfaceId, RadarInterfaceApi, Session};
+use crate::{Brand, Cli, InterfaceApi, InterfaceId, RadarInterfaceApi, network};
 
 const LOCATOR_PACKET_BUFFER_LEN: usize = 300; // Long enough for any location packet
 
@@ -118,19 +118,13 @@ enum ResultType {
 }
 
 pub(crate) struct Locator {
-    pub session: Session,
     pub radars: SharedRadars,
     pub args: Cli,
 }
 
 impl Locator {
-    pub fn new(session: Session, radars: SharedRadars) -> Self {
-        let args = session.clone().args(); // session.args();
-        Locator {
-            session,
-            radars,
-            args,
-        }
+    pub fn new(args: Cli, radars: SharedRadars) -> Self {
+        Locator { radars, args }
     }
 
     pub async fn run(
@@ -325,18 +319,18 @@ impl Locator {
 
         #[cfg(feature = "navico")]
         if args.brand.unwrap_or(Brand::Navico) == Brand::Navico {
-            locators.push(navico::create_locator(self.session.clone()));
-            locators.push(navico::create_br24_locator(self.session.clone()));
+            locators.push(navico::create_locator(args.clone()));
+            locators.push(navico::create_br24_locator(args.clone()));
             brands.insert(Brand::Navico);
         }
         #[cfg(feature = "furuno")]
         if args.brand.unwrap_or(Brand::Furuno) == Brand::Furuno {
-            locators.push(furuno::create_locator(self.session.clone()));
+            locators.push(furuno::create_locator(args.clone()));
             brands.insert(Brand::Furuno);
         }
         #[cfg(feature = "raymarine")]
         if args.brand.unwrap_or(Brand::Raymarine) == Brand::Raymarine {
-            locators.push(raymarine::create_locator(self.session.clone()));
+            locators.push(raymarine::create_locator(args.clone()));
             brands.insert(Brand::Raymarine);
         }
 
@@ -390,10 +384,10 @@ impl Locator {
                                     {
                                         if interface_state.inactive_nic_names.remove(&itf.name) {
                                             log::info!(
-                                            "Searching for radars on interface '{}' address {} (added/modified)",
-                                            itf.name,
-                                            &nic_ip,
-                                        );
+                                                "Searching for radars on interface '{}' address {} (added/modified)",
+                                                itf.name,
+                                                &nic_ip,
+                                            );
                                         } else {
                                             log::info!(
                                                 "Searching for radars on interface '{}' address {}",
@@ -439,15 +433,20 @@ impl Locator {
                                                     });
                                                     log::debug!(
                                                         "Listening on '{}' address {} for address {}",
-                                                        itf.name, nic_ip, listen_addr,
+                                                        itf.name,
+                                                        nic_ip,
+                                                        listen_addr,
                                                     );
                                                     "Listening".to_owned()
                                                 }
                                                 Err(e) => {
                                                     log::warn!(
-                                                    "Cannot listen on '{}' address {} for address {}: {}",
-                                                    itf.name, nic_ip, listen_addr, e
-                                                );
+                                                        "Cannot listen on '{}' address {} for address {}: {}",
+                                                        itf.name,
+                                                        nic_ip,
+                                                        listen_addr,
+                                                        e
+                                                    );
                                                     e.to_string()
                                                 }
                                             };

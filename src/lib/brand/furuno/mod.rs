@@ -12,7 +12,7 @@ use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState};
 use crate::radar::{RadarInfo, SharedRadars};
 use crate::util::{PrintableSlice, c_string};
-use crate::{Brand, Session};
+use crate::{Brand, Cli};
 
 mod command;
 mod report;
@@ -157,12 +157,7 @@ struct FurunoRadarModelReport {
 
 const LOGIN_TIMEOUT: Duration = Duration::from_millis(500);
 
-fn login_to_radar(session: Session, radar_addr: SocketAddrV4) -> Result<u16, io::Error> {
-    if session.read().unwrap().args.replay {
-        log::warn!("Replay mode, not logging in to radar",);
-        return Ok(0);
-    }
-
+fn login_to_radar(radar_addr: SocketAddrV4) -> Result<u16, io::Error> {
     let mut stream =
         std::net::TcpStream::connect_timeout(&std::net::SocketAddr::V4(radar_addr), LOGIN_TIMEOUT)?;
 
@@ -204,7 +199,7 @@ fn login_to_radar(session: Session, radar_addr: SocketAddrV4) -> Result<u16, io:
 
 #[derive(Clone)]
 struct FurunoLocatorState {
-    session: Session,
+    args: Cli,
     radar_keys: HashMap<SocketAddrV4, String>,
     model_found: bool,
 }
@@ -227,9 +222,9 @@ impl RadarLocatorState for FurunoLocatorState {
 }
 
 impl FurunoLocatorState {
-    fn new(session: Session, radar_keys: HashMap<SocketAddrV4, String>, model_found: bool) -> Self {
+    fn new(args: Cli, radar_keys: HashMap<SocketAddrV4, String>, model_found: bool) -> Self {
         FurunoLocatorState {
-            session,
+            args,
             radar_keys,
             model_found,
         }
@@ -258,7 +253,7 @@ impl FurunoLocatorState {
             // Furuno radars use a single TCP/IP connection to send commands and
             // receive status reports, so report_addr and send_command_addr are identical.
             // Only one of these would be enough for Furuno.
-            let port: u16 = match login_to_radar(self.session.clone(), info.addr) {
+            let port: u16 = match login_to_radar(info.addr) {
                 Err(e) => {
                     log::error!("{}: Unable to connect for login: {}", info.key(), e);
                     radars.remove(&info.key());
@@ -277,8 +272,9 @@ impl FurunoLocatorState {
 
             info.start_forwarding_radar_messages_to_stdout(&subsys);
 
-            if !self.session.read().unwrap().args.replay {
-                let report_receiver = report::FurunoReportReceiver::new(self.session.clone(), info);
+            if !self.args.replay {
+                let report_receiver =
+                    report::FurunoReportReceiver::new(&self.args, radars.clone(), info);
                 subsys.start(SubsystemBuilder::new(report_name, |s| {
                     report_receiver.run(s)
                 }));
@@ -361,7 +357,7 @@ impl FurunoLocatorState {
                     let report_addr: SocketAddrV4 = SocketAddrV4::new(*from.ip(), 0); // Port is set in login_to_radar
                     let send_command_addr: SocketAddrV4 = report_addr.clone();
                     let location_info: RadarInfo = RadarInfo::new(
-                        self.session.clone(),
+                        &self.args,
                         LocatorId::Furuno,
                         Brand::Furuno,
                         None,
@@ -374,7 +370,7 @@ impl FurunoLocatorState {
                         spoke_data_addr,
                         report_addr,
                         send_command_addr,
-                        settings::new(self.session.clone()),
+                        settings::new(&self.args),
                         true,
                     );
                     let key = location_info.key();
@@ -446,7 +442,7 @@ impl FurunoLocatorState {
 
 #[derive(Clone)]
 struct FurunoLocator {
-    session: Session,
+    args: Cli,
 }
 
 #[async_trait]
@@ -463,7 +459,7 @@ impl RadarLocator for FurunoLocator {
                     &FURUNO_ANNOUNCE_MAYARA_PACKET,
                 ],
                 Box::new(FurunoLocatorState::new(
-                    self.session.clone(),
+                    self.args.clone(),
                     HashMap::new(),
                     false,
                 )),
@@ -472,7 +468,7 @@ impl RadarLocator for FurunoLocator {
     }
 }
 
-pub fn create_locator(session: Session) -> Box<dyn RadarLocator + Send> {
-    let locator = FurunoLocator { session };
+pub fn create_locator(args: Cli) -> Box<dyn RadarLocator + Send> {
+    let locator = FurunoLocator { args };
     Box::new(locator)
 }

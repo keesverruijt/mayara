@@ -17,7 +17,6 @@ use crate::{
     protos::RadarMessage::radar_message::Spoke,
     radar::NAUTICAL_MILE_F64,
     settings::{ControlError, ControlType},
-    Session,
 };
 
 use super::{GeoPosition, Legend, RadarInfo};
@@ -213,7 +212,6 @@ struct HistorySpokes {
 }
 #[derive(Debug, Clone)]
 pub struct TargetBuffer {
-    session: Session,
     setup: TargetSetup,
     next_target_id: usize,
     history: HistorySpokes,
@@ -330,8 +328,7 @@ impl HistorySpoke {
 }
 
 impl HistorySpokes {
-    fn new(session: Session, spokes_per_revolution: i32, spoke_len: i32) -> Self {
-        let stationary = session.read().unwrap().args.stationary;
+    fn new(stationary: bool, spokes_per_revolution: i32, spoke_len: i32) -> Self {
         log::debug!(
             "creating HistorySpokes ({} x {}) stationary: {}",
             spokes_per_revolution,
@@ -475,7 +472,7 @@ impl HistorySpokes {
                 min_r = current;
             }
         } // contour length is less than m_min_contour_length
-          // before returning false erase this blob so we do not have to check this one again
+        // before returning false erase this blob so we do not have to check this one again
         if min_angle.angle < 0 {
             min_angle.angle += self.spokes.len() as i32;
             max_angle.angle += self.spokes.len() as i32;
@@ -797,13 +794,11 @@ impl TargetSetup {
 }
 
 impl TargetBuffer {
-    pub fn new(session: Session, info: &RadarInfo) -> Self {
-        let stationary = session.read().unwrap().args.stationary;
+    pub fn new(stationary: bool, info: &RadarInfo) -> Self {
         let spokes_per_revolution = info.spokes_per_revolution as i32;
         let spoke_len = info.max_spoke_len as i32;
 
         TargetBuffer {
-            session: session.clone(),
             setup: TargetSetup {
                 radar_id: info.id,
                 spokes_per_revolution,
@@ -818,7 +813,7 @@ impl TargetBuffer {
             next_target_id: 0,
             arpa_via_doppler: false,
 
-            history: HistorySpokes::new(session.clone(), spokes_per_revolution, spoke_len),
+            history: HistorySpokes::new(stationary, spokes_per_revolution, spoke_len),
             targets: Arc::new(RwLock::new(HashMap::new())),
             m_clear_contours: false,
             m_auto_learn_state: 0,
@@ -846,7 +841,7 @@ impl TargetBuffer {
 
     fn reset_history(&mut self) {
         self.history = HistorySpokes::new(
-            self.session.clone(),
+            self.setup.stationary,
             self.setup.spokes_per_revolution,
             self.setup.spoke_len,
         );
@@ -1607,8 +1602,17 @@ impl ArpaTarget {
 
         // PREDICTION CYCLE
 
-        log::debug!("Begin prediction cycle m_target_id={}, status={:?}, angle={}, r={}, contour={}, pass={:?}, lat={}, lon={}",
-               target.m_target_id, target.m_status, pol.angle, pol.r, target.contour.length, pass, target.position.pos.lat, target.position.pos.lon);
+        log::debug!(
+            "Begin prediction cycle m_target_id={}, status={:?}, angle={}, r={}, contour={}, pass={:?}, lat={}, lon={}",
+            target.m_target_id,
+            target.m_status,
+            pol.angle,
+            pol.r,
+            target.contour.length,
+            pass,
+            target.position.pos.lat,
+            target.position.pos.lon
+        );
 
         // estimated new target time
         let delta_t = if target.m_refresh_time >= prev_position.time
@@ -1635,7 +1639,7 @@ impl ArpaTarget {
         );
 
         target.m_kalman.predict(&mut x_local, delta_t); // x_local is new estimated local position of the target
-                                                        // now set the polar to expected angular position from the expected local position
+        // now set the polar to expected angular position from the expected local position
 
         pol.angle = setup.mod_spokes(
             (f64::atan2(x_local.pos.lon, x_local.pos.lat) * setup.spokes_per_revolution_f64
@@ -1645,9 +1649,21 @@ impl ArpaTarget {
             * setup.pixels_per_meter) as i32;
 
         // zooming and target movement may  cause r to be out of bounds
-        log::trace!("PREDICTION m_target_id={}, pass={:?}, status={:?}, angle={}.{}, r={}.{}, contour={}, speed={}, sd_speed_kn={} doppler={:?}, lostcount={}",
-               target.m_target_id, pass, target.m_status, alfa0, pol.angle, r0, pol.r, target.contour.length, target.position.speed_kn,
-               target.position.sd_speed_kn, target.m_doppler_target, target.m_lost_count);
+        log::trace!(
+            "PREDICTION m_target_id={}, pass={:?}, status={:?}, angle={}.{}, r={}.{}, contour={}, speed={}, sd_speed_kn={} doppler={:?}, lostcount={}",
+            target.m_target_id,
+            pass,
+            target.m_status,
+            alfa0,
+            pol.angle,
+            r0,
+            pol.r,
+            target.contour.length,
+            target.position.speed_kn,
+            target.position.sd_speed_kn,
+            target.m_doppler_target,
+            target.m_lost_count
+        );
         if pol.r >= setup.spoke_len || pol.r <= 0 {
             // delete target if too far out
             log::trace!(
@@ -1675,8 +1691,8 @@ impl ArpaTarget {
             } else if target.position.speed_kn > 15. {
                 dist1 *= 2;
             } /*else if (self.position.speed_kn > 30.) {
-                dist1 *= 4;
-              } */
+            dist1 *= 4;
+            } */
         }
 
         let starting_position = pol;
@@ -1695,9 +1711,16 @@ impl ArpaTarget {
                 let dist_total =
                     ((dist_angle * dist_angle + dist_radial * dist_radial) as f64).sqrt() as i32;
 
-                log::debug!("id={}, Found dist_angle={}, dist_radial={}, dist_total={}, pol.angle={}, starting_position.angle={}, doppler={:?}", 
-        target.m_target_id,
-                 dist_angle, dist_radial, dist_total, pol.angle, starting_position.angle, target.m_doppler_target);
+                log::debug!(
+                    "id={}, Found dist_angle={}, dist_radial={}, dist_total={}, pol.angle={}, starting_position.angle={}, doppler={:?}",
+                    target.m_target_id,
+                    dist_angle,
+                    dist_radial,
+                    dist_total,
+                    pol.angle,
+                    starting_position.angle,
+                    target.m_doppler_target
+                );
 
                 if target.m_doppler_target != Doppler::Any {
                     let backup = target.m_doppler_target;
@@ -1720,14 +1743,26 @@ impl ArpaTarget {
                 }
 
                 history.reset_pixels(&contour, &pos, &setup.pixels_per_meter);
-                log::debug!("target Found ResetPixels m_target_id={}, angle={}, r={}, contour={}, pass={:?}, doppler={:?}",
-                 target.m_target_id, pol.angle, pol.r, target.contour.length, pass, target.m_doppler_target);
+                log::debug!(
+                    "target Found ResetPixels m_target_id={}, angle={}, r={}, contour={}, pass={:?}, doppler={:?}",
+                    target.m_target_id,
+                    pol.angle,
+                    pol.r,
+                    target.contour.length,
+                    pass,
+                    target.m_doppler_target
+                );
                 if target.contour.length >= MAX_CONTOUR_LENGTH as i32 - 2 {
                     // don't use this blob, could be radar interference
                     // The pixels of the blob have been reset, so you won't find it again
-                    log::debug!("reset found because of max contour length id={}, angle={}, r={}, contour={}, pass={:?}", 
-                target.m_target_id, pol.angle,
-                 pol.r, target.contour.length, pass);
+                    log::debug!(
+                        "reset found because of max contour length id={}, angle={}, r={}, contour={}, pass={:?}",
+                        target.m_target_id,
+                        pol.angle,
+                        pol.r,
+                        target.contour.length,
+                        pass
+                    );
                     return Err(Error::ContourLengthTooHigh);
                 }
 
@@ -1803,8 +1838,15 @@ impl ArpaTarget {
                     let test = (dist_r as f64 / size_r as f64).abs()
                         + (dist_angle as f64 / size_angle as f64).abs();
                     target.m_small_fast = test > 2.;
-                    log::debug!("smallandfast, id={}, test={}, dist_r={}, size_r={}, dist_angle={}, size_angle={}",
-          target.m_target_id, test, dist_r, size_r, dist_angle, size_angle);
+                    log::debug!(
+                        "smallandfast, id={}, test={}, dist_r={}, size_r={}, dist_angle={}, size_angle={}",
+                        target.m_target_id,
+                        test,
+                        dist_r,
+                        size_r,
+                        dist_angle,
+                        size_angle
+                    );
                 }
 
                 const FORCED_POSITION_STATUS: u32 = 8;
@@ -1830,9 +1872,16 @@ impl ArpaTarget {
                         let d_lon_dt = (delta_lon / (delta_t as f64))
                             * meters_per_degree_longitude(&new_pos.lat)
                             * 1000.;
-                        log::debug!("id={}, FORCED m_status={:?}, d_lat_dt={}, d_lon_dt={}, delta_lon_meter={}, delta_lat_meter={}, deltat={}",
-                   target.m_target_id, target.m_status, d_lat_dt, d_lon_dt,
-                     delta_lon * METERS_PER_DEGREE_LATITUDE, delta_lat * METERS_PER_DEGREE_LATITUDE, delta_t);
+                        log::debug!(
+                            "id={}, FORCED m_status={:?}, d_lat_dt={}, d_lon_dt={}, delta_lon_meter={}, delta_lat_meter={}, deltat={}",
+                            target.m_target_id,
+                            target.m_status,
+                            d_lat_dt,
+                            d_lon_dt,
+                            delta_lon * METERS_PER_DEGREE_LATITUDE,
+                            delta_lat * METERS_PER_DEGREE_LATITUDE,
+                            delta_t
+                        );
                         // force new position and speed, dependent of overridefactor
 
                         let factor: f64 = (0.8_f64).powf((target.age_rotations - 1) as f64);
@@ -1855,9 +1904,21 @@ impl ArpaTarget {
                         target.m_course += 360.;
                     }
 
-                    log::debug!("FOUND {:?} CYCLE id={}, status={:?}, age={}, angle={}.{}, r={}.{}, contour={}, speed={}, sd_speed_kn={}, doppler={:?}",
-                        pass, target.m_target_id, target.m_status, target.age_rotations, alfa0, pol.angle, r0, pol.r, target.contour.length, target.position.speed_kn,
-                        target.position.sd_speed_kn, target.m_doppler_target);
+                    log::debug!(
+                        "FOUND {:?} CYCLE id={}, status={:?}, age={}, angle={}.{}, r={}.{}, contour={}, speed={}, sd_speed_kn={}, doppler={:?}",
+                        pass,
+                        target.m_target_id,
+                        target.m_status,
+                        target.age_rotations,
+                        alfa0,
+                        pol.angle,
+                        r0,
+                        pol.r,
+                        target.contour.length,
+                        target.position.speed_kn,
+                        target.position.sd_speed_kn,
+                        target.m_doppler_target
+                    );
 
                     target.m_previous_contour_length = target.contour.length;
                     // send target data to OCPN and other radar

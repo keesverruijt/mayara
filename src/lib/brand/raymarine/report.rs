@@ -6,7 +6,7 @@ use tokio::net::UdpSocket;
 use tokio::time::{Instant, sleep, sleep_until};
 use tokio_graceful_shutdown::SubsystemHandle;
 
-use crate::Session;
+use crate::Cli;
 use crate::brand::raymarine::RaymarineModel;
 use crate::network::create_udp_multicast_listen;
 use crate::radar::range::Ranges;
@@ -85,13 +85,12 @@ pub(crate) struct RaymarineReportReceiver {
 
 impl RaymarineReportReceiver {
     pub fn new(
-        session: Session,
+        args: &Cli,
         info: RadarInfo, // Quick access to our own RadarInfo
         radars: SharedRadars,
     ) -> RaymarineReportReceiver {
         let key = info.key();
 
-        let args = session.read().unwrap().args.clone();
         let replay = args.replay;
         log::debug!(
             "{}: Creating RaymarineReportReceiver with args {:?}",
@@ -103,7 +102,7 @@ impl RaymarineReportReceiver {
         let control_update_rx = info.controls.control_update_subscribe();
 
         let pixel_to_blob = pixel_to_blob(&info.legend);
-        let trails = TrailBuffer::new(session.clone(), &info);
+        let trails = TrailBuffer::new(args, &info);
 
         let common = CommonRadar::new(key, info, radars, trails, control_update_rx, replay);
 
@@ -373,7 +372,7 @@ impl RaymarineReportReceiver {
             if let Some(command_sender) = &mut self.command_sender {
                 command_sender.set_ranges(self.common.info.ranges.clone());
             }
-            self.common.update(&self.common.info);
+            self.common.update();
         }
     }
 }

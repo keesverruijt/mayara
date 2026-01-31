@@ -19,7 +19,7 @@ use super::{
     SPOKES_PER_FRAME,
 };
 
-use crate::Session;
+use crate::Cli;
 use crate::brand::navico::info::{
     HaloHeadingPacket, HaloNavigationPacket, HaloSpeedPacket, Information,
 };
@@ -454,14 +454,13 @@ const REPORT_08_C4_18_OR_21_OR_22_OR_32: u8 = 0x08;
 
 impl NavicoReportReceiver {
     pub fn new(
-        session: Session,
+        args: &Cli,
         info: RadarInfo, // Quick access to our own RadarInfo
         radars: SharedRadars,
         model: Model,
     ) -> NavicoReportReceiver {
         let key = info.key();
 
-        let args = session.read().unwrap().args.clone();
         let replay = args.replay;
         log::debug!(
             "{}: Creating NavicoReportReceiver with args {:?}",
@@ -471,7 +470,7 @@ impl NavicoReportReceiver {
         // If we are in replay mode, we don't need a command sender, as we will not send any commands
         let command_sender = if !replay {
             log::debug!("{}: Starting command sender", key);
-            Some(Command::new(session.clone(), info.clone(), model.clone()))
+            Some(Command::new(args.fake_errors, info.clone(), model.clone()))
         } else {
             log::debug!("{}: No command sender, replay mode", key);
             None
@@ -487,7 +486,7 @@ impl NavicoReportReceiver {
         let control_update_rx = info.controls.control_update_subscribe();
 
         let pixel_to_blob = pixel_to_blob(&info.legend);
-        let trails = TrailBuffer::new(session.clone(), &info);
+        let trails = TrailBuffer::new(&args, &info);
 
         let common = CommonRadar::new(key, info, radars, trails, control_update_rx, replay);
 
@@ -1014,7 +1013,7 @@ impl NavicoReportReceiver {
                     self.common.info.range_detection = None;
                     self.range_timeout = Instant::now() + FAR_FUTURE;
 
-                    self.common.update(&self.common.info);
+                    self.common.update();
 
                     self.send_range(saved_range).await?;
                     if self.transmit_after_range_detection {
@@ -1286,7 +1285,7 @@ impl NavicoReportReceiver {
                     );
                     self.common.info.set_doppler(model == Model::HALO);
 
-                    self.common.update(&self.common.info);
+                    self.common.update();
                 }
             }
         }
@@ -1419,7 +1418,7 @@ impl NavicoReportReceiver {
             super::settings::update_when_model_known(&mut self.common.info.controls, model, &info2);
             self.common.info.set_doppler(model == Model::HALO);
 
-            self.common.update(&self.common.info);
+            self.common.update();
         }
 
         let report = RadarReport8_18::transmute(&data[0..size_of::<RadarReport8_18>()])?;

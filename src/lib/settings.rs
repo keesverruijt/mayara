@@ -13,8 +13,9 @@ use std::{
 use strum::{EnumIter, EnumString, IntoStaticStr};
 use thiserror::Error;
 
+use crate::Cli;
 use crate::{
-    Session, TargetMode,
+    TargetMode,
     radar::{Power, RadarError, range::Ranges},
 };
 
@@ -59,7 +60,9 @@ pub fn get_api_version() -> ApiVersion {
 #[derive(Debug, Serialize)]
 pub struct Controls {
     #[serde(skip)]
-    session: Session,
+    replay: bool,
+    #[serde(skip)]
+    targets: TargetMode,
 
     #[serde(flatten)]
     controls: HashMap<ControlType, Control>,
@@ -74,7 +77,7 @@ impl Controls {
     pub(self) fn insert(&mut self, control_type: ControlType, value: Control) {
         let v = Control {
             item: ControlDefinition {
-                is_read_only: self.session.read().unwrap().args.replay || value.item.is_read_only,
+                is_read_only: self.replay || value.item.is_read_only,
                 ..value.item
             },
             ..value
@@ -83,7 +86,7 @@ impl Controls {
         self.controls.insert(control_type, v);
     }
 
-    pub(self) fn new_base(session: Session, mut controls: HashMap<ControlType, Control>) -> Self {
+    pub(self) fn new_base(args: &Cli, mut controls: HashMap<ControlType, Control>) -> Self {
         // Add _mandatory_ controls
         if !controls.contains_key(&ControlType::ModelName) {
             controls.insert(
@@ -94,7 +97,7 @@ impl Controls {
             );
         }
 
-        if session.read().unwrap().args.replay {
+        if args.replay {
             controls.iter_mut().for_each(|(_k, v)| {
                 v.item.is_read_only = true;
             });
@@ -109,7 +112,7 @@ impl Controls {
                 .set_destination(ControlDestination::Internal),
         );
 
-        if session.read().unwrap().args.targets != TargetMode::None {
+        if args.targets != TargetMode::None {
             controls.insert(
                 ControlType::TargetTrails,
                 Control::new_map(
@@ -142,7 +145,7 @@ impl Controls {
                     .set_destination(ControlDestination::Command),
             );
 
-            if session.read().unwrap().args.targets == TargetMode::Arpa {
+            if args.targets == TargetMode::Arpa {
                 controls.insert(
                     ControlType::ClearTargets,
                     Control::new_button(ControlType::ClearTargets)
@@ -155,7 +158,8 @@ impl Controls {
         let (control_update_tx, _) = tokio::sync::broadcast::channel(32);
 
         Controls {
-            session: session.clone(),
+            replay: args.replay,
+            targets: args.targets.clone(),
             controls,
             all_clients_tx,
             control_update_tx,
@@ -164,7 +168,8 @@ impl Controls {
 
     pub fn clone(&self) -> Self {
         Controls {
-            session: self.session.clone(),
+            replay: self.replay,
+            targets: self.targets.clone(),
             controls: self.controls.clone(),
             all_clients_tx: self.all_clients_tx.clone(),
             control_update_tx: self.control_update_tx.clone(),
@@ -206,7 +211,7 @@ impl SharedControls {
     // Create a new set of controls, for a radar.
     // There is only one set that is shared amongst the various threads and
     // structs, hence the word Shared.
-    pub fn new(session: Session, mut controls: HashMap<ControlType, Control>) -> Self {
+    pub fn new(args: &Cli, mut controls: HashMap<ControlType, Control>) -> SharedControls {
         // All radars must have the same Status control
         let mut control = Control::new_list(
             ControlType::Power,
@@ -217,7 +222,7 @@ impl SharedControls {
         controls.insert(ControlType::Power, control);
 
         SharedControls {
-            controls: Arc::new(RwLock::new(Controls::new_base(session, controls))),
+            controls: Arc::new(RwLock::new(Controls::new_base(args, controls))),
         }
     }
 
@@ -1706,6 +1711,8 @@ impl Serialize for ControlType {
 
 #[cfg(test)]
 mod test {
+    use clap::Parser;
+
     use super::*;
 
     #[test]
@@ -1762,8 +1769,8 @@ mod test {
 
     #[test]
     fn control_range_values() {
-        let session = crate::Session::new_fake();
-        let controls = SharedControls::new(session, HashMap::new());
+        let args = Cli::parse_from(["my_program"]);
+        let controls = SharedControls::new(&args, HashMap::new());
 
         assert!(controls.set(&ControlType::TargetTrails, 0., None).is_ok());
         assert_eq!(

@@ -1,4 +1,4 @@
-use anyhow::{bail, Error};
+use anyhow::{Error, bail};
 use bincode::deserialize;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -9,8 +9,8 @@ use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState};
 use crate::network::LittleEndianSocketAddrV4;
 use crate::radar::{RadarInfo, SharedRadars};
-use crate::util::{c_string, PrintableSlice};
-use crate::{Brand, Session};
+use crate::util::{PrintableSlice, c_string};
+use crate::{Brand, Cli};
 
 mod command;
 mod report;
@@ -209,14 +209,14 @@ struct RadarState {
 
 #[derive(Clone)]
 struct RaymarineLocatorState {
-    session: Session,
+    args: Cli,
     ids: HashMap<LinkId, RadarState>,
 }
 
 impl RaymarineLocatorState {
-    fn new(session: Session) -> Self {
+    fn new(args: Cli) -> Self {
         RaymarineLocatorState {
-            session,
+            args,
             ids: HashMap::new(),
         }
     }
@@ -292,7 +292,7 @@ impl RaymarineLocatorState {
                     let radar_addr: SocketAddrV4 = data.report.into();
                     let radar_send: SocketAddrV4 = data.command.into();
                     let location_info: RadarInfo = RadarInfo::new(
-                        self.session.clone(),
+                        &self.args,
                         LocatorId::Raymarine,
                         Brand::Raymarine,
                         None,
@@ -305,7 +305,7 @@ impl RaymarineLocatorState {
                         radar_addr.into(),
                         radar_addr.into(),
                         radar_send.into(),
-                        settings::new(self.session.clone(), info.model),
+                        settings::new(&self.args, info.model),
                         doppler,
                     );
 
@@ -440,11 +440,8 @@ impl RaymarineLocatorState {
 
             let report_name = info.key();
             let info_clone = info.clone();
-            let report_receiver = report::RaymarineReportReceiver::new(
-                self.session.clone(),
-                info_clone,
-                radars.clone(),
-            );
+            let report_receiver =
+                report::RaymarineReportReceiver::new(&self.args, info_clone, radars.clone());
             radars.update(&info);
 
             subsys.start(SubsystemBuilder::new(report_name, |s| {
@@ -515,7 +512,7 @@ impl RadarLocatorState for RaymarineLocatorState {
 
 #[derive(Clone)]
 struct RaymarineLocator {
-    session: Session,
+    args: Cli,
 }
 
 const RAYMARINE_MFD_BEACON: [u8; 56] = [
@@ -546,7 +543,7 @@ const BEACONS: [&'static [u8]; 3] = [
 impl RadarLocator for RaymarineLocator {
     fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
         if !addresses.iter().any(|i| i.id == LocatorId::Raymarine) {
-            let beacon_address = if self.session.args().allow_wifi {
+            let beacon_address = if self.args.allow_wifi {
                 &RAYMARINE_QUANTUM_WIFI_ADDRESS
             } else {
                 &RAYMARINE_BEACON_ADDRESS
@@ -557,14 +554,14 @@ impl RadarLocator for RaymarineLocator {
                 beacon_address,
                 Brand::Raymarine,
                 BEACONS.to_vec(),
-                Box::new(RaymarineLocatorState::new(self.session.clone())),
+                Box::new(RaymarineLocatorState::new(self.args.clone())),
             ));
         }
     }
 }
 
-pub fn create_locator(session: Session) -> Box<dyn RadarLocator + Send> {
-    let locator = RaymarineLocator { session };
+pub fn create_locator(args: Cli) -> Box<dyn RadarLocator + Send> {
+    let locator = RaymarineLocator { args };
     Box::new(locator)
 }
 
@@ -572,11 +569,13 @@ pub fn create_locator(session: Session) -> Box<dyn RadarLocator + Send> {
 mod tests {
     use std::net::{Ipv4Addr, SocketAddrV4};
 
-    use crate::brand::raymarine::RaymarineLocatorState;
+    use clap::Parser;
+
+    use crate::{Cli, brand::raymarine::RaymarineLocatorState};
 
     #[test]
     fn decode_raymarine_locator_beacon() {
-        let session = crate::Session::new_fake();
+        let args = Cli::parse_from(["my_program"]);
 
         const VIA: Ipv4Addr = Ipv4Addr::new(1, 1, 1, 1);
 
@@ -648,7 +647,7 @@ mod tests {
             0x33, 0xc0, 0x13, 0x2, 0x0, 0x1, 0x0,
         ];
 
-        let mut state = RaymarineLocatorState::new(session.clone());
+        let mut state = RaymarineLocatorState::new(args.clone());
         let r = state.process_beacon_36_report(&DATA1_36, &VIA);
         assert!(r.is_ok());
         let r = r.unwrap();
@@ -676,7 +675,7 @@ mod tests {
             SocketAddrV4::new(Ipv4Addr::new(232, 1, 243, 1), 2574)
         );
 
-        let mut state = RaymarineLocatorState::new(session.clone());
+        let mut state = RaymarineLocatorState::new(args.clone());
         let r = state.process_beacon_36_report(&DATA2_36, &VIA);
         assert!(r.is_ok());
         let r = r.unwrap();
@@ -704,7 +703,7 @@ mod tests {
             SocketAddrV4::new(Ipv4Addr::new(232, 1, 167, 1), 2574)
         );
 
-        let mut state = RaymarineLocatorState::new(session.clone());
+        let mut state = RaymarineLocatorState::new(args.clone());
         let r = state.process_beacon_36_report(&DATA3_36, &VIA);
         assert!(r.is_ok());
         let r = r.unwrap();

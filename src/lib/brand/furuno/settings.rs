@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 
 use crate::{
-    Session,
+    Cli,
     radar::{NAUTICAL_MILE, RadarInfo, range::Ranges},
     settings::{Control, ControlType, HAS_AUTO_NOT_ADJUSTABLE, SharedControls},
 };
 
 use super::{FURUNO_SPOKES, RadarModel};
 
-pub fn new(session: Session) -> SharedControls {
+pub fn new(args: &Cli) -> SharedControls {
     let mut controls = HashMap::new();
 
     controls.insert(
@@ -58,7 +58,7 @@ pub fn new(session: Session) -> SharedControls {
         );
     }
 
-    SharedControls::new(session, controls)
+    SharedControls::new(args, controls)
 }
 
 pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version: &str) {

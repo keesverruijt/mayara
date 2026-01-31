@@ -27,7 +27,7 @@ use crate::locator::LocatorId;
 use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::trail::TrailBuffer;
 use crate::settings::{ControlError, ControlType, ControlUpdate, ControlValue, SharedControls};
-use crate::{Brand, Session, TargetMode};
+use crate::{Brand, Cli, TargetMode};
 use range::{RangeDetection, Ranges};
 
 pub const NAUTICAL_MILE: i32 = 1852; // 1 nautical mile in meters
@@ -214,7 +214,7 @@ pub struct RadarInfo {
 
 impl RadarInfo {
     pub fn new(
-        session: Session,
+        args: &Cli,
         locator_id: LocatorId,
         brand: Brand,
         serial_no: Option<&str>,
@@ -233,8 +233,11 @@ impl RadarInfo {
         let (message_tx, _message_rx) = tokio::sync::broadcast::channel(32);
 
         let (targets, replay, output) = {
-            let cli = &session.read().unwrap().args;
-            (cli.targets.clone(), cli.replay.clone(), cli.output.clone())
+            (
+                args.targets.clone(),
+                args.replay.clone(),
+                args.output.clone(),
+            )
         };
         let legend = default_legend(&targets, false, pixel_values);
 
@@ -854,7 +857,7 @@ pub trait CommandSender {
     ) -> Result<(), RadarError>;
 }
 
-pub struct CommonRadar {
+pub(crate) struct CommonRadar {
     pub key: String,
     pub info: RadarInfo,
     radars: SharedRadars,
@@ -884,8 +887,8 @@ impl CommonRadar {
         }
     }
 
-    pub(crate) fn update(&self, radar_info: &RadarInfo) {
-        self.radars.update(radar_info);
+    pub(crate) fn update(&self) {
+        self.radars.update(&self.info);
     }
 
     pub async fn process_control_update<T: CommandSender>(
