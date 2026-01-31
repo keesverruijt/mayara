@@ -136,8 +136,6 @@ async fn spokes_handler(
         .read()
         .unwrap()
         .radars
-        .as_ref()
-        .unwrap()
         .get_by_id(&params.key)
         .clone()
     {

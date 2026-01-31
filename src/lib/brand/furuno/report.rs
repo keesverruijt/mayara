@@ -24,7 +24,7 @@ use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::radar::CommonRadar;
 use crate::radar::SpokeBearing;
 use crate::radar::trail::TrailBuffer;
-use crate::radar::{RadarError, RadarInfo, Power};
+use crate::radar::{Power, RadarError, RadarInfo};
 use crate::settings::ControlType;
 use crate::util::PrintableSpoke;
 
@@ -68,7 +68,7 @@ impl FurunoReportReceiver {
 
         let args = session.read().unwrap().args.clone();
         let replay = args.replay;
-        let radars = session.read().unwrap().radars.clone().unwrap();
+        let radars = session.read().unwrap().radars.clone();
         let command_sender = if replay {
             Some(Command::new(&info))
         } else {

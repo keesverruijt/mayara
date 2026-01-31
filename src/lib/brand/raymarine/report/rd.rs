@@ -630,7 +630,7 @@ pub(super) fn process_info_report(receiver: &mut RaymarineReportReceiver, data: 
 
     receiver.common.info.set_doppler(model.doppler);
     receiver.pixel_to_blob = pixel_to_blob(&receiver.common.info.legend);
-    receiver.common.radars.update(&receiver.common.info);
+    receiver.common.update(&receiver.common.info);
     receiver.model = Some(model);
     receiver.state = ReceiverState::InfoRequestReceived;
 }

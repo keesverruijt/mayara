@@ -9,7 +9,7 @@ use crate::brand::raymarine::{RaymarineModel, hd_to_pixel_values, settings};
 use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::range::{Range, Ranges};
 use crate::radar::spoke::{GenericSpoke, to_protobuf_spoke};
-use crate::radar::{SpokeBearing, Power};
+use crate::radar::{Power, SpokeBearing};
 use crate::settings::ControlType;
 
 use super::{RaymarineReportReceiver, ReceiverState};
@@ -262,7 +262,7 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
             receiver.common.info.ranges
         );
         // Tell the UI about the range
-        receiver.common.radars.update(&receiver.common.info);
+        receiver.common.update(&receiver.common.info);
     }
     let range_meters = receiver
         .common
@@ -379,7 +379,7 @@ pub(super) fn process_info_report(receiver: &mut RaymarineReportReceiver, data: 
                 .set_pixel_values(hd_to_pixel_values(model.hd));
             receiver.common.info.set_doppler(model.doppler);
             receiver.pixel_to_blob = pixel_to_blob(&receiver.common.info.legend);
-            receiver.common.radars.update(&receiver.common.info);
+            receiver.common.update(&receiver.common.info);
 
             // If we are in replay mode, we don't need a command sender, as we will not send any commands
             let command_sender = if !receiver.common.replay {

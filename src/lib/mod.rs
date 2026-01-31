@@ -199,7 +199,7 @@ impl Serialize for InterfaceId {
 pub struct SessionInner {
     pub args: Cli,
     pub tx_interface_request: broadcast::Sender<Option<mpsc::Sender<InterfaceApi>>>,
-    pub radars: Option<SharedRadars>,
+    pub radars: SharedRadars,
 }
 
 #[derive(Clone)]
@@ -225,27 +225,25 @@ impl Session {
     #[cfg(test)]
     pub fn new_fake() -> Self {
         // This does not actually start anything - only use for testing
-        Self::new_base(Cli::parse_from(["my_program"]))
+        Self::new_base(Cli::parse_from(["my_program"]), SharedRadars::new())
     }
 
-    fn new_base(args: Cli) -> Self {
+    fn new_base(args: Cli, radars: SharedRadars) -> Self {
         let (tx_interface_request, _) = broadcast::channel(10);
         let selfref = Session {
             inner: Arc::new(RwLock::new(SessionInner {
                 args,
                 tx_interface_request,
-                radars: None,
+                radars,
             })),
         };
         selfref
     }
 
     pub async fn new(subsystem: &SubsystemHandle, args: Cli) -> Self {
-        let session = Self::new_base(args);
+        let radars = SharedRadars::new();
 
-        let radars = SharedRadars::new(session.clone());
-
-        session.write().unwrap().radars = Some(radars.clone());
+        let session = Self::new_base(args, radars.clone());
 
         let locator = Locator::new(session.clone(), radars);
 

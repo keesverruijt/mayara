@@ -18,7 +18,10 @@ use http::StatusCode;
 use hyper;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr, str::FromStr};
-use tokio::sync::{broadcast::Sender, mpsc};
+use tokio::sync::{
+    broadcast::{self, Sender},
+    mpsc,
+};
 
 use super::{
     ApiVersion, Message, Web, WebSocket, WebSocketHandlerParameters, WebSocketUpgrade,
@@ -26,7 +29,7 @@ use super::{
 };
 use mayara::{
     Session,
-    radar::{Legend, RadarError, RadarInfo},
+    radar::{Legend, RadarError, RadarInfo, SharedRadars},
     settings::{Control, ControlType, ControlValue},
 };
 
@@ -106,16 +109,7 @@ async fn get_radars(
     log::debug!("target host = '{}'", host);
 
     let mut api: HashMap<String, RadarApiV3> = HashMap::new();
-    for info in state
-        .session
-        .read()
-        .unwrap()
-        .radars
-        .as_ref()
-        .unwrap()
-        .get_active()
-        .clone()
-    {
+    for info in state.session.read().unwrap().radars.get_active().clone() {
         let id = format!("radar-{}", info.id);
         let stream_url = format!("ws://{}{}{}", host, super::v1::SPOKES_URI, id);
         let name = info.controls.user_name();
@@ -265,8 +259,6 @@ async fn get_radar(
         .read()
         .unwrap()
         .radars
-        .as_ref()
-        .unwrap()
         .get_by_id(&radar_id)
         .clone()
     {
@@ -325,8 +317,7 @@ async fn set_control_value(
 
     // Get the radar info and control type without holding the lock across await
     let (controls, control_type) = {
-        let session = state.session.read().unwrap();
-        let radars = session.radars.as_ref().unwrap();
+        let radars = state.session.read().unwrap().radars.clone();
 
         match radars.get_by_id(&radar_id) {
             Some(radar) => {
@@ -472,41 +463,43 @@ async fn stream_handler(
 
     let ws = ws.accept_compression(true);
 
-    let session = state.session.clone();
+    let radars = state.session.read().unwrap().radars.clone();
     let shutdown_tx = state.shutdown_tx.clone();
 
     // finalize the upgrade process by returning upgrade callback.
     // we can customize the callback by sending additional info such as address.
-    ws.on_upgrade(move |socket| ws_signalk_delta(socket, params))
+    ws.on_upgrade(move |socket| ws_signalk_delta(socket, params, radars, shutdown_tx))
 }
 
 /// Actual websocket statemachine (one will be spawned per connection)
 /// This needs to handle the (complex) Signal K state, which can request data from multiple
 /// radars using a single websocket
 ///
-async fn ws_signalk_delta(mut socket: WebSocket, params: SignalKWebSocket) {
-    let shutdown_tx: Sender<()> = tokio::sync::broadcast::channel(1).0;
-    // let (reply_tx, mut reply_rx) = tokio::sync::mpsc::channel(60);
+async fn ws_signalk_delta(
+    mut socket: WebSocket,
+    params: SignalKWebSocket,
+    radars: SharedRadars,
+    shutdown_tx: broadcast::Sender<()>,
+) {
+    let (reply_tx, mut reply_rx) = tokio::sync::mpsc::channel(60);
 
     log::debug!("Starting /stream v3 websocket");
 
-    /* if let Some(subscribe) = params.subscribe {
-           if subscribe != "none" {
-               for shared_radars in session.read().unwrap().radars.iter() {
-                   for radar in shared_radars.get_active() {
-                       if radar
-                           .controls
-                           .send_all_controls(reply_tx.clone())
-                           .await
-                           .is_err()
-                       {
-                           return;
-                       }
-                   }
-               }
-           }
-       }
-    */
+    if let Some(subscribe) = params.subscribe {
+        if subscribe != "none" {
+            for radar in radars.get_active() {
+                if radar
+                    .controls
+                    .send_all_controls(reply_tx.clone())
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        }
+    }
+
     loop {
         let mut shutdown_rx = shutdown_tx.subscribe();
 

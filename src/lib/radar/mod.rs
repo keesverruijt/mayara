@@ -180,8 +180,13 @@ impl fmt::Display for GeoPosition {
 
 #[derive(Clone, Debug)]
 pub struct RadarInfo {
-    session: Session,
     key: String,
+
+    // selected items from Cli args:
+    targets: TargetMode,
+    replay: bool,
+    output: bool,
+
     pub id: usize,
     pub locator_id: LocatorId,
     pub brand: Brand,
@@ -227,10 +232,16 @@ impl RadarInfo {
     ) -> Self {
         let (message_tx, _message_rx) = tokio::sync::broadcast::channel(32);
 
-        let legend = default_legend(session.clone(), false, pixel_values);
+        let (targets, replay, output) = {
+            let cli = &session.read().unwrap().args;
+            (cli.targets.clone(), cli.replay.clone(), cli.output.clone())
+        };
+        let legend = default_legend(&targets, false, pixel_values);
 
         let info = RadarInfo {
-            session,
+            targets,
+            replay,
+            output,
             key: {
                 let mut key = brand.to_string();
 
@@ -288,7 +299,7 @@ impl RadarInfo {
 
     pub fn set_doppler(&mut self, doppler: bool) {
         if doppler != self.doppler {
-            self.legend = default_legend(self.session.clone(), doppler, self.pixel_values);
+            self.legend = default_legend(&self.targets, doppler, self.pixel_values);
             log::info!("Doppler changed to {}", doppler);
             self.doppler = doppler;
         }
@@ -296,7 +307,7 @@ impl RadarInfo {
 
     pub fn set_pixel_values(&mut self, pixel_values: u8) {
         if pixel_values != self.pixel_values {
-            self.legend = default_legend(self.session.clone(), self.doppler, pixel_values);
+            self.legend = default_legend(&self.targets, self.doppler, pixel_values);
             log::info!("Pixel_values changed to {}", pixel_values);
         }
         self.pixel_values = pixel_values;
@@ -371,7 +382,7 @@ impl RadarInfo {
     }
 
     pub fn start_forwarding_radar_messages_to_stdout(&self, subsys: &SubsystemHandle) {
-        if self.session.read().unwrap().args.output {
+        if self.output {
             let info_clone2 = self.clone();
 
             subsys.start(SubsystemBuilder::new("stdout", move |s| {
@@ -434,14 +445,12 @@ impl Display for RadarInfo {
 
 #[derive(Clone)]
 pub struct SharedRadars {
-    session: Session,
     radars: Arc<RwLock<Radars>>,
 }
 
 impl SharedRadars {
-    pub fn new(session: Session) -> Self {
+    pub fn new() -> Self {
         SharedRadars {
-            session,
             radars: Arc::new(RwLock::new(Radars {
                 info: HashMap::new(),
                 persistent_data: Persistence::new(),
@@ -455,7 +464,7 @@ impl SharedRadars {
         let mut radars = self.radars.write().unwrap();
 
         // For now, drop second radar in replay Mode...
-        if self.session.read().unwrap().args.replay && key.ends_with("-B") {
+        if new_info.replay && key.ends_with("-B") {
             return None;
         }
 
@@ -682,7 +691,7 @@ pub const BLOB_HISTORY_COLORS: u8 = 32;
 const TRANSPARENT: u8 = 0;
 const OPAQUE: u8 = 255;
 
-fn default_legend(session: Session, doppler: bool, pixel_values: u8) -> Legend {
+fn default_legend(targets: &TargetMode, doppler: bool, pixel_values: u8) -> Legend {
     let mut legend = Legend {
         pixels: Vec::new(),
         target_colors: 0,
@@ -759,7 +768,7 @@ fn default_legend(session: Session, doppler: bool, pixel_values: u8) -> Legend {
         },
     });
 
-    if session.read().unwrap().args.targets == TargetMode::Arpa {
+    if *targets == TargetMode::Arpa {
         legend.border = legend.pixels.len() as u8;
         legend.pixels.push(Lookup {
             r#type: PixelType::TargetBorder,
@@ -797,7 +806,7 @@ fn default_legend(session: Session, doppler: bool, pixel_values: u8) -> Legend {
         });
     }
 
-    if session.read().unwrap().args.targets != TargetMode::None {
+    if *targets != TargetMode::None {
         legend.history_start = legend.pixels.len() as u8;
         const START_DENSITY: u8 = 255; // Target trail starts as white
         const END_DENSITY: u8 = 63; // Ends as gray
@@ -829,7 +838,8 @@ mod tests {
     #[test]
     fn legend() {
         let session = crate::Session::new_fake();
-        let legend = default_legend(session.clone(), true, 16);
+        let targets = session.read().unwrap().args.targets.clone();
+        let legend = default_legend(&targets, true, 16);
         let json = serde_json::to_string_pretty(&legend).unwrap();
         println!("{}", json);
     }
@@ -847,7 +857,7 @@ pub trait CommandSender {
 pub struct CommonRadar {
     pub key: String,
     pub info: RadarInfo,
-    pub radars: SharedRadars,
+    radars: SharedRadars,
     pub statistics: Statistics,
     pub trails: TrailBuffer,
     pub control_update_rx: broadcast::Receiver<ControlUpdate>,
@@ -872,6 +882,10 @@ impl CommonRadar {
             control_update_rx,
             replay,
         }
+    }
+
+    pub(crate) fn update(&self, radar_info: &RadarInfo) {
+        self.radars.update(radar_info);
     }
 
     pub async fn process_control_update<T: CommandSender>(

@@ -1014,7 +1014,7 @@ impl NavicoReportReceiver {
                     self.common.info.range_detection = None;
                     self.range_timeout = Instant::now() + FAR_FUTURE;
 
-                    self.common.radars.update(&self.common.info);
+                    self.common.update(&self.common.info);
 
                     self.send_range(saved_range).await?;
                     if self.transmit_after_range_detection {
@@ -1286,7 +1286,7 @@ impl NavicoReportReceiver {
                     );
                     self.common.info.set_doppler(model == Model::HALO);
 
-                    self.common.radars.update(&self.common.info);
+                    self.common.update(&self.common.info);
                 }
             }
         }
@@ -1419,7 +1419,7 @@ impl NavicoReportReceiver {
             super::settings::update_when_model_known(&mut self.common.info.controls, model, &info2);
             self.common.info.set_doppler(model == Model::HALO);
 
-            self.common.radars.update(&self.common.info);
+            self.common.update(&self.common.info);
         }
 
         let report = RadarReport8_18::transmute(&data[0..size_of::<RadarReport8_18>()])?;

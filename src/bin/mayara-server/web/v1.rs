@@ -100,16 +100,7 @@ async fn get_radars(
     debug!("target host = '{}'", host);
 
     let mut api: HashMap<String, RadarApi> = HashMap::new();
-    for info in state
-        .session
-        .read()
-        .unwrap()
-        .radars
-        .as_ref()
-        .unwrap()
-        .get_active()
-        .clone()
-    {
+    for info in state.session.read().unwrap().radars.get_active().clone() {
         let legend = &info.legend;
         let id = format!("radar-{}", info.id);
         let stream_url = format!("ws://{}{}{}", host, SPOKES_URI, id);
@@ -183,8 +174,6 @@ async fn control_handler(
         .read()
         .unwrap()
         .radars
-        .as_ref()
-        .unwrap()
         .get_by_id(&params.key)
         .clone()
     {
