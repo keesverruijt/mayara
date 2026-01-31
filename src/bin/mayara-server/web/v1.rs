@@ -10,6 +10,7 @@ use log::debug;
 use num_traits::ToPrimitive;
 use serde::Serialize;
 use std::{collections::HashMap, net::SocketAddr, str::FromStr};
+use strum::EnumCount;
 use tokio::sync::mpsc;
 
 use super::{
@@ -19,7 +20,7 @@ use super::{
 
 use mayara::{
     radar::{Legend, RadarError},
-    settings::{ApiVersion, Control},
+    settings::{ApiVersion, Control, ControlType},
 };
 
 const RADAR_URI: &str = "/v1/api/radars";
@@ -185,7 +186,7 @@ async fn control_stream(
     mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
 ) {
     let mut broadcast_control_rx = radar.all_clients_rx();
-    let (reply_tx, mut reply_rx) = tokio::sync::mpsc::channel(60);
+    let (reply_tx, mut reply_rx) = tokio::sync::mpsc::channel(ControlType::COUNT);
 
     log::debug!("Starting /control v1 websocket");
 

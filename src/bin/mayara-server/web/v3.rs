@@ -18,6 +18,7 @@ use http::StatusCode;
 use hyper;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr, str::FromStr};
+use strum::EnumCount;
 use tokio::sync::{
     broadcast::{self},
     mpsc,
@@ -464,7 +465,7 @@ async fn ws_signalk_delta(
     radars: SharedRadars,
     shutdown_tx: broadcast::Sender<()>,
 ) {
-    let (reply_tx, mut reply_rx) = tokio::sync::mpsc::channel(60);
+    let (reply_tx, _reply_rx) = tokio::sync::mpsc::channel(4 * ControlType::COUNT);
 
     log::debug!("Starting /stream v3 websocket");
 
