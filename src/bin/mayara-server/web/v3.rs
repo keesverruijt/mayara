@@ -27,7 +27,7 @@ use tokio::sync::{
 use super::{Message, Web, WebSocket, WebSocketUpgrade};
 use mayara::{
     radar::{Legend, RadarError, RadarInfo, SharedRadars},
-    settings::{Control, ControlType, ControlValue},
+    settings::{Control, ControlType, ControlValue, RadarControlValue},
 };
 
 pub(super) fn routes(axum: axum::Router<Web>) -> axum::Router<Web> {
@@ -499,6 +499,7 @@ async fn ws_signalk_delta(
                 match r {
                     Ok(message) => {
 
+                        let message: SignalKDelta = message.into();
                         let message: String = serde_json::to_string(&message).unwrap();
                         let ws_message = Message::Text(message.into());
 
@@ -543,5 +544,81 @@ async fn ws_signalk_delta(
                 }
             }
         }
+    }
+}
+
+// A typical delta from SK:
+//
+// {
+//   "context": "vessels.urn:mrn:imo:mmsi:234567890",
+//   "updates": [
+//     {
+//       "source": {
+//         "label": "N2000-01",
+//         "type": "NMEA2000",
+//         "src": "115",
+//         "pgn": 128275
+//       },
+//       "values": [
+//         {
+//           "path": "navigation.trip.log",
+//           "value": 43374
+//         },
+//         {
+//           "path": "navigation.log",
+//           "value": 17404540
+//         }
+//       ]
+//     }
+//   ]
+// }
+
+#[derive(Serialize)]
+struct SignalKDelta<'a> {
+    context: &'a str,
+    updates: Vec<DeltaUpdate<'a>>,
+}
+
+#[derive(Serialize)]
+struct DeltaUpdate<'a> {
+    source: Source<'a>,
+    values: Vec<DeltaValue>,
+}
+
+#[derive(Serialize)]
+struct Source<'a> {
+    label: String,
+    r#type: &'a str,
+}
+
+#[derive(Serialize)]
+struct DeltaValue {
+    path: String,
+    value: serde_json::Value,
+}
+
+impl From<RadarControlValue> for SignalKDelta<'_> {
+    fn from(radar_control_value: RadarControlValue) -> Self {
+        let path = radar_control_value.control_value.id.to_string();
+        let mut values = Vec::new();
+        if let Some(auto) = radar_control_value.control_value.auto {
+            let path = path.clone() + "Auto";
+            let value = serde_json::Value::Bool(auto);
+            values.push(DeltaValue { path, value });
+        }
+        let value = serde_json::Value::String(radar_control_value.control_value.value);
+        values.push(DeltaValue { path, value });
+
+        let context = "self";
+        let delta_update = DeltaUpdate {
+            source: Source {
+                label: radar_control_value.radar_id,
+                r#type: "mayara",
+            },
+            values,
+        };
+
+        let updates = vec![delta_update];
+        SignalKDelta { context, updates }
     }
 }
