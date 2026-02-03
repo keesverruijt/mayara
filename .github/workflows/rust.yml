@@ -18,7 +18,7 @@ jobs:
       uses: jirutka/setup-alpine@v1.2.0
     - name: Prepare Alpine chroot
       run: |
-        apk add git curl bash g++ musl-dev make perl
+        apk add git curl bash g++ musl-dev make perl &&
         curl -sSf https://sh.rustup.rs | bash -s -- -y
       shell: alpine.sh --root {0}
     - name: Build in Alpine chroot
@@ -40,9 +40,9 @@ jobs:
       uses: actions/checkout@v4
     - name: Prepare build
       run: 
-        apt-get -q -y update
-        apt-get -q -y install git curl bash g++ musl-dev make perl
-        curl https://sh.rustup.rs | bash -s -- -y
+        apt-get -q -y update &&
+        apt-get -q -y install git curl bash g++ musl-dev make perl &&
+        curl https://sh.rustup.rs | bash -s -- -y &&
         rustup target add aarch64-unknown-linux-musl
     - name: cargo build
       run: |
