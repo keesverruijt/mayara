@@ -40,6 +40,8 @@ jobs:
     - name: Setup latest Alpine linux
       uses: jirutka/setup-alpine@v1.2.0
     - name: Prepare Alpine chroot
+      with:
+        arch: aarch64
       run: |
         apk add git curl bash g++ musl-dev make perl
         curl -sSf https://sh.rustup.rs | bash -s -- -y
@@ -59,18 +61,16 @@ jobs:
   linux_aarch64:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - name: Setup latest Alpine linux
-      uses: jirutka/setup-alpine@v1.2.0
-    - name: Prepare Alpine chroot
-      run: |
-        apk add git curl bash g++ musl-dev make perl
+    - name: Checkout code
+      uses: actions/checkout@v4
+    - name: Prepare Cross build
+      run: 
+        apt-get -q -y update
+        apt-get -q -y install git curl bash g++ musl-dev make perl
         curl -sSf https://sh.rustup.rs | bash -s -- -y
         cargo install cross
-      shell: alpine.sh --root {0}
-    - name: Build in Alpine chroot
+    - name: cross build
       run: cross build --release --target aarch64-unknown-linux-musl
-      shell: alpine.sh --root {0}
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
