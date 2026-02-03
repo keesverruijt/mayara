@@ -33,6 +33,29 @@ jobs:
         name: Mayara Linux x86_64
         path: target/release/mayara-server
 
+  linux_arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup latest Alpine linux
+      uses: jirutka/setup-alpine@v1.2.0
+    - name: Prepare Alpine chroot
+      run: |
+        apk add git curl bash g++ musl-dev make perl
+        curl -sSf https://sh.rustup.rs | bash -s -- -y
+      shell: alpine.sh --root {0}
+    - name: Build in Alpine chroot
+      run: cargo build --release
+      shell: alpine.sh --root {0}
+    - name: Run tests
+      run: cargo test --release --verbose
+      shell: alpine.sh --root {0}
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: Mayara Linux arm64
+        path: target/release/mayara-server
+
   linux_aarch64:
     runs-on: ubuntu-latest
     steps:
