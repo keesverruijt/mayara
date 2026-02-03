@@ -49,11 +49,12 @@ jobs:
         cargo version
         rustc --version
         cargo build --release --target aarch64-unknown-linux-musl
+        ls -lR target
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: Mayara Linux x86_64
-        path: target/release/mayara-server
+        name: Mayara Linux aarch64
+        path: target/aarch64-unknown-linux-musl/release/mayara-server
 
   macos_arm64:
     runs-on: macos-14
