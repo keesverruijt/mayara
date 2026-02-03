@@ -42,10 +42,13 @@ jobs:
       run: 
         apt-get -q -y update
         apt-get -q -y install git curl bash g++ musl-dev make perl
-        curl -sSf https://sh.rustup.rs | bash -s -- -y
+        curl https://sh.rustup.rs | bash -s -- -y
         rustup target add aarch64-unknown-linux-musl
     - name: cargo build
-      run: cargo build --release --target aarch64-unknown-linux-musl
+      run: |
+        cargo version
+        rustc --version
+        cargo build --release --target aarch64-unknown-linux-musl
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
