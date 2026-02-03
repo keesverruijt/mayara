@@ -1,6 +1,7 @@
 use num_derive::{FromPrimitive, ToPrimitive};
-use num_traits::FromPrimitive;
+use num_traits::{FromPrimitive, ToPrimitive};
 use serde::{Deserialize, Deserializer, Serialize, de::Visitor, ser::Serializer};
+use serde_json::{Number, Value};
 use std::cell::RefCell;
 use std::{
     borrow::Cow,
@@ -274,7 +275,7 @@ impl SharedControls {
                 match c.item().destination {
                     ControlDestination::Internal => self
                         // set_string will also set numeric values
-                        .set_string(&ControlType::UserName, control_value.value.clone())
+                        .set_value(&ControlType::UserName, control_value.value.clone())
                         .map(|_| ())
                         .map_err(|e| RadarError::ControlError(e)),
                     ControlDestination::Command => {
@@ -615,6 +616,63 @@ impl SharedControls {
         }
     }
 
+    pub fn set_value(
+        &self,
+        control_type: &ControlType,
+        value: Value,
+    ) -> Result<Option<String>, ControlError> {
+        let control = {
+            let mut locked = self.controls.write().unwrap();
+            if let Some(control) = locked.controls.get_mut(control_type) {
+                if control.item().data_type == ControlDataType::String {
+                    match value {
+                        Value::String(s) => Ok(control.set_string(s).map(|_| control.clone())),
+                        _ => Err(ControlError::Invalid(*control_type, format!("{:?}", value))),
+                    }
+                } else {
+                    match value.clone() {
+                        Value::String(s) => {
+                            let i = s.parse::<i32>().map_err(|_| {
+                                ControlError::Invalid(control_type.clone(), format!("{:?}", value))
+                            })?;
+                            control
+                                .set(i as f32, None, None, None)
+                                .map(|_| Some(control.clone()))
+                        }
+                        Value::Bool(b) => {
+                            let i = b as i32 as f32;
+                            control
+                                .set(i as f32, None, None, None)
+                                .map(|_| Some(control.clone()))
+                        }
+                        Value::Number(n) => match n.as_f64() {
+                            Some(n) => control
+                                .set(n as f32, None, None, None)
+                                .map(|_| Some(control.clone())),
+                            None => Err(ControlError::Invalid(
+                                control_type.clone(),
+                                format!("{:?}", value),
+                            )),
+                        },
+                        _ => Err(ControlError::Invalid(
+                            control_type.clone(),
+                            format!("{:?}", value),
+                        )),
+                    }
+                }
+            } else {
+                Err(ControlError::NotSupported(*control_type))
+            }
+        }?;
+
+        if let Some(control) = control {
+            self.send_to_all_clients(&control);
+            Ok(control.description.clone())
+        } else {
+            Ok(None)
+        }
+    }
+
     #[allow(dead_code)]
     fn get_description(control: &Control) -> Option<String> {
         if let (Some(value), Some(descriptions)) = (control.value, &control.item().descriptions) {
@@ -685,7 +743,7 @@ impl SharedControls {
     pub(crate) fn get_status(&self) -> Option<Power> {
         let locked = self.controls.read().unwrap();
         if let Some(control) = locked.controls.get(&ControlType::Power) {
-            return Power::from_str(&control.value()).ok();
+            return Power::from_value(&control.value()).ok();
         }
 
         None
@@ -703,7 +761,7 @@ pub struct ControlUpdate {
 #[serde(rename_all = "camelCase")]
 pub struct ControlValue {
     pub id: ControlType,
-    pub value: String,
+    pub value: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -715,7 +773,7 @@ pub struct ControlValue {
 }
 
 impl ControlValue {
-    pub fn new(id: ControlType, value: String) -> Self {
+    pub fn new(id: ControlType, value: Value) -> Self {
         ControlValue {
             id,
             value,
@@ -735,6 +793,46 @@ impl ControlValue {
             dynamic_read_only: None,
             error,
         }
+    }
+
+    pub fn as_bool(&self) -> Result<bool, RadarError> {
+        self.as_i32().map(|n| n != 0)
+    }
+
+    pub fn as_i32(&self) -> Result<i32, RadarError> {
+        self.as_i64()?
+            .try_into()
+            .map_err(|_| RadarError::CannotSetControlTypeValue(self.id, self.value.clone()))
+    }
+
+    pub fn as_i64(&self) -> Result<i64, RadarError> {
+        match self.value.clone() {
+            Value::String(s) => {
+                // TODO enum style
+                s.parse::<i64>().map_err(|_| RadarError::EnumerationFailed)
+            }
+            Value::Bool(b) => Ok(if b { 1 } else { 0 }),
+            Value::Number(n) => n.as_i64().ok_or(RadarError::EnumerationFailed),
+            _ => Err(RadarError::EnumerationFailed),
+        }
+        .map_err(|_| RadarError::CannotSetControlTypeValue(self.id, self.value.clone()))
+    }
+
+    pub fn as_f32(&self) -> Result<f32, RadarError> {
+        self.as_f64().map(|n| n as f32)
+    }
+
+    pub fn as_f64(&self) -> Result<f64, RadarError> {
+        match self.value.clone() {
+            Value::String(s) => {
+                // TODO enum style
+                s.parse::<f64>().map_err(|_| RadarError::EnumerationFailed)
+            }
+            Value::Bool(b) => Ok(if b { 1. } else { 0. }),
+            Value::Number(n) => n.as_f64().ok_or(RadarError::EnumerationFailed),
+            _ => Err(RadarError::EnumerationFailed),
+        }
+        .map_err(|_| RadarError::CannotSetControlTypeValue(self.id, self.value.clone()))
     }
 }
 
@@ -1004,18 +1102,43 @@ impl Control {
     //     self.auto
     // }
 
-    pub fn value(&self) -> String {
+    fn to_number(&self, v: f32) -> Number {
+        if let Some(n) = {
+            if v == v as i32 as f32 {
+                Number::from_i128(v as i128)
+            } else {
+                Number::from_f64(v as f64)
+            }
+        } {
+            n
+        } else {
+            panic!("Cannot reprsent {:?} as number", self);
+        }
+    }
+
+    pub fn value(&self) -> Value {
         if self.item.data_type == ControlDataType::String {
-            return self.description.clone().unwrap_or_else(|| "".to_string());
+            return Value::String(self.description.clone().unwrap_or_else(|| "".to_string()));
         }
 
         if self.auto.unwrap_or(false) && self.auto_value.is_some() {
-            return self.auto_value.unwrap().to_string();
+            return Value::Number(self.to_number(self.auto_value.unwrap()));
         }
 
+        let v: f32 = self.value.unwrap_or(self.item.default_value.unwrap_or(0.));
+
+        Value::Number(self.to_number(v))
+    }
+
+    pub fn as_f32(&self) -> Option<f32> {
         self.value
-            .unwrap_or(self.item.default_value.unwrap_or(0.))
-            .to_string()
+    }
+
+    pub fn as_u16(&self) -> Option<u16> {
+        match self.value {
+            None => None,
+            Some(n) => n.to_u16(),
+        }
     }
 
     pub fn set_auto(&mut self, auto: bool) {

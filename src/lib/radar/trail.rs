@@ -106,47 +106,42 @@ impl TrailBuffer {
                 Ok(())
             }
             ControlType::DopplerTrailsOnly => {
-                let r = controls.set_string(&cv.id, cv.value.to_string());
+                let r = controls.set_value(&cv.id, cv.value.clone());
                 if r.is_ok() {
-                    let value = cv.value.parse::<u16>().unwrap_or(0) > 0;
+                    let value = controls.get(&cv.id).unwrap().as_u16().unwrap_or(0) > 0;
                     self.set_doppler_trail_only(value);
                 }
                 r.map(|_| ()).map_err(|e| RadarError::ControlError(e))
             }
             ControlType::TargetTrails => {
-                let value = cv.value.parse::<u16>().unwrap_or(0);
+                let value = controls.get(&cv.id).unwrap().as_u16().unwrap_or(0);
                 self.set_relative_trails_length(value);
                 Ok(())
             }
-            ControlType::TrailsMotion => {
-                let true_motion = match cv.value.as_str() {
-                    "0" => false,
-                    "1" => true,
-                    _ => return Some(Err(RadarError::CannotSetControlType(cv.id))),
-                };
-                self.set_trails_mode(true_motion)
-                    .map_err(|e| RadarError::ControlError(e))
-            }
+            ControlType::TrailsMotion => match cv.as_bool() {
+                Ok(true_motion) => self
+                    .set_trails_mode(true_motion)
+                    .map_err(|e| RadarError::ControlError(e)),
+                Err(e) => Err(e),
+            },
             ControlType::ClearTargets => {
                 self.targets.as_mut().map(|t| t.delete_all_targets());
                 Ok(())
             }
-            ControlType::DopplerAutoTrack => {
-                let arpa = match cv.value.as_str() {
-                    "0" => false,
-                    "1" => true,
-                    _ => return Some(Err(RadarError::CannotSetControlType(cv.id))),
-                };
-                if let Some(ref mut targets) = self.targets {
-                    if let Err(e) = targets.set_arpa_via_doppler(arpa) {
-                        return Some(Err(RadarError::ControlError(e)));
+            ControlType::DopplerAutoTrack => match cv.as_bool() {
+                Ok(arpa) => {
+                    if let Some(ref mut targets) = self.targets {
+                        if let Err(e) = targets.set_arpa_via_doppler(arpa) {
+                            return Some(Err(RadarError::ControlError(e)));
+                        } else {
+                            Ok(())
+                        }
                     } else {
-                        Ok(())
+                        Err(RadarError::CannotSetControlType(cv.id))
                     }
-                } else {
-                    Ok(())
                 }
-            }
+                Err(e) => Err(e),
+            },
             _ => return None,
         };
 

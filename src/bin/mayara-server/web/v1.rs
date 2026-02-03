@@ -217,11 +217,12 @@ async fn control_stream(
                         if api_version != ApiVersion::V3 {
                             set_api_version(api_version);
                         }
-                        let message: String = serde_json::to_string(&message).unwrap();
+                        let str_message: String = serde_json::to_string(&message).unwrap();
                         if api_version != ApiVersion::V3 {
                             set_api_version(ApiVersion::V3);
                         }
-                        let ws_message = Message::Text(message.into());
+                        log::debug!("/control serialize {:?} as {}", message, str_message);
+                        let ws_message = Message::Text(str_message.into());
 
                         if let Err(e) = socket.send(ws_message).await {
                             log::error!("send to websocket client: {e}");
@@ -242,11 +243,13 @@ async fn control_stream(
                         if api_version != ApiVersion::V3 {
                             set_api_version(api_version);
                         }
-                        let message: String = serde_json::to_string(&message).unwrap();
+                        let str_message: String = serde_json::to_string(&message).unwrap();
                         if api_version != ApiVersion::V3 {
                             set_api_version(ApiVersion::V3);
                         }
-                        let ws_message = Message::Text(message.into());
+                        log::debug!("/control serialize {:?} as {}", message, str_message);
+
+                        let ws_message = Message::Text(str_message.into());
 
                         if let Err(e) = socket.send(ws_message).await {
                             log::error!("send to websocket client: {e}");
@@ -269,7 +272,11 @@ async fn control_stream(
                             Message::Text(message) => {
                                 if let Ok(control_value) = serde_json::from_str(&message) {
                                     log::debug!("Received ControlValue {:?}", control_value);
-                                    let _ = radar.controls.process_client_request(control_value, reply_tx.clone()).await;
+                                    match radar.controls.process_client_request(control_value, reply_tx.clone()).await
+                                    {
+                                        Ok(()) => { log::debug!("ControlValue {} handled", message); }
+                                        Err(e) => { log::warn!("ControlValue {} error: {}", message, e); }
+                                    }
                                 } else {
                                     log::error!("Unknown JSON string '{}'", message);
                                 }

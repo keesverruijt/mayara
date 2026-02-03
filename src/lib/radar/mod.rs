@@ -5,7 +5,7 @@ use enum_primitive_derive::Primitive;
 use protobuf::Message;
 use serde::Serialize;
 use serde::ser::{SerializeMap, Serializer};
-use std::str::FromStr;
+use serde_json::Value;
 use std::time::{Duration, Instant};
 use std::{
     collections::HashMap,
@@ -60,6 +60,8 @@ pub enum RadarError {
     ControlError(#[from] ControlError),
     #[error("Cannot set value for control '{0}'")]
     CannotSetControlType(ControlType),
+    #[error("Cannot control '{0}' to value {1}")]
+    CannotSetControlTypeValue(ControlType, Value),
     #[error("Missing value for control '{0}'")]
     MissingValue(ControlType),
     #[error("No such radar with key '{0}'")]
@@ -677,16 +679,24 @@ impl fmt::Display for Power {
     }
 }
 
-impl FromStr for Power {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+impl Power {
+    pub(crate) fn from_value(s: &Value) -> Result<Self, RadarError> {
         match s {
-            "Off" | "0" => Ok(Power::Off),
-            "Standby" | "1" => Ok(Power::Standby),
-            "Transmit" | "2" => Ok(Power::Transmit),
-            "Preparing" | "3" => Ok(Power::Preparing),
-            _ => Err(format!("Unknown status: {}", s)),
+            Value::Number(n) => match n.as_i64() {
+                Some(0) => Ok(Power::Off),
+                Some(1) => Ok(Power::Standby),
+                Some(2) => Ok(Power::Transmit),
+                Some(3) => Ok(Power::Preparing),
+                _ => Err(RadarError::ParseJson(format!("Unknown status: {}", s))),
+            },
+            Value::String(s) => match s.to_ascii_lowercase().as_str() {
+                "0" | "off" => Ok(Power::Off),
+                "1" | "standby" => Ok(Power::Standby),
+                "2" | "transmit" => Ok(Power::Transmit),
+                "3" | "preparing" => Ok(Power::Preparing),
+                _ => Err(RadarError::ParseJson(format!("Unknown status: {}", s))),
+            },
+            _ => Err(RadarError::ParseJson(format!("Unknown status: {}", s))),
         }
     }
 }

@@ -1,8 +1,6 @@
 use async_trait::async_trait;
 use tokio::net::UdpSocket;
 
-use std::str::FromStr;
-
 use crate::network::create_multicast_send;
 use crate::radar::{CommandSender, Power, RadarError, RadarInfo};
 use crate::settings::{ControlType, ControlValue, SharedControls};
@@ -141,10 +139,8 @@ impl CommandSender for Command {
     ) -> Result<(), RadarError> {
         log::debug!("set_control({:?},...)", cv);
 
-        let value = cv
-            .value
-            .parse::<f32>()
-            .map_err(|_| RadarError::MissingValue(cv.id))?;
+        let value = cv.as_f32()?;
+
         let deci_value = (value * 10.0) as i32;
         let auto: u8 = if cv.auto.unwrap_or(false) { 1 } else { 0 };
         let enabled: u8 = if cv.enabled.unwrap_or(false) { 1 } else { 0 };
@@ -153,7 +149,7 @@ impl CommandSender for Command {
 
         match cv.id {
             ControlType::Power => {
-                let value = match Power::from_str(&cv.value).unwrap_or(Power::Standby) {
+                let value = match Power::from_value(&cv.value).unwrap_or(Power::Standby) {
                     Power::Transmit => 1,
                     _ => 0,
                 };

@@ -1,6 +1,4 @@
-use std::str::FromStr;
-
-use crate::radar::{RadarError, Power};
+use crate::radar::{Power, RadarError};
 use crate::settings::{ControlType, ControlValue, SharedControls};
 
 use super::Command;
@@ -36,7 +34,7 @@ pub async fn set_control(
 
     match cv.id {
         ControlType::Power => {
-            let value = match Power::from_str(&cv.value).unwrap_or(Power::Standby) {
+            let value = match Power::from_value(&cv.value).unwrap_or(Power::Standby) {
                 Power::Transmit => 1,
                 _ => 0,
             };

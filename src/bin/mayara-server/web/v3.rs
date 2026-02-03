@@ -328,57 +328,58 @@ async fn set_control_value(
                 };
 
                 // Parse the value - handle compound controls {mode, value} and simple values
-                let (value_str, auto) = match &request.value {
-                    serde_json::Value::String(s) => {
-                        // Try to normalize enum values using core definition
-                        let normalized = if let Some(index) = control.enum_value_to_index(s) {
-                            control
-                                .index_to_enum_value(index)
-                                .unwrap_or_else(|| s.clone())
-                        } else {
-                            s.clone()
-                        };
-                        log::debug!("Map request {:?} to string '{}'", request, normalized);
-                        (normalized, None)
-                    }
-                    serde_json::Value::Number(n) => (n.to_string(), None),
-                    serde_json::Value::Bool(b) => (if *b { "1" } else { "0" }.to_string(), None),
-                    serde_json::Value::Object(obj) => {
-                        // Check if this is a dopplerMode compound control {"enabled": bool, "mode": "target"|"rain"}
-                        if control_id == "dopplerMode" {
-                            let enabled = obj
-                                .get("enabled")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-                            let mode_str =
-                                obj.get("mode").and_then(|v| v.as_str()).unwrap_or("target");
-                            // Convert mode string to numeric: "target" = 0, "rain" = 1
-                            let mode_val = match mode_str {
-                                "target" | "targets" => 0,
-                                "rain" => 1,
-                                _ => 0,
-                            };
-                            // Pass enabled state via 'auto' field (repurposed), mode as value
-                            (mode_val.to_string(), Some(enabled))
-                        } else {
-                            // Standard compound control: {"mode": "auto"|"manual", "value": N}
-                            let mode = obj.get("mode").and_then(|v| v.as_str()).unwrap_or("manual");
-                            let auto = Some(mode == "auto");
-                            let value = obj
-                                .get("value")
-                                .map(|v| match v {
-                                    serde_json::Value::Number(n) => n.to_string(),
-                                    serde_json::Value::String(s) => s.clone(),
-                                    _ => v.to_string(),
-                                })
-                                .unwrap_or_default();
-                            (value, auto)
-                        }
-                    }
-                    _ => (request.value.to_string(), None),
-                };
+                let (value, auto) = (request.value.clone(), None);
 
-                let mut control_value = ControlValue::new(control.item().control_type, value_str);
+                /* TODO!     match &request.value {                serde_json::Value::String(s) => {
+                    // Try to normalize enum values using core definition
+                    let normalized = if let Some(index) = control.enum_value_to_index(s) {
+                        control
+                            .index_to_enum_value(index)
+                            .unwrap_or_else(|| s.clone())
+                    } else {
+                        s.clone()
+                    };
+                    log::debug!("Map request {:?} to string '{}'", request, normalized);
+                    (normalized, None)
+                }
+                serde_json::Value::Number(n) => (n.to_string(), None),
+                serde_json::Value::Bool(b) => (if *b { "1" } else { "0" }.to_string(), None),
+                serde_json::Value::Object(obj) => {
+                    // Check if this is a dopplerMode compound control {"enabled": bool, "mode": "target"|"rain"}
+                    if control_id == "dopplerMode" {
+                        let enabled = obj
+                            .get("enabled")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        let mode_str =
+                            obj.get("mode").and_then(|v| v.as_str()).unwrap_or("target");
+                        // Convert mode string to numeric: "target" = 0, "rain" = 1
+                        let mode_val = match mode_str {
+                            "target" | "targets" => 0,
+                            "rain" => 1,
+                            _ => 0,
+                        };
+                        // Pass enabled state via 'auto' field (repurposed), mode as value
+                        (mode_val.to_string(), Some(enabled))
+                    } else {
+                        // Standard compound control: {"mode": "auto"|"manual", "value": N}
+                        let mode = obj.get("mode").and_then(|v| v.as_str()).unwrap_or("manual");
+                        let auto = Some(mode == "auto");
+                        let value = obj
+                            .get("value")
+                            .map(|v| match v {
+                                serde_json::Value::Number(n) => n.to_string(),
+                                serde_json::Value::String(s) => s.clone(),
+                                _ => v.to_string(),
+                            })
+                            .unwrap_or_default();
+                        (value, auto)
+                    }
+                }
+                _ => (request.value.to_string(), None),
+                */
+
+                let mut control_value = ControlValue::new(control.item().control_type, value);
                 control_value.auto = auto;
                 log::debug!(
                     "Map request {:?} to controlValue {:?}",
@@ -606,7 +607,7 @@ impl From<RadarControlValue> for SignalKDelta<'_> {
             let value = serde_json::Value::Bool(auto);
             values.push(DeltaValue { path, value });
         }
-        let value = serde_json::Value::String(radar_control_value.control_value.value);
+        let value = radar_control_value.control_value.value;
         values.push(DeltaValue { path, value });
 
         let context = "self";

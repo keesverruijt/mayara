@@ -2,6 +2,7 @@ use anyhow::{Error, bail};
 use bincode::deserialize;
 use num_traits::FromPrimitive;
 use serde::Deserialize;
+use serde_json::{Number, Value};
 use std::cmp::min;
 use std::io;
 use std::mem::transmute;
@@ -1033,7 +1034,9 @@ impl NavicoReportReceiver {
     }
 
     async fn send_status(&mut self, status: Power) -> Result<(), RadarError> {
-        let cv = ControlValue::new(ControlType::Power, (status as i32).to_string());
+        let status = status as i128;
+        let status = Number::from_i128(status).unwrap();
+        let cv = ControlValue::new(ControlType::Power, Value::Number(status));
         self.command_sender
             .as_mut()
             .unwrap() // Safe, as we only create a range detection when replay is false
@@ -1043,7 +1046,8 @@ impl NavicoReportReceiver {
     }
 
     async fn send_range(&mut self, range: i32) -> Result<(), RadarError> {
-        let cv: ControlValue = ControlValue::new(ControlType::Range, range.to_string());
+        let value = Number::from_i128(range as i128).unwrap();
+        let cv: ControlValue = ControlValue::new(ControlType::Range, Value::Number(value));
         self.command_sender
             .as_mut()
             .unwrap() // Safe, as we only create a range detection when replay is false

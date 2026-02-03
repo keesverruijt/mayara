@@ -89,10 +89,7 @@ impl CommandSender for Command {
         cv: &ControlValue,
         controls: &SharedControls,
     ) -> Result<(), RadarError> {
-        let value = cv
-            .value
-            .parse::<f32>()
-            .map_err(|_| RadarError::MissingValue(cv.id))?;
+        let value = cv.as_f32()?;
 
         match self.model {
             BaseModel::RD => rd::set_control(self, cv, value, controls).await,

@@ -1,6 +1,4 @@
-use std::str::FromStr;
-
-use crate::radar::{RadarError, Power};
+use crate::radar::{Power, RadarError};
 use crate::settings::{ControlType, ControlValue, SharedControls};
 
 use super::Command;
@@ -45,7 +43,7 @@ pub async fn set_control(
 
     match cv.id {
         ControlType::Power => {
-            let value = match Power::from_str(&cv.value).unwrap_or(Power::Standby) {
+            let value = match Power::from_value(&cv.value).unwrap_or(Power::Standby) {
                 Power::Transmit => 1,
                 _ => 0,
             };
@@ -164,7 +162,10 @@ async fn send_no_transmit_cmd(
 ) -> Result<Vec<u8>, RadarError> {
     let mut cmd = Vec::with_capacity(12);
 
-    log::info!("{}: send_no_transmit_cmd start={value_start} end={value_end} enabled={enabled} sector={sector}", command.info.key());
+    log::info!(
+        "{}: send_no_transmit_cmd start={value_start} end={value_end} enabled={enabled} sector={sector}",
+        command.info.key()
+    );
     two_byte_command(
         &mut cmd,
         &[0x05, 0x04],

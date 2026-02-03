@@ -1,13 +1,12 @@
 use async_trait::async_trait;
 use enum_primitive_derive::Primitive;
 use std::fmt::Write;
-use std::str::FromStr;
 use tokio::io::{AsyncWriteExt, WriteHalf};
 use tokio::net::TcpStream;
 
 use super::CommandMode;
 use crate::radar::range::Ranges;
-use crate::radar::{CommandSender, RadarError, RadarInfo, Power};
+use crate::radar::{CommandSender, Power, RadarError, RadarInfo};
 use crate::settings::{ControlType, ControlValue, SharedControls};
 
 #[derive(Primitive, PartialEq, Eq, Debug, Clone)]
@@ -306,10 +305,7 @@ impl CommandSender for Command {
         cv: &ControlValue,
         _: &SharedControls,
     ) -> Result<(), RadarError> {
-        let value = cv
-            .value
-            .parse::<f32>()
-            .map_err(|_| RadarError::MissingValue(cv.id))? as i32;
+        let value = cv.as_i32()?;
         let auto: i32 = if cv.auto.unwrap_or(false) { 1 } else { 0 };
         let _enabled: i32 = if cv.enabled.unwrap_or(false) { 1 } else { 0 };
 
@@ -319,7 +315,7 @@ impl CommandSender for Command {
 
         let id: CommandId = match cv.id {
             ControlType::Power => {
-                let value = match Power::from_str(&cv.value).unwrap_or(Power::Standby) {
+                let value = match Power::from_value(&cv.value).unwrap_or(Power::Standby) {
                     Power::Transmit => 2,
                     _ => 1,
                 };
