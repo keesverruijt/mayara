@@ -38,45 +38,14 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-
-    - name: Setup latest Alpine linux
-      uses: jirutka/setup-alpine@v1.2.0
-      with:
-        arch: aarch64
-
-    - name: Add dependencies and build setup
-      run: |
-        apk add git curl bash g++ musl-dev make perl
-        curl -sSf https://sh.rustup.rs | bash -s -- -y
-      shell: alpine.sh --root {0}
-
-    - name: Build in Alpine chroot
-      run: cargo build --release
-      shell: alpine.sh --root {0}
-
-    - name: Run tests
-      run: cargo test --release --verbose
-      shell: alpine.sh --root {0}
-
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: Mayara Linux arm64
-        path: target/release/mayara-server
-
-  linux_aarch64:
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    - name: Prepare Cross build
+    - name: Prepare build
       run: 
         apt-get -q -y update
         apt-get -q -y install git curl bash g++ musl-dev make perl
         curl -sSf https://sh.rustup.rs | bash -s -- -y
-        cargo install cross
-    - name: cross build
-      run: cross build --release --target aarch64-unknown-linux-musl
+        rustup target add aarch64-unknown-linux-musl
+    - name: cargo build
+      run: cargo build --release --target aarch64-unknown-linux-musl
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
