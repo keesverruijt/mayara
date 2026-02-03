@@ -39,7 +39,6 @@ jobs:
     - uses: actions/checkout@v4
     - name: Setup latest Alpine linux
       uses: jirutka/setup-alpine@v1.2.0
-    - name: Prepare Alpine chroot
       with:
         arch: aarch64
       run: |
