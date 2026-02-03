@@ -45,7 +45,7 @@ jobs:
         arch: aarch64
 
     - name: Add dependencies and build setup
-    - run: |
+      run: |
         apk add git curl bash g++ musl-dev make perl
         curl -sSf https://sh.rustup.rs | bash -s -- -y
       shell: alpine.sh --root {0}
