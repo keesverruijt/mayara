@@ -906,6 +906,13 @@ impl Control {
         self
     }
 
+    pub fn wire_scale_step(mut self, step: f32) -> Self {
+        self.item.step_value = Some(step);
+        self.item.wire_scale_factor = Some(self.item.max_value.unwrap_or(1.) / step);
+
+        self
+    }
+
     pub fn wire_scale_factor(mut self, wire_scale_factor: f32, with_step: bool) -> Self {
         self.item.wire_scale_factor = Some(wire_scale_factor);
         if with_step {
@@ -1650,7 +1657,7 @@ impl ControlType {
             ControlType::FirmwareVersion => "Version of the radar firmware",
             ControlType::Ftc => "FTC",
             ControlType::Gain => "How sensitive the radar is to returning echoes",
-            ControlType::InterferenceRejection => "How much interference rejection is applied",
+            ControlType::InterferenceRejection => "Reduces interference from other radars",
             ControlType::LocalInterferenceRejection => {
                 "How much local interference rejection is applied"
             }
@@ -1677,10 +1684,10 @@ impl ControlType {
             ControlType::Rain => "Rain clutter suppression",
             ControlType::TargetTrails => "Whether target trails are shown",
             ControlType::TrailsMotion => "How target trails behave",
-            ControlType::NoiseRejection => "Level of noise rejection",
+            ControlType::NoiseRejection => "Filters out noise",
             ControlType::TargetBoost => "Level of how much small targets are boosted",
-            ControlType::TargetExpansion => "Level of how much small targets are expanded",
-            ControlType::TargetSeparation => "Level of software enhanced target separation",
+            ControlType::TargetExpansion => "Increases target length for small targets",
+            ControlType::TargetSeparation => "Makes separation between targets more prominent",
             ControlType::ScanSpeed => "Desired rotation speed of the radar antenna",
             ControlType::SideLobeSuppression => "Level of side lobe suppression",
             ControlType::Tune => "Method to finely tune the radar receiver",

@@ -1,3 +1,5 @@
+use std::cmp::{max, min};
+
 use async_trait::async_trait;
 use tokio::net::UdpSocket;
 
@@ -318,7 +320,8 @@ impl CommandSender for Command {
                 cmd.extend_from_slice(&[0x23, 0xc1, value as u8]);
             }
             ControlType::DopplerSpeedThreshold => {
-                let value = value as u16 * 16;
+                let value = (value * 100.0) as u16;
+                let value = max(0, min(1594, value));
                 cmd.extend_from_slice(&[0x24, 0xc1]);
                 cmd.extend_from_slice(&value.to_le_bytes());
             }

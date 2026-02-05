@@ -246,9 +246,9 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
         );
         controls.insert(
             ControlType::DopplerSpeedThreshold,
-            Control::new_numeric(ControlType::DopplerSpeedThreshold, 0., 99.)
-                .wire_scale_factor(99. * 16., true)
-                .unit("cm/s"),
+            Control::new_numeric(ControlType::DopplerSpeedThreshold, 0., 15.94)
+                .wire_scale_step(0.01)
+                .unit("m/s"),
         );
         controls.insert(
             ControlType::DopplerTrailsOnly,
