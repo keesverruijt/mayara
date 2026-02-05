@@ -227,16 +227,35 @@ function radarsLoaded(id, d) {
   });
 }
 
+function ms_to_kn(v) {
+  return ((v * 3600) / 1852).toFixed(1);
+}
+
+function kn_to_ms(v) {
+  return ((v * 1852) / 3600).toFixed(2);
+}
+
 function setControl(v) {
   let i = get_element_by_server_id(v.id);
   let control = myr_controls[v.id];
   if (i && control) {
-    i.value = v.value;
+    if (v.id == 12) {
+      console.log("Doppler speed threshold");
+    }
+    if (control.unit == "m/s") {
+      i.value = ms_to_kn(v.value); // Convert to m/s -> KN
+    } else {
+      i.value = v.value;
+    }
     console.log("<- " + control.name + " = " + v.value);
     let n = i.parentNode.querySelector(".myr_numeric");
     if (n) {
       if (control.unit) {
-        n.innerHTML = v.value + " " + control.unit;
+        if (control.unit == "m/s") {
+          n.innerHTML = ms_to_kn(v.value) + " kn";
+        } else {
+          n.innerHTML = v.value + " " + control.unit;
+        }
       } else {
         n.innerHTML = v.value;
       }
@@ -359,7 +378,11 @@ function buildControls() {
         add_range_unit_select(c, v["descriptions"]);
       }
       van.add(c, SelectValue(k, v.name, v["validValues"], v["descriptions"]));
-    } else if ("maxValue" in v && v.maxValue <= 100) {
+    } else if (
+      "maxValue" in v &&
+      v.maxValue <= 100 &&
+      (!v.unit || v.unit !== "m/s")
+    ) {
       van.add(
         c,
         RangeValue(k, v.name, v.minValue, v.maxValue, 0, "descriptions" in v)
@@ -405,7 +428,12 @@ function do_change(e) {
     handle_range_unit_change(v.value);
     return;
   }
-  let message = { id: id, value: v.value };
+  let value = v.value;
+  let control = myr_controls[id];
+  if (control && control.unit == "m/s") {
+    value = kn_to_ms(value);
+  }
+  let message = { id: id, value: value };
   let checkbox = document.getElementById(v.id + auto_postfix);
   if (checkbox) {
     message.auto = checkbox.checked;

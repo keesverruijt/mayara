@@ -53,7 +53,7 @@ div.myr_readonly {
   color: rgb(124, 124, 237);
 }
 
-div.myr_description {
+div.myr_description, div.myr_numeric {
   z-index: 10;
   display: block;
   float: right;
