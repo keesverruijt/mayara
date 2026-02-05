@@ -239,9 +239,6 @@ function setControl(v) {
   let i = get_element_by_server_id(v.id);
   let control = myr_controls[v.id];
   if (i && control) {
-    if (v.id == 12) {
-      console.log("Doppler speed threshold");
-    }
     if (control.unit == "m/s") {
       i.value = ms_to_kn(v.value); // Convert to m/s -> KN
     } else {
