@@ -130,7 +130,7 @@ impl Controls {
                         (6, "10 min".to_string()),
                     ]),
                 )
-                .set_destination(ControlDestination::Command),
+                .set_destination(ControlDestination::Trail),
             );
 
             controls.insert(
@@ -139,20 +139,20 @@ impl Controls {
                     ControlType::TrailsMotion,
                     HashMap::from([(0, "Relative".to_string()), (1, "True".to_string())]),
                 )
-                .set_destination(ControlDestination::Command),
+                .set_destination(ControlDestination::Trail),
             );
 
             controls.insert(
                 ControlType::ClearTrails,
                 Control::new_button(ControlType::ClearTrails)
-                    .set_destination(ControlDestination::Command),
+                    .set_destination(ControlDestination::Trail),
             );
 
             if args.targets == TargetMode::Arpa {
                 controls.insert(
                     ControlType::ClearTargets,
                     Control::new_button(ControlType::ClearTargets)
-                        .set_destination(ControlDestination::Command),
+                        .set_destination(ControlDestination::Trail),
                 );
             }
         }
@@ -278,7 +278,7 @@ impl SharedControls {
                         .set_value(&ControlType::UserName, control_value.value.clone())
                         .map(|_| ())
                         .map_err(|e| RadarError::ControlError(e)),
-                    ControlDestination::Command => {
+                    ControlDestination::Command | ControlDestination::Trail => {
                         self.send_to_command_handler(control_value.clone(), reply_tx.clone())
                     }
                 }
@@ -1360,11 +1360,11 @@ pub enum ControlDataType {
     Button,
 }
 
-// TODO use ControlDestination more to separate stuff to send to trails buffer
 #[derive(Clone, Debug)]
-pub enum ControlDestination {
+pub(crate) enum ControlDestination {
     Internal,
     Command,
+    Trail,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1406,7 +1406,7 @@ pub struct ControlDefinition {
     #[serde(skip)]
     is_send_always: bool, // Whether the controlvalue is sent out to client in all state messages
     #[serde(skip)]
-    destination: ControlDestination,
+    pub(crate) destination: ControlDestination,
 }
 
 fn is_false(v: &bool) -> bool {

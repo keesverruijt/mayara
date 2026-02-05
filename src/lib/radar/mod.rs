@@ -27,7 +27,8 @@ use crate::locator::LocatorId;
 use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::trail::TrailBuffer;
 use crate::settings::{
-    ControlError, ControlType, ControlUpdate, ControlValue, RadarControlValue, SharedControls,
+    ControlDestination, ControlError, ControlType, ControlUpdate, ControlValue, RadarControlValue,
+    SharedControls,
 };
 use crate::{Brand, Cli, TargetMode};
 use range::{RangeDetection, Ranges};
@@ -924,30 +925,41 @@ impl CommonRadar {
         let cv = control_update.control_value;
         let reply_tx = control_update.reply_tx;
 
-        match self.trails.set_control_value(&self.info.controls, &cv) {
-            Some(Ok(())) => {
-                return Ok(());
+        if let Some(control) = self.info.controls.get(&cv.id) {
+            match &control.item().destination {
+                ControlDestination::Internal => {
+                    panic!("ControlType::Internal should not be sent to radar receiver")
+                }
+                ControlDestination::Trail => {
+                    match self.trails.set_control_value(&self.info.controls, &cv) {
+                        Ok(()) => {
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            return self
+                                .info
+                                .controls
+                                .send_error_to_client(reply_tx, &cv, &e)
+                                .await;
+                        }
+                    };
+                }
+                ControlDestination::Command => {
+                    if let Some(command_sender) = command_sender {
+                        if let Err(e) = command_sender.set_control(&cv, &self.info.controls).await {
+                            return self
+                                .info
+                                .controls
+                                .send_error_to_client(reply_tx, &cv, &e)
+                                .await;
+                        } else {
+                            self.info.controls.set_refresh(&cv.id);
+                        }
+                    }
+                }
             }
-            Some(Err(e)) => {
-                return self
-                    .info
-                    .controls
-                    .send_error_to_client(reply_tx, &cv, &e)
-                    .await;
-            }
-            None => {} // Fall through to normal processing
-        };
-
-        if let Some(command_sender) = command_sender {
-            if let Err(e) = command_sender.set_control(&cv, &self.info.controls).await {
-                return self
-                    .info
-                    .controls
-                    .send_error_to_client(reply_tx, &cv, &e)
-                    .await;
-            } else {
-                self.info.controls.set_refresh(&cv.id);
-            }
+        } else {
+            panic!("Unhandled control {} sent to radar receiver", cv.id);
         }
 
         Ok(())

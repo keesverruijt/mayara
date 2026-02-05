@@ -242,7 +242,7 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
         controls.insert(
             ControlType::DopplerAutoTrack,
             Control::new_list(ControlType::DopplerAutoTrack, &["Off", "On"])
-                .set_destination(ControlDestination::Command),
+                .set_destination(ControlDestination::Trail),
         );
         controls.insert(
             ControlType::DopplerSpeedThreshold,
@@ -253,7 +253,7 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
         controls.insert(
             ControlType::DopplerTrailsOnly,
             Control::new_list(ControlType::DopplerTrailsOnly, &["Off", "On"])
-                .set_destination(ControlDestination::Command),
+                .set_destination(ControlDestination::Trail),
         );
     }
 
