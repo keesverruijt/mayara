@@ -274,7 +274,6 @@ impl SharedControls {
                 );
                 match c.item().destination {
                     ControlDestination::Internal => self
-                        // set_string will also set numeric values
                         .set_value(&ControlType::UserName, control_value.value.clone())
                         .map(|_| ())
                         .map_err(|e| RadarError::ControlError(e)),
@@ -444,10 +443,7 @@ impl SharedControls {
     pub fn set_dynamic_read_only(&self, control_type: &ControlType, read_only: bool) {
         let mut locked = self.controls.write().unwrap();
         if let Some(control) = locked.controls.get_mut(control_type) {
-            if control.dynamic_read_only != Some(read_only) {
-                control.dynamic_read_only = Some(read_only);
-                control.needs_refresh = true;
-            }
+            control.set_dynamic_read_only(read_only);
         }
     }
 
@@ -796,7 +792,7 @@ impl ControlValue {
     }
 
     pub fn as_bool(&self) -> Result<bool, RadarError> {
-        self.as_i32().map(|n| n != 0)
+        self.as_i64().map(|n| n != 0)
     }
 
     pub fn as_i32(&self) -> Result<i32, RadarError> {
@@ -890,30 +886,33 @@ impl Control {
         }
     }
 
-    pub fn read_only(mut self, is_read_only: bool) -> Self {
+    pub(crate) fn read_only(mut self, is_read_only: bool) -> Self {
         self.item.is_read_only = is_read_only;
 
         self
     }
 
     pub fn set_dynamic_read_only(&mut self, dynamic_read_only: bool) {
-        self.dynamic_read_only = Some(dynamic_read_only);
+        if self.dynamic_read_only != Some(dynamic_read_only) {
+            self.dynamic_read_only = Some(dynamic_read_only);
+            self.needs_refresh = true;
+        }
     }
 
-    pub fn set_destination(mut self, destination: ControlDestination) -> Self {
+    pub(crate) fn set_destination(mut self, destination: ControlDestination) -> Self {
         self.item.destination = destination;
 
         self
     }
 
-    pub fn wire_scale_step(mut self, step: f32) -> Self {
+    pub(crate) fn wire_scale_step(mut self, step: f32) -> Self {
         self.item.step_value = Some(step);
         self.item.wire_scale_factor = Some(self.item.max_value.unwrap_or(1.) / step);
 
         self
     }
 
-    pub fn wire_scale_factor(mut self, wire_scale_factor: f32, with_step: bool) -> Self {
+    pub(crate) fn wire_scale_factor(mut self, wire_scale_factor: f32, with_step: bool) -> Self {
         self.item.wire_scale_factor = Some(wire_scale_factor);
         if with_step {
             self.item.step_value =
@@ -923,31 +922,31 @@ impl Control {
         self
     }
 
-    pub fn wire_offset(mut self, wire_offset: f32) -> Self {
+    pub(crate) fn wire_offset(mut self, wire_offset: f32) -> Self {
         self.item.wire_offset = Some(wire_offset);
 
         self
     }
 
-    pub fn unit<S: AsRef<str>>(mut self, unit: S) -> Control {
+    pub(crate) fn unit<S: AsRef<str>>(mut self, unit: S) -> Control {
         self.item.unit = Some(unit.as_ref().to_string());
 
         self
     }
 
-    pub fn send_always(mut self) -> Control {
+    pub(crate) fn send_always(mut self) -> Control {
         self.item.is_send_always = true;
 
         self
     }
 
-    pub fn has_enabled(mut self) -> Self {
+    pub(crate) fn has_enabled(mut self) -> Self {
         self.item.has_enabled = true;
 
         self
     }
 
-    pub fn new_numeric(control_type: ControlType, min_value: f32, max_value: f32) -> Self {
+    pub(crate) fn new_numeric(control_type: ControlType, min_value: f32, max_value: f32) -> Self {
         let min_value = Some(min_value);
         let max_value = Some(max_value);
         let control = Self::new(ControlDefinition::new(
@@ -970,7 +969,7 @@ impl Control {
         control
     }
 
-    pub fn new_auto(
+    pub(crate) fn new_auto(
         control_type: ControlType,
         min_value: f32,
         max_value: f32,
@@ -997,7 +996,7 @@ impl Control {
         ))
     }
 
-    pub fn new_list(control_type: ControlType, descriptions: &[&str]) -> Self {
+    pub(crate) fn new_list(control_type: ControlType, descriptions: &[&str]) -> Self {
         let description_count = ((descriptions.len() as i32) - 1) as f32;
         Self::new(ControlDefinition::new(
             control_type,
@@ -1024,7 +1023,7 @@ impl Control {
         ))
     }
 
-    pub fn new_map(control_type: ControlType, descriptions: HashMap<i32, String>) -> Self {
+    pub(crate) fn new_map(control_type: ControlType, descriptions: HashMap<i32, String>) -> Self {
         Self::new(ControlDefinition::new(
             control_type,
             ControlDataType::Number,
@@ -1044,7 +1043,7 @@ impl Control {
         ))
     }
 
-    pub fn new_string(control_type: ControlType) -> Self {
+    pub(crate) fn new_string(control_type: ControlType) -> Self {
         Self::new(ControlDefinition::new(
             control_type,
             ControlDataType::String,
@@ -1064,7 +1063,7 @@ impl Control {
         ))
     }
 
-    pub fn new_button(control_type: ControlType) -> Self {
+    pub(crate) fn new_button(control_type: ControlType) -> Self {
         Self::new(ControlDefinition::new(
             control_type,
             ControlDataType::Button,
@@ -1085,15 +1084,15 @@ impl Control {
     }
 
     /// Read-only access to the definition of the control
-    pub fn item(&self) -> &ControlDefinition {
+    pub(crate) fn item(&self) -> &ControlDefinition {
         &self.item
     }
 
-    pub fn set_valid_values(&mut self, values: Vec<i32>) {
+    pub(crate) fn set_valid_values(&mut self, values: Vec<i32>) {
         self.item.valid_values = Some(values);
     }
 
-    pub fn set_valid_ranges(&mut self, ranges: &Ranges) {
+    pub(crate) fn set_valid_ranges(&mut self, ranges: &Ranges) {
         let mut values = Vec::new();
         let mut descriptions = HashMap::new();
         for range in ranges.all.iter() {
@@ -1291,7 +1290,11 @@ impl Control {
     /// Return Ok(Some(())) when the value changed or it always needs
     /// to be broadcast to listeners.
     ///
-    pub fn set_wire_range(&mut self, min: f32, max: f32) -> Result<Option<()>, ControlError> {
+    pub(crate) fn set_wire_range(
+        &mut self,
+        min: f32,
+        max: f32,
+    ) -> Result<Option<()>, ControlError> {
         let max = Some(max - min);
         let min = if min != 0.0 { Some(min) } else { None };
 
@@ -1310,7 +1313,7 @@ impl Control {
 
     /// Look up the wire value (index) for an enum value by its string value or label
     /// Returns None if no match found or if not an enum control
-    pub fn enum_value_to_index(&self, value_str: &str) -> Option<usize> {
+    pub(crate) fn enum_value_to_index(&self, value_str: &str) -> Option<usize> {
         if let Some(descriptions) = &self.item.descriptions {
             for (idx, label) in descriptions.iter() {
                 if label.eq_ignore_ascii_case(value_str) {
@@ -1323,7 +1326,7 @@ impl Control {
 
     /// Look up the string value for an enum by its index
     /// Returns the core definition's value if available, otherwise the label
-    pub fn index_to_enum_value(&self, index: usize) -> Option<String> {
+    pub(crate) fn index_to_enum_value(&self, index: usize) -> Option<String> {
         if let Some(descriptions) = &self.item.descriptions {
             return descriptions.get(&(index as i32)).cloned();
         }
@@ -1945,5 +1948,15 @@ mod test {
         assert!(controls.set(&ControlType::TargetTrails, 7., None).is_err());
         assert!(controls.set(&ControlType::TargetTrails, -1., None).is_err());
         assert!(controls.set(&ControlType::TargetTrails, 0.3, None).is_ok());
+
+        assert!(
+            controls
+                .set_value(&ControlType::TargetTrails, Value::String("3".to_string()))
+                .is_ok()
+        );
+        assert_eq!(
+            controls.get(&ControlType::TargetTrails).unwrap().value,
+            Some(3.)
+        );
     }
 }
