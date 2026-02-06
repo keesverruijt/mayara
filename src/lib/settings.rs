@@ -1084,7 +1084,7 @@ impl Control {
     }
 
     /// Read-only access to the definition of the control
-    pub(crate) fn item(&self) -> &ControlDefinition {
+    pub fn item(&self) -> &ControlDefinition {
         &self.item
     }
 
