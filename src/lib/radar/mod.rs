@@ -5,7 +5,7 @@ use protobuf::Message;
 use serde::Serialize;
 use serde::ser::{SerializeMap, Serializer};
 use serde_json::Value;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{
     collections::HashMap,
     fmt::{self, Display, Write},
@@ -24,6 +24,7 @@ pub mod trail;
 use crate::brand::CommandSender;
 use crate::config::Persistence;
 use crate::protos::RadarMessage::RadarMessage;
+use crate::radar::spoke::{GenericSpoke, to_protobuf_spoke};
 use crate::radar::trail::TrailBuffer;
 use crate::settings::{
     ControlDestination, ControlError, ControlType, ControlUpdate, ControlValue, RadarControlValue,
@@ -366,7 +367,7 @@ impl RadarInfo {
         Ok(())
     }
 
-    pub fn broadcast_radar_message(&self, message: RadarMessage) {
+    pub(super) fn broadcast_radar_message(&self, message: RadarMessage) {
         let mut bytes = Vec::new();
         message
             .write_to_vec(&mut bytes)
@@ -623,39 +624,6 @@ struct Radars {
     sk_client_tx: tokio::sync::broadcast::Sender<RadarControlValue>,
 }
 
-pub struct Statistics {
-    pub broken_packets: usize,
-    pub missing_spokes: usize,  // this revolution
-    pub received_spokes: usize, // this revolution
-    pub total_rotations: usize, // total number of revolutions
-}
-
-impl Statistics {
-    pub fn new() -> Self {
-        Statistics {
-            broken_packets: 0,
-            missing_spokes: 0,
-            received_spokes: 0,
-            total_rotations: 0,
-        }
-    }
-
-    pub fn full_rotation(&mut self, key: &str) {
-        self.total_rotations += 1;
-        log::debug!(
-            "{}: Full rotation #{},  {} spokes received and {} missing spokes {} broken packets",
-            key,
-            self.total_rotations,
-            self.received_spokes,
-            self.missing_spokes,
-            self.broken_packets
-        );
-        self.received_spokes = 0;
-        self.missing_spokes = 0;
-        self.broken_packets = 0;
-    }
-}
-
 #[derive(Debug, PartialEq)]
 pub enum Power {
     Off,
@@ -868,30 +836,50 @@ pub(crate) struct CommonRadar {
     pub key: String,
     pub info: RadarInfo,
     radars: SharedRadars,
-    pub statistics: Statistics,
-    pub trails: TrailBuffer,
     pub control_update_rx: broadcast::Receiver<ControlUpdate>,
     pub replay: bool,
+
+    // Common state so we can process spokes
+    trails: TrailBuffer,
+    spoke_message: Option<RadarMessage>,
+    spoke_time: u64,
+    prev_angle: u16,
+    spoke_count: u16,
 }
 
 impl CommonRadar {
     pub fn new(
+        args: &Cli,
         key: String,
         info: RadarInfo,
         radars: SharedRadars,
-        trails: TrailBuffer,
         control_update_rx: broadcast::Receiver<ControlUpdate>,
         replay: bool,
     ) -> Self {
-        CommonRadar {
+        let trails = TrailBuffer::new(args, &info);
+        let spoke_message = None;
+
+        let mut common = CommonRadar {
             key,
             info,
             radars,
-            statistics: Statistics::new(),
-            trails,
             control_update_rx,
             replay,
+            trails,
+            spoke_message,
+            spoke_time: 0,
+            prev_angle: 0,
+            spoke_count: 0,
+        };
+
+        if let Some(control) = common.info.controls.get(&ControlType::DopplerTrailsOnly) {
+            if let Some(value) = control.value {
+                let value = value > 0.;
+                common.set_doppler_trail_only(value);
+            }
         }
+
+        common
     }
 
     pub(crate) fn update(&mut self) {
@@ -906,43 +894,105 @@ impl CommonRadar {
         let cv = control_update.control_value;
         let reply_tx = control_update.reply_tx;
 
-        if let Some(control) = self.info.controls.get(&cv.id) {
-            match &control.item().destination {
-                ControlDestination::Internal => {
-                    panic!("ControlType::Internal should not be sent to radar receiver")
-                }
-                ControlDestination::Trail => {
-                    match self.trails.set_control_value(&self.info.controls, &cv) {
-                        Ok(()) => {
-                            return Ok(());
-                        }
-                        Err(e) => {
-                            return self
-                                .info
-                                .controls
-                                .send_error_to_client(reply_tx, &cv, &e)
-                                .await;
-                        }
-                    };
-                }
-                ControlDestination::Command => {
-                    if let Some(command_sender) = command_sender {
-                        if let Err(e) = command_sender.set_control(&cv, &self.info.controls).await {
-                            return self
-                                .info
-                                .controls
-                                .send_error_to_client(reply_tx, &cv, &e)
-                                .await;
-                        } else {
-                            self.info.controls.set_refresh(&cv.id);
-                        }
+        match cv.id.get_destination() {
+            ControlDestination::Internal | ControlDestination::ReadOnly => {
+                panic!("{:?} should not be sent to radar receiver", cv)
+            }
+            ControlDestination::Trail => {
+                match self.trails.set_control_value(&self.info.controls, &cv) {
+                    Ok(()) => {
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        return self
+                            .info
+                            .controls
+                            .send_error_to_client(reply_tx, &cv, &e)
+                            .await;
+                    }
+                };
+            }
+            ControlDestination::Target => {}
+            ControlDestination::Command => {
+                if let Some(command_sender) = command_sender {
+                    if let Err(e) = command_sender.set_control(&cv, &self.info.controls).await {
+                        return self
+                            .info
+                            .controls
+                            .send_error_to_client(reply_tx, &cv, &e)
+                            .await;
+                    } else {
+                        self.info.controls.set_refresh(&cv.id);
                     }
                 }
             }
-        } else {
-            panic!("Unhandled control {} sent to radar receiver", cv.id);
         }
 
         Ok(())
+    }
+
+    pub fn new_spoke_message(&mut self) {
+        self.spoke_message = Some(RadarMessage::new());
+        self.spoke_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap();
+    }
+
+    pub(crate) fn add_spoke(
+        &mut self,
+        range: u32,
+        angle: SpokeBearing,
+        heading: Option<u16>,
+        generic_spoke: GenericSpoke,
+    ) {
+        if let Some(message) = &mut self.spoke_message {
+            let mut spoke = to_protobuf_spoke(
+                self.info.spokes_per_revolution,
+                range,
+                angle,
+                heading,
+                Some(self.spoke_time),
+                generic_spoke,
+            );
+            self.trails.update_trails(&mut spoke, &self.info.legend); // Add any pixels representing the trails
+            message.spokes.push(spoke);
+
+            if angle < self.prev_angle {
+                let ms = self.info.full_rotation();
+                self.trails.set_rotation_speed(ms);
+
+                log::debug!("spoke_count = {}", self.spoke_count);
+                let _ = self
+                    .info
+                    .controls
+                    .set_value(&ControlType::Spokes, Value::Number(self.spoke_count.into()));
+
+                self.spoke_count = 0;
+            }
+            if ((self.prev_angle + 1) % self.info.spokes_per_revolution) != angle {
+                let missing_spokes =
+                    ((angle + self.info.spokes_per_revolution) - self.prev_angle - 1)
+                        % self.info.spokes_per_revolution;
+                log::trace!(
+                    "{}: Spoke angle {} is not consecutive to previous angle {}, missing spokes {}",
+                    self.key,
+                    angle,
+                    self.prev_angle,
+                    missing_spokes
+                );
+            }
+            self.prev_angle = angle;
+        }
+    }
+
+    pub(crate) fn send_spoke_message(&mut self) {
+        if let Some(message) = self.spoke_message.take() {
+            self.info.broadcast_radar_message(message);
+        }
+    }
+
+    pub fn set_doppler_trail_only(&mut self, v: bool) {
+        self.trails.set_doppler_trail_only(v);
     }
 }

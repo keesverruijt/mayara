@@ -28,18 +28,6 @@ pub(crate) enum LocatorId {
     Raymarine,
 }
 
-impl LocatorId {
-    pub(crate) fn as_str(&self) -> &'static str {
-        use LocatorId::*;
-        match *self {
-            GenBR24 => "Navico BR24",
-            Gen3Plus => "Navico 3G/4G/HALO",
-            Furuno => "Furuno DRSxxxx",
-            Raymarine => "Raymarine",
-        }
-    }
-}
-
 pub(crate) fn create_brand_listeners(
     listen_addresses: &mut Vec<LocatorAddress>,
     brands: &mut HashSet<Brand>,

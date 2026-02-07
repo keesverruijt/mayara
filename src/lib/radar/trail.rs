@@ -15,12 +15,12 @@ use super::{RadarError, RadarInfo};
 const MARGIN_I16: i16 = 100;
 const MARGIN_USIZE: usize = MARGIN_I16 as usize;
 
-struct GeoPositionPixels {
+pub(crate) struct GeoPositionPixels {
     lat: i16,
     lon: i16,
 }
 
-pub struct TrailBuffer {
+pub(crate) struct TrailBuffer {
     target_mode: TargetMode,
     legend: Legend,
     spokes_per_revolution: usize,
@@ -103,7 +103,7 @@ impl TrailBuffer {
         let mut reply = match cv.id {
             ControlType::ClearTrails => {
                 self.clear();
-                Ok(())
+                return Ok(());
             }
             ControlType::DopplerTrailsOnly => {
                 let r = controls.set_value(&cv.id, cv.value.clone());
@@ -111,12 +111,15 @@ impl TrailBuffer {
                     let value = controls.get(&cv.id).unwrap().as_u16().unwrap_or(0) > 0;
                     self.set_doppler_trail_only(value);
                 }
-                r.map(|_| ()).map_err(|e| RadarError::ControlError(e))
+                return r.map(|_| ()).map_err(|e| RadarError::ControlError(e));
             }
             ControlType::TargetTrails => {
-                let value = controls.get(&cv.id).unwrap().as_u16().unwrap_or(0);
-                self.set_relative_trails_length(value);
-                Ok(())
+                let r = controls.set_value(&cv.id, cv.value.clone());
+                if r.is_ok() {
+                    let value = controls.get(&cv.id).unwrap().as_u16().unwrap_or(0);
+                    self.set_relative_trails_length(value);
+                }
+                return r.map(|_| ()).map_err(|e| RadarError::ControlError(e));
             }
             ControlType::TrailsMotion => match cv.as_bool() {
                 Ok(true_motion) => self
@@ -126,7 +129,7 @@ impl TrailBuffer {
             },
             ControlType::ClearTargets => {
                 self.targets.as_mut().map(|t| t.delete_all_targets());
-                Ok(())
+                return Ok(());
             }
             ControlType::DopplerAutoTrack => match cv.as_bool() {
                 Ok(arpa) => {
@@ -145,9 +148,10 @@ impl TrailBuffer {
             _ => Err(RadarError::CannotSetControlType(cv.id)),
         };
 
+        // If we are still here, we still need to set the control value
         if reply.is_ok() {
             reply = controls
-                .set_string(&cv.id, cv.value.to_string())
+                .set_value(&cv.id, cv.value.clone())
                 .map(|_| ())
                 .map_err(|e| RadarError::ControlError(e));
         }
@@ -631,7 +635,7 @@ impl TrailBuffer {
         }
     }
 
-    pub fn set_doppler_trail_only(&mut self, v: bool) {
+    pub(super) fn set_doppler_trail_only(&mut self, v: bool) {
         self.minimal_legend_value = Self::compute_minimal_legend_value(&self.legend, v);
     }
 }

@@ -1,11 +1,9 @@
 use anyhow::{Context, Error, bail};
 use num_traits::FromPrimitive;
-use protobuf::Message;
+use std::f64::consts::PI;
 use std::io;
 use std::net::SocketAddr;
 use std::time::Duration;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tokio::net::UdpSocket;
@@ -18,13 +16,11 @@ use super::command::{Command, CommandId};
 use super::settings;
 use super::{FURUNO_DATA_BROADCAST_ADDRESS, FURUNO_SPOKE_LEN};
 use crate::Cli;
+use crate::brand::furuno::FURUNO_SPOKES;
 use crate::network::{create_udp_listen, create_udp_multicast_listen};
-use crate::protos::RadarMessage::RadarMessage;
-use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::radar::CommonRadar;
 use crate::radar::SharedRadars;
 use crate::radar::SpokeBearing;
-use crate::radar::trail::TrailBuffer;
 use crate::radar::{Power, RadarError, RadarInfo};
 use crate::settings::ControlType;
 use crate::util::PrintableSpoke;
@@ -59,7 +55,6 @@ pub struct FurunoReportReceiver {
     // pixel_to_blob: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_SPOKE_LENGTH],
     prev_spoke: Vec<u8>,
     prev_angle: u16,
-    sweep_count: u16,
 }
 
 impl FurunoReportReceiver {
@@ -76,15 +71,8 @@ impl FurunoReportReceiver {
         let control_update_rx = info.controls.control_update_subscribe();
 
         // let pixel_to_blob = Self::pixel_to_blob(&info.legend);
-        let mut trails = TrailBuffer::new(&args, &info);
-        if let Some(control) = info.controls.get(&ControlType::DopplerTrailsOnly) {
-            if let Some(value) = control.value {
-                let value = value > 0.;
-                trails.set_doppler_trail_only(value);
-            }
-        }
 
-        let common = CommonRadar::new(key, info, radars, trails, control_update_rx, replay);
+        let common = CommonRadar::new(args, key, info.clone(), radars, control_update_rx, replay);
 
         FurunoReportReceiver {
             common,
@@ -97,7 +85,6 @@ impl FurunoReportReceiver {
             broadcast_socket: None,
             prev_spoke: Vec::new(),
             prev_angle: 0,
-            sweep_count: 0,
         }
     }
 
@@ -819,21 +806,13 @@ impl FurunoReportReceiver {
             return;
         }
 
-        let mut message = RadarMessage::new();
-        message.radar = self.common.info.id as u32;
-
         let metadata: FurunoSpokeMetadata = self.parse_metadata_header(&data);
 
         let sweep_count = metadata.sweep_count;
         let sweep_len = metadata.sweep_len as usize;
-        log::debug!(
-            "Received UDP frame with {} spokes, total {}",
-            sweep_count,
-            self.sweep_count
-        );
+        log::debug!("Received UDP frame with {} spokes", sweep_count,);
 
-        let mut message = RadarMessage::new();
-        message.radar = self.common.info.id as u32;
+        self.common.new_spoke_message();
 
         let mut sweep: &[u8] = &data[16..];
         for sweep_idx in 0..sweep_count {
@@ -862,44 +841,13 @@ impl FurunoReportReceiver {
             };
             sweep = &sweep[used..];
 
-            message
-                .spokes
-                .push(self.create_spoke(&metadata, angle, heading, &generic_spoke));
+            self.add_spoke_to_message(&metadata, angle, heading, &generic_spoke);
 
-            self.sweep_count += 1;
-            if angle < self.prev_angle {
-                let ms = self.common.info.full_rotation();
-                self.common.trails.set_rotation_speed(ms);
-
-                log::debug!("sweep_count = {}", self.sweep_count);
-                if log::log_enabled!(log::Level::Debug) {
-                    let _ = self
-                        .common
-                        .info
-                        .controls
-                        .set_string(&ControlType::Spokes, sweep_count.to_string());
-                }
-                self.sweep_count = 0;
-            }
             self.prev_angle = angle;
             self.prev_spoke = generic_spoke;
         }
 
-        let mut bytes = Vec::new();
-        message
-            .write_to_vec(&mut bytes)
-            .expect("Cannot write RadarMessage to vec");
-
-        if !log::log_enabled!(log::Level::Debug) {
-            match self.common.info.message_tx.send(bytes) {
-                Err(e) => {
-                    log::trace!("{}: Dropping received spoke: {}", self.common.key, e);
-                }
-                Ok(count) => {
-                    log::trace!("{}: sent to {} receivers", self.common.key, count);
-                }
-            }
-        }
+        self.common.send_spoke_message();
     }
 
     fn decode_sweep_encoding_0(sweep: &[u8]) -> (Vec<u8>, usize) {
@@ -1012,13 +960,13 @@ impl FurunoReportReceiver {
         (spoke, used)
     }
 
-    fn create_spoke(
+    fn add_spoke_to_message(
         &mut self,
         metadata: &FurunoSpokeMetadata,
         angle: SpokeBearing,
         heading: SpokeBearing,
         sweep: &[u8],
-    ) -> Spoke {
+    ) {
         if self.common.replay {
             let _ = self
                 .common
@@ -1028,48 +976,32 @@ impl FurunoReportReceiver {
         }
         // Convert the spoke data to bytes
 
-        let heading: Option<u32> = if metadata.have_heading > 0 {
-            Some(heading as u32)
+        let heading: Option<u16> = if metadata.have_heading > 0 {
+            Some(heading as u16)
         } else {
             let heading = crate::navdata::get_heading_true();
-            heading.map(|h| h as u32)
+            heading.map(|h| (h * FURUNO_SPOKES as f64 / (2. * PI)) as u16)
         };
 
-        let mut spoke = Spoke::new();
-        spoke.range = metadata.range;
-        //        spoke.angle = (angle as usize * FURUNO_SPOKES / 8192) as u32;
-        spoke.angle = angle as u32;
-        spoke.bearing = heading;
-
-        (spoke.lat, spoke.lon) = crate::navdata::get_position_i64();
-        spoke.time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .ok();
-
-        spoke.data = vec![0; sweep.len()];
+        let mut data = vec![0; sweep.len()];
 
         let mut i = 0;
         for b in sweep {
-            spoke.data[i] = b >> 2;
+            data[i] = b >> 2;
             i += 1;
         }
         if self.common.replay {
-            spoke.data[sweep.len() - 1] = 64;
+            data[sweep.len() - 1] = 64;
         }
 
         log::trace!(
             "Received {:04}/{:04} spoke {}",
             angle,
-            heading.unwrap_or(99999),
-            PrintableSpoke::new(&spoke.data)
+            heading.unwrap_or(9999),
+            PrintableSpoke::new(&data)
         );
 
-        self.common
-            .trails
-            .update_trails(&mut spoke, &self.common.info.legend);
-
-        spoke
+        self.common.add_spoke(metadata.range, angle, heading, data);
     }
 
     // From RadarDLLAccess RmGetEchoData() we know that the following should be in the header:
@@ -1131,17 +1063,15 @@ impl FurunoReportReceiver {
             have_heading,
             range,
         };
-        if self.sweep_count < self.prev_angle {
-            log::debug!(
-                "header {:?} -> v1={v1}, v2={v2}, v3={v3}, sweep_count={} sweep_len={} encoding={} have_heading={} range={}",
-                &data[0..20],
-                sweep_count,
-                sweep_len,
-                encoding,
-                have_heading,
-                range
-            );
-        }
+        log::trace!(
+            "header {:?} -> v1={v1}, v2={v2}, v3={v3}, sweep_count={} sweep_len={} encoding={} have_heading={} range={}",
+            &data[0..20],
+            sweep_count,
+            sweep_len,
+            encoding,
+            have_heading,
+            range
+        );
 
         metadata
     }

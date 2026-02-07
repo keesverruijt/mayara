@@ -1,13 +1,11 @@
 use serde::Deserialize;
 use std::mem::size_of;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::brand::raymarine::report::pixel_to_blob;
 use crate::brand::raymarine::{RaymarineModel, hd_to_pixel_values, settings};
-use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::Power;
 use crate::radar::range::{Range, Ranges};
-use crate::radar::spoke::{GenericSpoke, to_protobuf_spoke};
+use crate::radar::spoke::GenericSpoke;
 use crate::settings::ControlType;
 
 use super::{RaymarineReportReceiver, ReceiverState};
@@ -62,8 +60,6 @@ const SPOKE_HEADER_1_LENGTH: usize = size_of::<SpokeHeader1>();
 const SPOKE_DATA_LENGTH: usize = size_of::<SpokeHeader3>();
 
 pub(crate) fn process_frame(receiver: &mut RaymarineReportReceiver, data: &[u8]) {
-    let mut mark_full_rotation = false;
-
     if receiver.state != ReceiverState::StatusRequestReceived {
         log::trace!("{}: Skip scan: not all reports seen", receiver.common.key);
         return;
@@ -116,11 +112,7 @@ pub(crate) fn process_frame(receiver: &mut RaymarineReportReceiver, data: &[u8])
         return;
     }
 
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .ok();
-    let mut message = RadarMessage::new();
+    receiver.common.new_spoke_message();
 
     let mut scanline = 0;
     let mut next_offset = FRAME_HEADER_LENGTH;
@@ -230,42 +222,14 @@ pub(crate) fn process_frame(receiver: &mut RaymarineReportReceiver, data: &[u8])
             + receiver.common.info.spokes_per_revolution / 2)
             % receiver.common.info.spokes_per_revolution;
 
-        let mut spoke = to_protobuf_spoke(
-            &receiver.common.info,
+        receiver.common.add_spoke(
             receiver.range_meters * 4,
             angle,
             None,
-            now,
             process_spoke(hd_type, returns_per_line, spoke, data_len),
         );
-        receiver
-            .common
-            .trails
-            .update_trails(&mut spoke, &receiver.common.info.legend);
-        message.spokes.push(spoke);
 
         next_offset += header3.length as usize - SPOKE_DATA_LENGTH;
-
-        if angle < receiver.prev_azimuth {
-            mark_full_rotation = true;
-        }
-        let spokes_per_revolution = receiver.common.info.spokes_per_revolution as u16;
-        if receiver.prev_azimuth < spokes_per_revolution
-            && ((receiver.prev_azimuth + 1) % spokes_per_revolution) != angle
-        {
-            receiver.common.statistics.missing_spokes +=
-                (angle + spokes_per_revolution - receiver.prev_azimuth - 1) as usize
-                    % spokes_per_revolution as usize;
-            log::trace!(
-                "{}: Spoke angle {} is not consecutive to previous angle {}, new missing spokes {}",
-                receiver.common.key,
-                angle,
-                receiver.prev_azimuth,
-                receiver.common.statistics.missing_spokes
-            );
-        }
-        receiver.common.statistics.received_spokes += 1;
-        receiver.prev_azimuth = angle;
 
         scanline += 1;
     }
@@ -276,19 +240,9 @@ pub(crate) fn process_frame(receiver: &mut RaymarineReportReceiver, data: &[u8])
             nspokes,
             scanline
         );
-        receiver.common.statistics.broken_packets += 1;
     }
 
-    if mark_full_rotation {
-        let ms = receiver.common.info.full_rotation();
-        receiver.common.trails.set_rotation_speed(ms);
-        receiver
-            .common
-            .statistics
-            .full_rotation(&receiver.common.key);
-    }
-
-    receiver.common.info.broadcast_radar_message(message);
+    receiver.common.send_spoke_message();
 }
 
 fn process_spoke(

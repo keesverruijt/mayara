@@ -10,7 +10,6 @@ use crate::Cli;
 use crate::brand::raymarine::RaymarineModel;
 use crate::network::create_udp_multicast_listen;
 use crate::radar::range::Ranges;
-use crate::radar::trail::TrailBuffer;
 use crate::radar::{BYTE_LOOKUP_LENGTH, CommonRadar, Legend, RadarError, RadarInfo, SharedRadars};
 use crate::settings::ControlType;
 
@@ -77,10 +76,8 @@ pub(crate) struct RaymarineReportReceiver {
     reported_unknown: HashMap<u32, bool>,
 
     // For data (spokes)
-    pixel_stats: [u32; 256],
     range_meters: u32,
     pixel_to_blob: PixelToBlobType,
-    prev_azimuth: u16,
 }
 
 impl RaymarineReportReceiver {
@@ -102,9 +99,8 @@ impl RaymarineReportReceiver {
         let control_update_rx = info.controls.control_update_subscribe();
 
         let pixel_to_blob = pixel_to_blob(&info.legend);
-        let trails = TrailBuffer::new(args, &info);
 
-        let common = CommonRadar::new(key, info, radars, trails, control_update_rx, replay);
+        let common = CommonRadar::new(args, key, info, radars, control_update_rx, replay);
 
         let now = Instant::now();
         RaymarineReportReceiver {
@@ -115,10 +111,8 @@ impl RaymarineReportReceiver {
             command_sender,
             report_request_timeout: now,
             reported_unknown: HashMap::new(),
-            pixel_stats: [0; 256],
             range_meters: 0,
             pixel_to_blob,
-            prev_azimuth: 0,
         }
     }
 

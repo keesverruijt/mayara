@@ -6,10 +6,7 @@ use super::{HaloMode, Model};
 use crate::{
     Cli,
     radar::{NAUTICAL_MILE_F64, RadarInfo},
-    settings::{
-        AutomaticValue, Control, ControlDestination, ControlType, HAS_AUTO_NOT_ADJUSTABLE,
-        SharedControls,
-    },
+    settings::{AutomaticValue, Control, ControlType, HAS_AUTO_NOT_ADJUSTABLE, SharedControls},
 };
 
 pub fn new(args: &Cli, model: Option<&str>) -> SharedControls {
@@ -241,8 +238,7 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
         );
         controls.insert(
             ControlType::DopplerAutoTrack,
-            Control::new_list(ControlType::DopplerAutoTrack, &["Off", "On"])
-                .set_destination(ControlDestination::Trail),
+            Control::new_list(ControlType::DopplerAutoTrack, &["Off", "On"]),
         );
         controls.insert(
             ControlType::DopplerSpeedThreshold,
@@ -252,8 +248,7 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
         );
         controls.insert(
             ControlType::DopplerTrailsOnly,
-            Control::new_list(ControlType::DopplerTrailsOnly, &["Off", "On"])
-                .set_destination(ControlDestination::Trail),
+            Control::new_list(ControlType::DopplerTrailsOnly, &["Off", "On"]),
         );
     }
 

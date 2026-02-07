@@ -94,9 +94,7 @@ impl Controls {
         if !controls.contains_key(&ControlType::ModelName) {
             controls.insert(
                 ControlType::ModelName,
-                Control::new_string(ControlType::ModelName)
-                    .read_only(true)
-                    .set_destination(ControlDestination::Internal),
+                Control::new_string(ControlType::ModelName).read_only(true),
             );
         }
 
@@ -110,9 +108,7 @@ impl Controls {
 
         controls.insert(
             ControlType::UserName,
-            Control::new_string(ControlType::UserName)
-                .read_only(false)
-                .set_destination(ControlDestination::Internal),
+            Control::new_string(ControlType::UserName).read_only(false),
         );
 
         if args.targets != TargetMode::None {
@@ -129,8 +125,7 @@ impl Controls {
                         (5, "5 min".to_string()),
                         (6, "10 min".to_string()),
                     ]),
-                )
-                .set_destination(ControlDestination::Trail),
+                ),
             );
 
             controls.insert(
@@ -138,21 +133,18 @@ impl Controls {
                 Control::new_map(
                     ControlType::TrailsMotion,
                     HashMap::from([(0, "Relative".to_string()), (1, "True".to_string())]),
-                )
-                .set_destination(ControlDestination::Trail),
+                ),
             );
 
             controls.insert(
                 ControlType::ClearTrails,
-                Control::new_button(ControlType::ClearTrails)
-                    .set_destination(ControlDestination::Trail),
+                Control::new_button(ControlType::ClearTrails),
             );
 
             if args.targets == TargetMode::Arpa {
                 controls.insert(
                     ControlType::ClearTargets,
-                    Control::new_button(ControlType::ClearTargets)
-                        .set_destination(ControlDestination::Trail),
+                    Control::new_button(ControlType::ClearTargets),
                 );
             }
         }
@@ -272,13 +264,18 @@ impl SharedControls {
                     ControlValue::from(&c, None),
                     control_value
                 );
-                match c.item().destination {
+                match control_value.id.get_destination() {
                     ControlDestination::Internal => self
-                        .set_value(&ControlType::UserName, control_value.value.clone())
+                        .set_value(&control_value.id, control_value.value.clone())
                         .map(|_| ())
                         .map_err(|e| RadarError::ControlError(e)),
-                    ControlDestination::Command | ControlDestination::Trail => {
+                    ControlDestination::Command
+                    | ControlDestination::Target
+                    | ControlDestination::Trail => {
                         self.send_to_command_handler(control_value.clone(), reply_tx.clone())
+                    }
+                    ControlDestination::ReadOnly => {
+                        Err(RadarError::CannotSetControlType(control_value.id))
                     }
                 }
             }
@@ -899,12 +896,6 @@ impl Control {
         }
     }
 
-    pub(crate) fn set_destination(mut self, destination: ControlDestination) -> Self {
-        self.item.destination = destination;
-
-        self
-    }
-
     pub(crate) fn wire_scale_step(mut self, step: f32) -> Self {
         self.item.step_value = Some(step);
         self.item.wire_scale_factor = Some(self.item.max_value.unwrap_or(1.) / step);
@@ -1365,9 +1356,11 @@ pub enum ControlDataType {
 
 #[derive(Clone, Debug)]
 pub(crate) enum ControlDestination {
+    ReadOnly,
     Internal,
     Command,
     Trail,
+    Target,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1408,8 +1401,6 @@ pub struct ControlDefinition {
     is_read_only: bool,
     #[serde(skip)]
     is_send_always: bool, // Whether the controlvalue is sent out to client in all state messages
-    #[serde(skip)]
-    pub(crate) destination: ControlDestination,
 }
 
 fn is_false(v: &bool) -> bool {
@@ -1460,7 +1451,6 @@ impl ControlDefinition {
             valid_values,
             is_read_only,
             is_send_always,
-            destination: ControlDestination::Command,
         }
     }
 }
@@ -1557,14 +1547,6 @@ pub enum ControlType {
     SerialNumber,
     Spokes,
     UserName,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub enum Category {
-    Base,
-    Advanced,
-    Installation,
-    Info,
 }
 
 impl Display for ControlType {
@@ -1774,6 +1756,72 @@ impl ControlType {
             ControlType::WarmupTime => "Warmup time",
         }
     }
+
+    pub(crate) fn get_destination(&self) -> ControlDestination {
+        match self {
+            ControlType::AccentLight => ControlDestination::Command,
+            ControlType::AntennaHeight => ControlDestination::Command,
+            ControlType::BearingAlignment => ControlDestination::Command,
+            ControlType::BirdMode => ControlDestination::Command,
+            ControlType::ClearTargets => ControlDestination::Target,
+            ControlType::ClearTrails => ControlDestination::Trail,
+            ControlType::ColorGain => ControlDestination::Command,
+            ControlType::DisplayTiming => ControlDestination::Command,
+            ControlType::Power => ControlDestination::Command,
+            ControlType::WarmupTime => ControlDestination::ReadOnly,
+            ControlType::Range => ControlDestination::Command,
+            ControlType::Mode => ControlDestination::Command,
+            ControlType::Gain => ControlDestination::Command,
+            ControlType::Sea => ControlDestination::Command,
+            ControlType::SeaState => ControlDestination::Command,
+            ControlType::Rain => ControlDestination::Command,
+            ControlType::Doppler => ControlDestination::Command,
+            ControlType::DopplerMode => ControlDestination::Command,
+            ControlType::DopplerAutoTrack => ControlDestination::Target,
+            ControlType::DopplerSpeedThreshold => ControlDestination::Command,
+            ControlType::TargetTrails => ControlDestination::Trail,
+            ControlType::TrailsMotion => ControlDestination::Trail,
+            ControlType::DopplerTrailsOnly => ControlDestination::Trail,
+            ControlType::NoiseRejection => ControlDestination::Command,
+            ControlType::TargetBoost => ControlDestination::Command,
+            ControlType::TargetExpansion => ControlDestination::Command,
+            ControlType::InterferenceRejection => ControlDestination::Command,
+            ControlType::TargetSeparation => ControlDestination::Command,
+            ControlType::LocalInterferenceRejection => ControlDestination::Command,
+            ControlType::ScanSpeed => ControlDestination::Command,
+            ControlType::SideLobeSuppression => ControlDestination::Command,
+            ControlType::Tune => ControlDestination::Command,
+            ControlType::Ftc => ControlDestination::Command,
+            ControlType::MainBangSuppression => ControlDestination::Command,
+            ControlType::SeaClutterCurve => ControlDestination::Command,
+            ControlType::NoTransmitStart1 => ControlDestination::Command,
+            ControlType::NoTransmitEnd1 => ControlDestination::Command,
+            ControlType::NoTransmitStart2 => ControlDestination::Command,
+            ControlType::NoTransmitEnd2 => ControlDestination::Command,
+            ControlType::NoTransmitStart3 => ControlDestination::Command,
+            ControlType::NoTransmitEnd3 => ControlDestination::Command,
+            ControlType::NoTransmitStart4 => ControlDestination::Command,
+            ControlType::NoTransmitEnd4 => ControlDestination::Command,
+            ControlType::RotationSpeed => ControlDestination::Command,
+            ControlType::MagnetronCurrent => ControlDestination::Command,
+            ControlType::SignalStrength => ControlDestination::Command,
+            ControlType::OperatingHours => ControlDestination::ReadOnly,
+            ControlType::TransmitHours => ControlDestination::ReadOnly,
+            ControlType::ModelName => ControlDestination::ReadOnly,
+            ControlType::FirmwareVersion => ControlDestination::ReadOnly,
+            ControlType::SerialNumber => ControlDestination::ReadOnly,
+            ControlType::Spokes => ControlDestination::ReadOnly,
+            ControlType::UserName => ControlDestination::Internal,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub enum Category {
+    Base,
+    Advanced,
+    Installation,
+    Info,
 }
 
 #[derive(Error, Debug)]

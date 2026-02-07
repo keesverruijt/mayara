@@ -1,14 +1,12 @@
 use anyhow::bail;
 use serde::Deserialize;
 use std::mem::size_of;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::brand::raymarine::command::Command;
 use crate::brand::raymarine::report::{LookupDoppler, PixelToBlobType, pixel_to_blob};
 use crate::brand::raymarine::{RaymarineModel, hd_to_pixel_values, settings};
-use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::range::{Range, Ranges};
-use crate::radar::spoke::{GenericSpoke, to_protobuf_spoke};
+use crate::radar::spoke::GenericSpoke;
 use crate::radar::{Power, SpokeBearing};
 use crate::settings::ControlType;
 
@@ -74,11 +72,7 @@ pub(crate) fn process_frame(receiver: &mut RaymarineReportReceiver, data: &[u8])
         return;
     }
 
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .ok();
-    let mut message = RadarMessage::new();
+    receiver.common.new_spoke_message();
 
     let next_offset = FRAME_HEADER_LENGTH;
 
@@ -86,12 +80,10 @@ pub(crate) fn process_frame(receiver: &mut RaymarineReportReceiver, data: &[u8])
 
     let spoke = &data[next_offset..next_offset + data_len];
 
-    let mut spoke = to_protobuf_spoke(
-        &receiver.common.info,
-        receiver.range_meters * returns_per_line / returns_per_range as u32,
+    receiver.common.add_spoke(
+        receiver.range_meters * returns_per_line / returns_per_range,
         azimuth,
         None,
-        now,
         process_spoke(
             returns_per_line as usize,
             spoke,
@@ -99,29 +91,8 @@ pub(crate) fn process_frame(receiver: &mut RaymarineReportReceiver, data: &[u8])
             &receiver.pixel_to_blob,
         ),
     );
-    for p in &spoke.data {
-        receiver.pixel_stats[*p as usize] += 1;
-    }
-    receiver
-        .common
-        .trails
-        .update_trails(&mut spoke, &receiver.common.info.legend);
-    message.spokes.push(spoke);
 
-    receiver.common.info.broadcast_radar_message(message);
-
-    if azimuth < receiver.prev_azimuth {
-        log::info!("Pixel stats: {:?}", receiver.pixel_stats);
-        receiver.pixel_stats = [0; 256];
-
-        let ms = receiver.common.info.full_rotation();
-        receiver.common.trails.set_rotation_speed(ms);
-        receiver
-            .common
-            .statistics
-            .full_rotation(&receiver.common.key);
-    }
-    receiver.prev_azimuth = azimuth;
+    receiver.common.send_spoke_message();
 }
 
 fn process_spoke(

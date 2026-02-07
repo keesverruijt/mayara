@@ -29,6 +29,9 @@ static POSITION_LON: AtomicF64 = AtomicF64::new(f64::NAN);
 static COG: AtomicF64 = AtomicF64::new(f64::NAN);
 static SOG: AtomicF64 = AtomicF64::new(f64::NAN);
 
+///
+/// Get the heading in radians [0..2*PI>
+///
 pub(crate) fn get_heading_true() -> Option<f64> {
     let heading = HEADING_TRUE.load(Ordering::Acquire);
     if !heading.is_nan() {
@@ -37,6 +40,9 @@ pub(crate) fn get_heading_true() -> Option<f64> {
     return None;
 }
 
+///
+/// Set the heading in radians [0..2*PI>
+///
 pub(crate) fn set_heading_true(heading: Option<f64>) {
     if let Some(h) = heading {
         HEADING_TRUE.store(h, Ordering::Release);

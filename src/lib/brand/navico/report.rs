@@ -8,7 +8,6 @@ use std::io;
 use std::mem::transmute;
 use std::net::SocketAddr;
 use std::time::Duration;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::net::UdpSocket;
 use tokio::time::{Instant, sleep_until};
 use tokio_graceful_shutdown::SubsystemHandle;
@@ -16,8 +15,7 @@ use tokio_graceful_shutdown::SubsystemHandle;
 use super::Model;
 use super::command::Command;
 use super::{
-    DYNAMIC_READ_ONLY_CONTROL_TYPES, NAVICO_SPOKES, NAVICO_SPOKES_RAW, RADAR_LINE_DATA_LENGTH,
-    SPOKES_PER_FRAME,
+    DYNAMIC_READ_ONLY_CONTROL_TYPES, NAVICO_SPOKES_RAW, RADAR_LINE_DATA_LENGTH, SPOKES_PER_FRAME,
 };
 
 use crate::Cli;
@@ -29,11 +27,9 @@ use crate::brand::navico::{
     HaloMode, NAVICO_INFO_ADDRESS, NAVICO_SPEED_ADDRESS_A, NAVICO_SPOKE_LEN,
 };
 use crate::network::create_udp_multicast_listen;
-use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::range::{RangeDetection, RangeDetectionResult};
-use crate::radar::spoke::{GenericSpoke, to_protobuf_spoke};
+use crate::radar::spoke::GenericSpoke;
 use crate::radar::target::MS_TO_KN;
-use crate::radar::trail::TrailBuffer;
 use crate::radar::{
     BYTE_LOOKUP_LENGTH, CommonRadar, DopplerMode, Legend, Power, RadarError, RadarInfo,
     SharedRadars, SpokeBearing,
@@ -190,7 +186,6 @@ pub struct NavicoReportReceiver {
     data_socket: Option<UdpSocket>,
     doppler: DopplerMode,
     pixel_to_blob: PixelToBlobType,
-    prev_angle: u16,
 }
 
 // Every 5 seconds we ask the radar for reports, so we can update our controls
@@ -487,9 +482,8 @@ impl NavicoReportReceiver {
         let control_update_rx = info.controls.control_update_subscribe();
 
         let pixel_to_blob = pixel_to_blob(&info.legend);
-        let trails = TrailBuffer::new(&args, &info);
 
-        let common = CommonRadar::new(key, info, radars, trails, control_update_rx, replay);
+        let common = CommonRadar::new(&args, key, info, radars, control_update_rx, replay);
 
         let now = Instant::now();
         NavicoReportReceiver {
@@ -512,7 +506,6 @@ impl NavicoReportReceiver {
             data_socket: None,
             doppler: DopplerMode::None,
             pixel_to_blob,
-            prev_angle: 0,
         }
     }
 
@@ -747,24 +740,11 @@ impl NavicoReportReceiver {
             return;
         }
 
-        let mut spokes_in_frame = (self.data_buf.len() - FRAME_HEADER_LENGTH) / RADAR_LINE_LENGTH;
-        if spokes_in_frame != 32 {
-            self.common.statistics.broken_packets += 1;
-            if spokes_in_frame > 32 {
-                spokes_in_frame = 32;
-            }
-        }
+        let spokes_in_frame = (self.data_buf.len() - FRAME_HEADER_LENGTH) / RADAR_LINE_LENGTH;
 
         log::trace!("Received UDP frame with {} spokes", &spokes_in_frame);
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .ok();
-
-        let mut mark_full_rotation = false;
-        let mut message = RadarMessage::new();
-        message.radar = self.common.info.id as u32;
+        self.common.new_spoke_message();
 
         let mut offset: usize = FRAME_HEADER_LENGTH;
         for scanline in 0..spokes_in_frame {
@@ -779,51 +759,16 @@ impl NavicoReportReceiver {
                     scanline,
                     PrintableSpoke::new(spoke_slice)
                 );
-                let mut spoke = to_protobuf_spoke(
-                    &self.common.info,
-                    range,
-                    angle,
-                    heading,
-                    now,
-                    self.process_spoke(spoke_slice),
-                );
-                self.common
-                    .trails
-                    .update_trails(&mut spoke, &self.common.info.legend);
-                message.spokes.push(spoke);
 
-                if angle < self.prev_angle {
-                    mark_full_rotation = true;
-                }
-                if ((self.prev_angle + 1) % NAVICO_SPOKES as u16) != angle {
-                    self.common.statistics.missing_spokes +=
-                        (angle + NAVICO_SPOKES as u16 - self.prev_angle - 1) as usize
-                            % NAVICO_SPOKES as usize;
-                    log::trace!(
-                        "{}: Spoke angle {} is not consecutive to previous angle {}, new missing spokes {}",
-                        self.common.key,
-                        angle,
-                        self.prev_angle,
-                        self.common.statistics.missing_spokes
-                    );
-                }
-                self.common.statistics.received_spokes += 1;
-                self.prev_angle = angle;
+                self.common
+                    .add_spoke(range, angle, heading, self.process_spoke(spoke_slice));
             } else {
                 log::warn!("Invalid spoke: header {:02X?}", &header_slice);
-                self.common.statistics.broken_packets += 1;
             }
 
             offset += RADAR_LINE_LENGTH;
         }
-
-        if mark_full_rotation {
-            let ms = self.common.info.full_rotation();
-            self.common.trails.set_rotation_speed(ms);
-            self.common.statistics.full_rotation(&self.common.key);
-        }
-
-        self.common.info.broadcast_radar_message(message);
+        self.common.send_spoke_message();
     }
 
     fn process_spoke(&self, spoke: &[u8]) -> GenericSpoke {

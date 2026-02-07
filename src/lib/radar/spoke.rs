@@ -1,14 +1,11 @@
 use std::f64::consts::PI;
 
-use crate::{
-    protos::RadarMessage::radar_message::Spoke,
-    radar::{RadarInfo, SpokeBearing},
-};
+use crate::{protos::RadarMessage::radar_message::Spoke, radar::SpokeBearing};
 
 pub(crate) type GenericSpoke = Vec<u8>;
 
 pub(crate) fn to_protobuf_spoke(
-    info: &RadarInfo,
+    spokes_per_revolution: u16,
     range: u32,
     angle: SpokeBearing,
     heading: Option<u16>,
@@ -24,12 +21,12 @@ pub(crate) fn to_protobuf_spoke(
     );
 
     let heading = if heading.is_some() {
-        heading.map(|h| (((h / 2) + angle) % (info.spokes_per_revolution as u16)) as u32)
+        heading.map(|h| (((h / 2) + angle) % spokes_per_revolution) as u32)
     } else {
         let heading = crate::navdata::get_heading_true();
         heading.map(|h| {
-            (((h * info.spokes_per_revolution as f64 / (2. * PI)) as u16 + angle)
-                % (info.spokes_per_revolution as u16)) as u32
+            (((h * spokes_per_revolution as f64 / (2. * PI)) as u16 + angle)
+                % spokes_per_revolution) as u32
         })
     };
 
