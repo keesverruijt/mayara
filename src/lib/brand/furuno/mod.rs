@@ -1,5 +1,3 @@
-#[allow(dead_code)]
-use async_trait::async_trait;
 use bincode::deserialize;
 use log::log_enabled;
 use serde::Deserialize;
@@ -9,10 +7,12 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
-use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState};
+use crate::locator::LocatorAddress;
 use crate::radar::{RadarInfo, SharedRadars};
 use crate::util::{PrintableSlice, c_string};
 use crate::{Brand, Cli};
+
+use super::{LocatorId, RadarLocator};
 
 mod command;
 mod report;
@@ -198,13 +198,13 @@ fn login_to_radar(radar_addr: SocketAddrV4) -> Result<u16, io::Error> {
 }
 
 #[derive(Clone)]
-struct FurunoLocatorState {
+struct FurunoLocator {
     args: Cli,
     radar_keys: HashMap<SocketAddrV4, String>,
     model_found: bool,
 }
 
-impl RadarLocatorState for FurunoLocatorState {
+impl RadarLocator for FurunoLocator {
     fn process(
         &mut self,
         message: &[u8],
@@ -216,14 +216,14 @@ impl RadarLocatorState for FurunoLocatorState {
         self.process_locator_report(message, from, nic_addr, radars, subsys)
     }
 
-    fn clone(&self) -> Box<dyn RadarLocatorState> {
+    fn clone(&self) -> Box<dyn RadarLocator> {
         Box::new(Clone::clone(self))
     }
 }
 
-impl FurunoLocatorState {
+impl FurunoLocator {
     fn new(args: Cli, radar_keys: HashMap<SocketAddrV4, String>, model_found: bool) -> Self {
-        FurunoLocatorState {
+        FurunoLocator {
             args,
             radar_keys,
             model_found,
@@ -358,7 +358,6 @@ impl FurunoLocatorState {
                     let send_command_addr: SocketAddrV4 = report_addr.clone();
                     let location_info: RadarInfo = RadarInfo::new(
                         &self.args,
-                        LocatorId::Furuno,
                         Brand::Furuno,
                         None,
                         Some(name),
@@ -440,35 +439,18 @@ impl FurunoLocatorState {
     }
 }
 
-#[derive(Clone)]
-struct FurunoLocator {
-    args: Cli,
-}
-
-#[async_trait]
-impl RadarLocator for FurunoLocator {
-    fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
-        if !addresses.iter().any(|i| i.id == LocatorId::Furuno) {
-            addresses.push(LocatorAddress::new(
-                LocatorId::Furuno,
-                &FURUNO_BEACON_ADDRESS,
-                Brand::Furuno,
-                vec![
-                    &FURUNO_REQUEST_BEACON_PACKET,
-                    &FURUNO_REQUEST_MODEL_PACKET,
-                    &FURUNO_ANNOUNCE_MAYARA_PACKET,
-                ],
-                Box::new(FurunoLocatorState::new(
-                    self.args.clone(),
-                    HashMap::new(),
-                    false,
-                )),
-            ));
-        }
+pub(super) fn new(args: &Cli, addresses: &mut Vec<LocatorAddress>) {
+    if !addresses.iter().any(|i| i.id == LocatorId::Furuno) {
+        addresses.push(LocatorAddress::new(
+            LocatorId::Furuno,
+            &FURUNO_BEACON_ADDRESS,
+            Brand::Furuno,
+            vec![
+                &FURUNO_REQUEST_BEACON_PACKET,
+                &FURUNO_REQUEST_MODEL_PACKET,
+                &FURUNO_ANNOUNCE_MAYARA_PACKET,
+            ],
+            Box::new(FurunoLocator::new(args.clone(), HashMap::new(), false)),
+        ));
     }
-}
-
-pub fn create_locator(args: Cli) -> Box<dyn RadarLocator + Send> {
-    let locator = FurunoLocator { args };
-    Box::new(locator)
 }

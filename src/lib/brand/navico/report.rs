@@ -21,13 +21,13 @@ use super::{
 };
 
 use crate::Cli;
+use crate::brand::CommandSender;
 use crate::brand::navico::info::{
     HaloHeadingPacket, HaloNavigationPacket, HaloSpeedPacket, Information,
 };
 use crate::brand::navico::{
     HaloMode, NAVICO_INFO_ADDRESS, NAVICO_SPEED_ADDRESS_A, NAVICO_SPOKE_LEN,
 };
-use crate::locator::LocatorId;
 use crate::network::create_udp_multicast_listen;
 use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::range::{RangeDetection, RangeDetectionResult};
@@ -35,8 +35,8 @@ use crate::radar::spoke::{GenericSpoke, to_protobuf_spoke};
 use crate::radar::target::MS_TO_KN;
 use crate::radar::trail::TrailBuffer;
 use crate::radar::{
-    BYTE_LOOKUP_LENGTH, CommandSender, CommonRadar, DopplerMode, Legend, Power, RadarError,
-    RadarInfo, SharedRadars, SpokeBearing,
+    BYTE_LOOKUP_LENGTH, CommonRadar, DopplerMode, Legend, Power, RadarError, RadarInfo,
+    SharedRadars, SpokeBearing,
 };
 use crate::settings::{ControlError, ControlType, ControlValue};
 use crate::util::PrintableSpoke;
@@ -772,9 +772,7 @@ impl NavicoReportReceiver {
             let spoke_slice = &self.data_buf[offset + RADAR_LINE_HEADER_LENGTH
                 ..offset + RADAR_LINE_HEADER_LENGTH + RADAR_LINE_DATA_LENGTH];
 
-            if let Some((range, angle, heading)) =
-                validate_header(&self.common.info, header_slice, scanline)
-            {
+            if let Some((range, angle, heading)) = self.validate_header(header_slice, scanline) {
                 log::trace!("range {} angle {} heading {:?}", range, angle, heading);
                 log::trace!(
                     "Received {:04} spoke {}",
@@ -1539,93 +1537,91 @@ impl NavicoReportReceiver {
 
         Ok(())
     }
-}
 
-fn validate_header(
-    radar_info: &RadarInfo,
-    header_slice: &[u8],
-    scanline: usize,
-) -> Option<(u32, SpokeBearing, Option<u16>)> {
-    match radar_info.locator_id {
-        LocatorId::Gen3Plus => match deserialize::<Gen3PlusHeader>(&header_slice) {
-            Ok(header) => {
-                log::trace!("Received {:04} header {:?}", scanline, header);
+    fn validate_header(
+        &self,
+        header_slice: &[u8],
+        scanline: usize,
+    ) -> Option<(u32, SpokeBearing, Option<u16>)> {
+        match self.model {
+            Model::BR24 | Model::Gen3 => match deserialize::<GenBr24Header>(&header_slice) {
+                Ok(header) => {
+                    log::trace!("Received {:04} header {:?}", scanline, header);
 
-                validate_4g_header(&header)
-            }
-            Err(e) => {
-                log::warn!("Illegible spoke: {} header {:02X?}", e, &header_slice);
-                return None;
-            }
-        },
-        LocatorId::GenBR24 => match deserialize::<GenBr24Header>(&header_slice) {
-            Ok(header) => {
-                log::trace!("Received {:04} header {:?}", scanline, header);
+                    Self::validate_br24_header(&header)
+                }
+                Err(e) => {
+                    log::warn!("Illegible spoke: {} header {:02X?}", e, &header_slice);
+                    return None;
+                }
+            },
+            _ => match deserialize::<Gen3PlusHeader>(&header_slice) {
+                Ok(header) => {
+                    log::trace!("Received {:04} header {:?}", scanline, header);
 
-                validate_br24_header(&header)
-            }
-            Err(e) => {
-                log::warn!("Illegible spoke: {} header {:02X?}", e, &header_slice);
-                return None;
-            }
-        },
-        _ => {
-            panic!("Incorrect Navico type");
+                    Self::validate_4g_header(&header)
+                }
+                Err(e) => {
+                    log::warn!("Illegible spoke: {} header {:02X?}", e, &header_slice);
+                    return None;
+                }
+            },
         }
     }
-}
 
-fn validate_4g_header(header: &Gen3PlusHeader) -> Option<(u32, SpokeBearing, Option<u16>)> {
-    if header.header_len != (RADAR_LINE_HEADER_LENGTH as u8) {
-        log::warn!(
-            "Spoke with illegal header length ({}) ignored",
-            header.header_len
-        );
-        return None;
-    }
-    if header.status != 0x02 && header.status != 0x12 {
-        log::warn!("Spoke with illegal status (0x{:x}) ignored", header.status);
-        return None;
-    }
+    fn validate_4g_header(header: &Gen3PlusHeader) -> Option<(u32, SpokeBearing, Option<u16>)> {
+        if header.header_len != (RADAR_LINE_HEADER_LENGTH as u8) {
+            log::warn!(
+                "Spoke with illegal header length ({}) ignored",
+                header.header_len
+            );
+            return None;
+        }
+        if header.status != 0x02 && header.status != 0x12 {
+            log::warn!("Spoke with illegal status (0x{:x}) ignored", header.status);
+            return None;
+        }
 
-    let heading = u16::from_le_bytes(header.heading);
-    let angle = u16::from_le_bytes(header.angle) / 2;
-    let large_range = u16::from_le_bytes(header.large_range);
-    let small_range = u16::from_le_bytes(header.small_range);
+        let heading = u16::from_le_bytes(header.heading);
+        let angle = u16::from_le_bytes(header.angle) / 2;
+        let large_range = u16::from_le_bytes(header.large_range);
+        let small_range = u16::from_le_bytes(header.small_range);
 
-    let range = if large_range == 0x80 {
-        if small_range == 0xffff {
-            0
+        let range = if large_range == 0x80 {
+            if small_range == 0xffff {
+                0
+            } else {
+                (small_range as u32) / 4
+            }
         } else {
-            (small_range as u32) / 4
+            ((large_range as u32) * (small_range as u32)) / 512
+        };
+
+        let heading = extract_heading_value(heading);
+        Some((range, angle, heading))
+    }
+
+    fn validate_br24_header(header: &GenBr24Header) -> Option<(u32, SpokeBearing, Option<u16>)> {
+        if header.header_len != (RADAR_LINE_HEADER_LENGTH as u8) {
+            log::warn!(
+                "Spoke with illegal header length ({}) ignored",
+                header.header_len
+            );
+            return None;
         }
-    } else {
-        ((large_range as u32) * (small_range as u32)) / 512
-    };
+        if header.status != 0x02 && header.status != 0x12 {
+            log::warn!("Spoke with illegal status (0x{:x}) ignored", header.status);
+            return None;
+        }
 
-    let heading = extract_heading_value(heading);
-    Some((range, angle, heading))
-}
+        let heading = u16::from_le_bytes(header.heading);
+        let angle = u16::from_le_bytes(header.angle) / 2;
+        const BR24_RANGE_FACTOR: f64 = 10.0 / 1.414; // 10 m / sqrt(2)
+        let range =
+            ((u32::from_le_bytes(header.range) & 0xffffff) as f64 * BR24_RANGE_FACTOR) as u32;
 
-fn validate_br24_header(header: &GenBr24Header) -> Option<(u32, SpokeBearing, Option<u16>)> {
-    if header.header_len != (RADAR_LINE_HEADER_LENGTH as u8) {
-        log::warn!(
-            "Spoke with illegal header length ({}) ignored",
-            header.header_len
-        );
-        return None;
+        let heading = extract_heading_value(heading);
+
+        Some((range, angle, heading))
     }
-    if header.status != 0x02 && header.status != 0x12 {
-        log::warn!("Spoke with illegal status (0x{:x}) ignored", header.status);
-        return None;
-    }
-
-    let heading = u16::from_le_bytes(header.heading);
-    let angle = u16::from_le_bytes(header.angle) / 2;
-    const BR24_RANGE_FACTOR: f64 = 10.0 / 1.414; // 10 m / sqrt(2)
-    let range = ((u32::from_le_bytes(header.range) & 0xffffff) as f64 * BR24_RANGE_FACTOR) as u32;
-
-    let heading = extract_heading_value(heading);
-
-    Some((range, angle, heading))
 }

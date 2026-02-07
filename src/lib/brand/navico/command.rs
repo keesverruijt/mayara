@@ -3,8 +3,9 @@ use std::cmp::{max, min};
 use async_trait::async_trait;
 use tokio::net::UdpSocket;
 
+use crate::brand::CommandSender;
 use crate::network::create_multicast_send;
-use crate::radar::{CommandSender, Power, RadarError, RadarInfo};
+use crate::radar::{Power, RadarError, RadarInfo};
 use crate::settings::{ControlType, ControlValue, SharedControls};
 
 use super::Model;

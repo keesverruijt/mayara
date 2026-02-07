@@ -6,13 +6,15 @@ use std::{fmt, io};
 use strum::VariantNames;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
-use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState};
+use crate::locator::LocatorAddress;
 use crate::network::NetworkSocketAddrV4;
 use crate::radar::{RadarInfo, SharedRadars};
 use crate::settings::ControlType;
 use crate::util::PrintableSlice;
 use crate::util::c_string;
 use crate::{Brand, Cli};
+
+use super::{LocatorId, RadarLocator};
 
 mod command;
 mod info;
@@ -224,11 +226,11 @@ const NAVICO_BEACON_DUAL_SIZE: usize = size_of::<NavicoBeaconDual>();
 const NAVICO_BEACON_BR24_SIZE: usize = size_of::<BR24Beacon>();
 
 #[derive(Clone)]
-struct NavicoLocatorState {
+struct NavicoLocator {
     args: Cli,
 }
 
-impl NavicoLocatorState {
+impl NavicoLocator {
     fn process_locator_report(
         &self,
         report: &[u8],
@@ -291,7 +293,6 @@ impl NavicoLocatorState {
                         let radar_send: SocketAddrV4 = data.a.send.into();
                         let location_info: RadarInfo = RadarInfo::new(
                             &self.args,
-                            LocatorId::Gen3Plus,
                             Brand::Navico,
                             Some(serial_no),
                             Some("A"),
@@ -313,7 +314,6 @@ impl NavicoLocatorState {
                         let radar_send: SocketAddrV4 = data.b.send.into();
                         let location_info: RadarInfo = RadarInfo::new(
                             &self.args,
-                            LocatorId::Gen3Plus,
                             Brand::Navico,
                             Some(serial_no),
                             Some("B"),
@@ -352,7 +352,6 @@ impl NavicoLocatorState {
                         let radar_send: SocketAddrV4 = data.a.send.into();
                         let location_info: RadarInfo = RadarInfo::new(
                             &self.args,
-                            LocatorId::Gen3Plus,
                             Brand::Navico,
                             Some(serial_no),
                             None,
@@ -392,7 +391,6 @@ impl NavicoLocatorState {
                         let radar_send: SocketAddrV4 = data.send.into();
                         let location_info: RadarInfo = RadarInfo::new(
                             &self.args,
-                            LocatorId::GenBR24,
                             Brand::Navico,
                             Some(serial_no),
                             None,
@@ -452,7 +450,7 @@ impl NavicoLocatorState {
     }
 }
 
-impl RadarLocatorState for NavicoLocatorState {
+impl RadarLocator for NavicoLocator {
     fn process(
         &mut self,
         message: &[u8],
@@ -464,71 +462,41 @@ impl RadarLocatorState for NavicoLocatorState {
         self.process_locator_report(message, from, nic_addr, radars, subsys)
     }
 
-    fn clone(&self) -> Box<dyn RadarLocatorState> {
-        Box::new(NavicoLocatorState {
+    fn clone(&self) -> Box<dyn RadarLocator> {
+        Box::new(NavicoLocator {
             args: self.args.clone(),
         }) // Navico is stateless
     }
 }
 
-#[derive(Clone)]
-struct NavicoLocator {
-    args: Cli,
-}
-
-impl RadarLocator for NavicoLocator {
-    fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
-        if !addresses.iter().any(|i| i.id == LocatorId::Gen3Plus) {
-            let mut beacon_request_packets: Vec<&'static [u8]> = Vec::new();
-            if !self.args.replay {
-                beacon_request_packets.push(&NAVICO_ADDRESS_REQUEST_PACKET);
-            };
-            addresses.push(LocatorAddress::new(
-                LocatorId::Gen3Plus,
-                &NAVICO_BEACON_ADDRESS,
-                Brand::Navico,
-                beacon_request_packets,
-                Box::new(NavicoLocatorState {
-                    args: self.args.clone(),
-                }),
-            ));
-        }
+pub(super) fn new(args: &Cli, addresses: &mut Vec<LocatorAddress>) {
+    if !addresses.iter().any(|i| i.id == LocatorId::Gen3Plus) {
+        let mut beacon_request_packets: Vec<&'static [u8]> = Vec::new();
+        if !args.replay {
+            beacon_request_packets.push(&NAVICO_ADDRESS_REQUEST_PACKET);
+        };
+        addresses.push(LocatorAddress::new(
+            LocatorId::Gen3Plus,
+            &NAVICO_BEACON_ADDRESS,
+            Brand::Navico,
+            beacon_request_packets,
+            Box::new(NavicoLocator { args: args.clone() }),
+        ));
     }
-}
 
-pub fn create_locator(args: Cli) -> Box<dyn RadarLocator + Send> {
-    let locator = NavicoLocator { args };
-    Box::new(locator)
-}
-
-#[derive(Clone)]
-struct NavicoBR24Locator {
-    args: Cli,
-}
-
-impl RadarLocator for NavicoBR24Locator {
-    fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
-        if !addresses.iter().any(|i| i.id == LocatorId::GenBR24) {
-            let mut beacon_request_packets: Vec<&'static [u8]> = Vec::new();
-            if !self.args.replay {
-                beacon_request_packets.push(&NAVICO_ADDRESS_REQUEST_PACKET);
-            };
-            addresses.push(LocatorAddress::new(
-                LocatorId::GenBR24,
-                &NAVICO_BR24_BEACON_ADDRESS,
-                Brand::Navico,
-                beacon_request_packets,
-                Box::new(NavicoLocatorState {
-                    args: self.args.clone(),
-                }),
-            ));
-        }
+    if !addresses.iter().any(|i| i.id == LocatorId::GenBR24) {
+        let mut beacon_request_packets: Vec<&'static [u8]> = Vec::new();
+        if !args.replay {
+            beacon_request_packets.push(&NAVICO_ADDRESS_REQUEST_PACKET);
+        };
+        addresses.push(LocatorAddress::new(
+            LocatorId::GenBR24,
+            &NAVICO_BR24_BEACON_ADDRESS,
+            Brand::Navico,
+            beacon_request_packets,
+            Box::new(NavicoLocator { args: args.clone() }),
+        ));
     }
-}
-
-pub fn create_br24_locator(args: Cli) -> Box<dyn RadarLocator + Send> {
-    let locator = NavicoBR24Locator { args };
-    Box::new(locator)
 }
 
 const BLANKING_SETS: [(usize, ControlType, ControlType); 4] = [

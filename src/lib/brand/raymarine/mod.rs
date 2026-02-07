@@ -6,11 +6,14 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::{fmt, io};
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
-use crate::locator::{LocatorAddress, LocatorId, RadarLocator, RadarLocatorState};
+use crate::brand::RadarLocator;
+use crate::locator::LocatorAddress;
 use crate::network::LittleEndianSocketAddrV4;
 use crate::radar::{RadarInfo, SharedRadars};
 use crate::util::{PrintableSlice, c_string};
 use crate::{Brand, Cli};
+
+use super::LocatorId;
 
 mod command;
 mod report;
@@ -208,14 +211,14 @@ struct RadarState {
 }
 
 #[derive(Clone)]
-struct RaymarineLocatorState {
+struct RaymarineLocator {
     args: Cli,
     ids: HashMap<LinkId, RadarState>,
 }
 
-impl RaymarineLocatorState {
+impl RaymarineLocator {
     fn new(args: Cli) -> Self {
-        RaymarineLocatorState {
+        RaymarineLocator {
             args,
             ids: HashMap::new(),
         }
@@ -293,7 +296,6 @@ impl RaymarineLocatorState {
                     let radar_send: SocketAddrV4 = data.command.into();
                     let location_info: RadarInfo = RadarInfo::new(
                         &self.args,
-                        LocatorId::Raymarine,
                         Brand::Raymarine,
                         None,
                         None,
@@ -451,7 +453,7 @@ impl RaymarineLocatorState {
     }
 }
 
-impl RadarLocatorState for RaymarineLocatorState {
+impl RadarLocator for RaymarineLocator {
     fn process(
         &mut self,
         report: &[u8],
@@ -505,14 +507,9 @@ impl RadarLocatorState for RaymarineLocatorState {
         Ok(())
     }
 
-    fn clone(&self) -> Box<dyn RadarLocatorState> {
+    fn clone(&self) -> Box<dyn RadarLocator> {
         Box::new(Clone::clone(self))
     }
-}
-
-#[derive(Clone)]
-struct RaymarineLocator {
-    args: Cli,
 }
 
 const RAYMARINE_MFD_BEACON: [u8; 56] = [
@@ -540,29 +537,22 @@ const BEACONS: [&'static [u8]; 3] = [
     &RAYMARINE_WOL_RADAR,
 ];
 
-impl RadarLocator for RaymarineLocator {
-    fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>) {
-        if !addresses.iter().any(|i| i.id == LocatorId::Raymarine) {
-            let beacon_address = if self.args.allow_wifi {
-                &RAYMARINE_QUANTUM_WIFI_ADDRESS
-            } else {
-                &RAYMARINE_BEACON_ADDRESS
-            };
+pub(super) fn new(args: &Cli, addresses: &mut Vec<LocatorAddress>) {
+    if !addresses.iter().any(|i| i.id == LocatorId::Raymarine) {
+        let beacon_address = if args.allow_wifi {
+            &RAYMARINE_QUANTUM_WIFI_ADDRESS
+        } else {
+            &RAYMARINE_BEACON_ADDRESS
+        };
 
-            addresses.push(LocatorAddress::new(
-                LocatorId::Raymarine,
-                beacon_address,
-                Brand::Raymarine,
-                BEACONS.to_vec(),
-                Box::new(RaymarineLocatorState::new(self.args.clone())),
-            ));
-        }
+        addresses.push(LocatorAddress::new(
+            LocatorId::Raymarine,
+            beacon_address,
+            Brand::Raymarine,
+            BEACONS.to_vec(),
+            Box::new(RaymarineLocator::new(args.clone())),
+        ));
     }
-}
-
-pub fn create_locator(args: Cli) -> Box<dyn RadarLocator + Send> {
-    let locator = RaymarineLocator { args };
-    Box::new(locator)
 }
 
 #[cfg(test)]
@@ -571,7 +561,7 @@ mod tests {
 
     use clap::Parser;
 
-    use crate::{Cli, brand::raymarine::RaymarineLocatorState};
+    use crate::{Cli, brand::raymarine::RaymarineLocator};
 
     #[test]
     fn decode_raymarine_locator_beacon() {
@@ -647,7 +637,7 @@ mod tests {
             0x33, 0xc0, 0x13, 0x2, 0x0, 0x1, 0x0,
         ];
 
-        let mut state = RaymarineLocatorState::new(args.clone());
+        let mut state = RaymarineLocator::new(args.clone());
         let r = state.process_beacon_36_report(&DATA1_36, &VIA);
         assert!(r.is_ok());
         let r = r.unwrap();
@@ -675,7 +665,7 @@ mod tests {
             SocketAddrV4::new(Ipv4Addr::new(232, 1, 243, 1), 2574)
         );
 
-        let mut state = RaymarineLocatorState::new(args.clone());
+        let mut state = RaymarineLocator::new(args.clone());
         let r = state.process_beacon_36_report(&DATA2_36, &VIA);
         assert!(r.is_ok());
         let r = r.unwrap();
@@ -703,7 +693,7 @@ mod tests {
             SocketAddrV4::new(Ipv4Addr::new(232, 1, 167, 1), 2574)
         );
 
-        let mut state = RaymarineLocatorState::new(args.clone());
+        let mut state = RaymarineLocator::new(args.clone());
         let r = state.process_beacon_36_report(&DATA3_36, &VIA);
         assert!(r.is_ok());
         let r = r.unwrap();

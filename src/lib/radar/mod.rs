@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use enum_primitive_derive::Primitive;
@@ -22,8 +21,8 @@ pub mod spoke;
 pub mod target;
 pub mod trail;
 
+use crate::brand::CommandSender;
 use crate::config::Persistence;
-use crate::locator::LocatorId;
 use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::trail::TrailBuffer;
 use crate::settings::{
@@ -193,7 +192,6 @@ pub struct RadarInfo {
     output: bool,
 
     pub id: usize,
-    pub locator_id: LocatorId,
     pub brand: Brand,
     pub serial_no: Option<String>,       // Serial # for this radar
     pub which: Option<String>,           // "A", "B" or None
@@ -220,7 +218,6 @@ pub struct RadarInfo {
 impl RadarInfo {
     pub fn new(
         args: &Cli,
-        locator_id: LocatorId,
         brand: Brand,
         serial_no: Option<&str>,
         which: Option<&str>,
@@ -267,7 +264,6 @@ impl RadarInfo {
                 key
             },
             id: usize::MAX,
-            locator_id,
             brand,
             serial_no: serial_no.map(String::from),
             which: which.map(String::from),
@@ -426,13 +422,7 @@ impl RadarInfo {
 
 impl Display for RadarInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Radar {} locator {} brand {}",
-            &self.id,
-            &self.locator_id.as_str(),
-            &self.brand
-        )?;
+        write!(f, "Radar {} brand {}", &self.id, &self.brand)?;
         if let Some(which) = &self.which {
             write!(f, " {}", which)?;
         }
@@ -872,15 +862,6 @@ mod tests {
         let json = serde_json::to_string_pretty(&legend).unwrap();
         println!("{}", json);
     }
-}
-
-#[async_trait]
-pub trait CommandSender {
-    async fn set_control(
-        &mut self,
-        cv: &ControlValue,
-        controls: &SharedControls,
-    ) -> Result<(), RadarError>;
 }
 
 pub(crate) struct CommonRadar {

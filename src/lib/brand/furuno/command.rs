@@ -5,8 +5,9 @@ use tokio::io::{AsyncWriteExt, WriteHalf};
 use tokio::net::TcpStream;
 
 use super::CommandMode;
+use crate::brand::CommandSender;
 use crate::radar::range::Ranges;
-use crate::radar::{CommandSender, Power, RadarError, RadarInfo};
+use crate::radar::{Power, RadarError, RadarInfo};
 use crate::settings::{ControlType, ControlValue, SharedControls};
 
 #[derive(Primitive, PartialEq, Eq, Debug, Clone)]

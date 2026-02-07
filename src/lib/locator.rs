@@ -14,49 +14,22 @@ use std::time::Duration;
 
 use miette::Result;
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
-use serde::Serialize;
 use tokio::sync::{broadcast, mpsc};
 use tokio::{net::UdpSocket, task::JoinSet, time::sleep};
 use tokio_graceful_shutdown::SubsystemHandle;
 
-#[cfg(feature = "furuno")]
-use crate::brand::furuno;
-#[cfg(feature = "navico")]
-use crate::brand::navico;
-#[cfg(feature = "raymarine")]
-use crate::brand::raymarine;
-
+use crate::brand::{LocatorId, RadarLocator, create_brand_listeners};
 use crate::radar::{RadarError, SharedRadars};
 use crate::{Brand, Cli, InterfaceApi, InterfaceId, RadarInterfaceApi, network};
 
 const LOCATOR_PACKET_BUFFER_LEN: usize = 300; // Long enough for any location packet
 
-#[derive(PartialEq, Eq, Copy, Clone, Serialize, Debug)]
-pub enum LocatorId {
-    GenBR24,
-    Gen3Plus,
-    Furuno,
-    Raymarine,
-}
-
-impl LocatorId {
-    pub(crate) fn as_str(&self) -> &'static str {
-        use LocatorId::*;
-        match *self {
-            GenBR24 => "Navico BR24",
-            Gen3Plus => "Navico 3G/4G/HALO",
-            Furuno => "Furuno DRSxxxx",
-            Raymarine => "Raymarine",
-        }
-    }
-}
-
-pub struct LocatorAddress {
+pub(crate) struct LocatorAddress {
     pub id: LocatorId,
     pub address: SocketAddr,
     pub brand: Brand,
     pub beacon_request_packets: Vec<&'static [u8]>, // Optional messages to send to ask radar for address
-    pub locator: Box<dyn RadarLocatorState>,
+    pub locator: Box<dyn RadarLocator>,
 }
 
 // The only part of RadioListenAddress that isn't Send is process, but since this is static it really
@@ -69,7 +42,7 @@ impl LocatorAddress {
         address: &SocketAddr,
         brand: Brand,
         beacon_request_packets: Vec<&'static [u8]>,
-        locator: Box<dyn RadarLocatorState>,
+        locator: Box<dyn RadarLocator>,
     ) -> LocatorAddress {
         LocatorAddress {
             id,
@@ -84,24 +57,7 @@ impl LocatorAddress {
 struct LocatorSocket {
     sock: UdpSocket,
     nic_addr: Ipv4Addr,
-    state: Box<dyn RadarLocatorState>,
-}
-
-pub trait RadarLocatorState: Send {
-    fn process(
-        &mut self,
-        message: &[u8],
-        from: &SocketAddrV4,
-        nic_addr: &Ipv4Addr,
-        radars: &SharedRadars,
-        subsys: &SubsystemHandle,
-    ) -> Result<(), io::Error>;
-
-    fn clone(&self) -> Box<dyn RadarLocatorState>;
-}
-
-pub trait RadarLocator {
-    fn set_listen_addresses(&self, addresses: &mut Vec<LocatorAddress>);
+    state: Box<dyn RadarLocator>,
 }
 
 struct InterfaceState {
@@ -310,33 +266,13 @@ impl Locator {
         interface_state: &mut InterfaceState,
     ) -> Vec<LocatorAddress> {
         let mut listen_addresses: Vec<LocatorAddress> = Vec::new();
-        let mut locators: Vec<Box<dyn RadarLocator>> = Vec::new();
 
         let brands = &mut interface_state.interface_api.brands;
         brands.clear();
 
         let args = &self.args;
 
-        #[cfg(feature = "navico")]
-        if args.brand.unwrap_or(Brand::Navico) == Brand::Navico {
-            locators.push(navico::create_locator(args.clone()));
-            locators.push(navico::create_br24_locator(args.clone()));
-            brands.insert(Brand::Navico);
-        }
-        #[cfg(feature = "furuno")]
-        if args.brand.unwrap_or(Brand::Furuno) == Brand::Furuno {
-            locators.push(furuno::create_locator(args.clone()));
-            brands.insert(Brand::Furuno);
-        }
-        #[cfg(feature = "raymarine")]
-        if args.brand.unwrap_or(Brand::Raymarine) == Brand::Raymarine {
-            locators.push(raymarine::create_locator(args.clone()));
-            brands.insert(Brand::Raymarine);
-        }
-
-        locators
-            .iter()
-            .for_each(|x| x.set_listen_addresses(&mut listen_addresses));
+        create_brand_listeners(&mut listen_addresses, brands, args);
 
         listen_addresses
     }
