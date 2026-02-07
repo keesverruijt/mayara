@@ -5,7 +5,7 @@ mod cartesian;
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::radar::target::{METERS_PER_DEGREE_LATITUDE, meters_per_degree_longitude};
 use crate::radar::trail::cartesian::PointInt;
-use crate::radar::{BLOB_HISTORY_COLORS, GeoPosition, Legend, SpokeBearing, default_legend};
+use crate::radar::{BLOB_HISTORY_COLORS, GeoPosition, Legend, SpokeBearing};
 use crate::settings::{ControlError, ControlType, ControlValue, SharedControls};
 use crate::{Cli, TargetMode};
 
