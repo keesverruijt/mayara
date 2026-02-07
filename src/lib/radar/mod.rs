@@ -5,6 +5,7 @@ use protobuf::Message;
 use serde::Serialize;
 use serde::ser::{SerializeMap, Serializer};
 use serde_json::Value;
+use std::cmp::min;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{
     collections::HashMap,
@@ -204,7 +205,7 @@ pub struct RadarInfo {
     pub spoke_data_addr: SocketAddrV4,   // Where the radar will send data spokes
     pub report_addr: SocketAddrV4,       // Where the radar will send reports
     pub send_command_addr: SocketAddrV4, // Where displays will send commands to the radar
-    pub legend: Legend,                  // What pixel values mean
+    legend: Legend,                      // What pixel values mean
     pub controls: SharedControls,        // Which controls there are, not complete in beginning
     pub ranges: Ranges,                  // Ranges for this radar, empty in beginning
     pub(crate) range_detection: Option<RangeDetection>, // if Some, then ranges are flexible, detected and persisted
@@ -418,6 +419,10 @@ impl RadarInfo {
                 },
             }
         }
+    }
+
+    pub fn get_legend(&self) -> Legend {
+        self.legend.clone()
     }
 }
 
@@ -676,6 +681,7 @@ impl fmt::Display for DopplerMode {
 }
 
 pub const BLOB_HISTORY_COLORS: u8 = 32;
+const NONE_AND_BORDER_COLORS: u8 = 2;
 const TRANSPARENT: u8 = 0;
 const OPAQUE: u8 = 255;
 
@@ -690,10 +696,17 @@ fn default_legend(targets: &TargetMode, doppler: bool, pixel_values: u8) -> Lege
         strong_return: 0,
     };
 
-    let mut pixel_values = pixel_values;
-    if pixel_values > 255 - 32 - 2 {
-        pixel_values = 255 - 32 - 2;
-    }
+    let pixel_values = min(
+        pixel_values,
+        u8::MAX
+            - if *targets != TargetMode::None {
+                BLOB_HISTORY_COLORS
+            } else {
+                0
+            }
+            - NONE_AND_BORDER_COLORS
+            - if doppler { 2 } else { 0 },
+    );
 
     // No return is black
     legend.pixels.push(Lookup {
@@ -745,16 +758,6 @@ fn default_legend(targets: &TargetMode, doppler: bool, pixel_values: u8) -> Lege
             },
         });
     }
-
-    legend.pixels.push(Lookup {
-        r#type: PixelType::Normal,
-        color: Color {
-            r: 0,
-            g: 0,
-            b: 0,
-            a: OPAQUE,
-        },
-    });
 
     if *targets == TargetMode::Arpa {
         legend.border = legend.pixels.len() as u8;
@@ -859,7 +862,7 @@ impl CommonRadar {
         let trails = TrailBuffer::new(args, &info);
         let spoke_message = None;
 
-        let mut common = CommonRadar {
+        let common = CommonRadar {
             key,
             info,
             radars,
@@ -871,13 +874,6 @@ impl CommonRadar {
             prev_angle: 0,
             spoke_count: 0,
         };
-
-        if let Some(control) = common.info.controls.get(&ControlType::DopplerTrailsOnly) {
-            if let Some(value) = control.value {
-                let value = value > 0.;
-                common.set_doppler_trail_only(value);
-            }
-        }
 
         common
     }
@@ -990,9 +986,5 @@ impl CommonRadar {
         if let Some(message) = self.spoke_message.take() {
             self.info.broadcast_radar_message(message);
         }
-    }
-
-    pub fn set_doppler_trail_only(&mut self, v: bool) {
-        self.trails.set_doppler_trail_only(v);
     }
 }

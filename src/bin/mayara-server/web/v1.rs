@@ -102,7 +102,7 @@ async fn get_radars(
 
     let mut api: HashMap<String, RadarApi> = HashMap::new();
     for info in state.radars.get_active().clone() {
-        let legend = &info.legend;
+        let legend = info.get_legend();
         let id = format!("radar-{}", info.id);
         let stream_url = format!("ws://{}{}{}", host, SPOKES_URI, id);
         let control_url = format!("ws://{}{}{}", host, CONTROL_URI, id);
@@ -122,7 +122,7 @@ async fn get_radars(
                 info.max_spoke_len,
                 stream_url,
                 control_url,
-                legend.clone(),
+                legend,
                 control_list,
             );
 

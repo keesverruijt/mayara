@@ -13,8 +13,7 @@
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=mayara-server",
-                    "--package=mayara-server",
+                    
                 ],
                 "filter": {
                     "name": "mayara-server",
@@ -22,7 +21,7 @@
                 }
             },
             "args": [ 
-                    "-v", "--replay"
+                    "-v", "--replay", "--allow-wifi"
                ],
             "cwd": "${workspaceFolder}"
         },

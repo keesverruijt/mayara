@@ -481,7 +481,7 @@ impl NavicoReportReceiver {
 
         let control_update_rx = info.controls.control_update_subscribe();
 
-        let pixel_to_blob = pixel_to_blob(&info.legend);
+        let pixel_to_blob = pixel_to_blob(&info.get_legend());
 
         let common = CommonRadar::new(&args, key, info, radars, control_update_rx, replay);
 
@@ -678,8 +678,7 @@ impl NavicoReportReceiver {
                     }
                 },
 
-                r = self.info_socket.as_ref().unwrap().recv_buf_from(&mut self.info_buf),
-                    if self.info_socket.is_some() => {
+                Some(r) = Self::conditional_receive(&self.info_socket, &mut self.info_buf) => {
                     match r {
                         Ok((_len, addr)) => {
                             self.process_info(&addr);
@@ -692,9 +691,7 @@ impl NavicoReportReceiver {
                     }
                 },
 
-
-                r = self.speed_socket.as_ref().unwrap().recv_buf_from(&mut self.speed_buf),
-                    if self.speed_socket.is_some() => {
+                Some(r) = Self::conditional_receive(&self.speed_socket, &mut self.speed_buf) => {
                     match r {
                         Ok((_len, addr)) => {
                             self.process_speed(&addr);
@@ -728,6 +725,16 @@ impl NavicoReportReceiver {
 
 
             }
+        }
+    }
+
+    async fn conditional_receive(
+        socket: &Option<UdpSocket>,
+        buf: &mut Vec<u8>,
+    ) -> Option<io::Result<(usize, SocketAddr)>> {
+        match socket {
+            Some(s) => Some(s.recv_buf_from(buf).await),
+            None => None,
         }
     }
 

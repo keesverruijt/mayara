@@ -98,7 +98,7 @@ impl RaymarineReportReceiver {
 
         let control_update_rx = info.controls.control_update_subscribe();
 
-        let pixel_to_blob = pixel_to_blob(&info.legend);
+        let pixel_to_blob = pixel_to_blob(&info.get_legend());
 
         let common = CommonRadar::new(args, key, info, radars, control_update_rx, replay);
 

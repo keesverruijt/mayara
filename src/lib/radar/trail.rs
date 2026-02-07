@@ -5,7 +5,7 @@ mod cartesian;
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::radar::target::{METERS_PER_DEGREE_LATITUDE, meters_per_degree_longitude};
 use crate::radar::trail::cartesian::PointInt;
-use crate::radar::{BLOB_HISTORY_COLORS, GeoPosition, Legend, SpokeBearing};
+use crate::radar::{BLOB_HISTORY_COLORS, GeoPosition, Legend, SpokeBearing, default_legend};
 use crate::settings::{ControlError, ControlType, ControlValue, SharedControls};
 use crate::{Cli, TargetMode};
 
@@ -45,7 +45,6 @@ pub(crate) struct TrailBuffer {
 
 impl TrailBuffer {
     pub fn new(args: &Cli, info: &RadarInfo) -> Self {
-        let legend = info.legend.clone();
         let spokes_per_revolution = info.spokes_per_revolution as usize;
         let max_spoke_len = info.max_spoke_len as usize;
         let trail_size: i16 = (info.max_spoke_len as i16 * 2 + MARGIN_I16 * 2) as i16;
@@ -60,6 +59,7 @@ impl TrailBuffer {
             _ => None,
         };
 
+        let legend = info.get_legend();
         let mut minimal_legend_value = 0;
         if let Some(control) = info.controls.get(&ControlType::DopplerTrailsOnly) {
             if let Some(value) = control.value {
@@ -196,6 +196,7 @@ impl TrailBuffer {
     }
 
     pub fn set_rotation_speed(&mut self, ms: u32) {
+        log::debug!("trail: set_rotation_speed({})", ms);
         self.rotation_speed_ms = ms;
         self.targets.as_mut().map(|t| t.set_rotation_speed(ms));
     }
@@ -535,7 +536,7 @@ impl TrailBuffer {
 
     pub fn update_relative_trails(&mut self, angle: SpokeBearing, data: &mut Vec<u8>) {
         if angle == 0 {
-            log::debug!(
+            log::trace!(
                 "angle = {}, trails_length_ms = {}, rotation_speed_ms = {}",
                 angle,
                 self.trail_length_ms,
@@ -553,7 +554,7 @@ impl TrailBuffer {
         let mut radius = 0;
 
         if angle == 0 {
-            log::debug!("Spoke before trails: {:?}", data);
+            log::trace!("Spoke before trails: {:?}", data);
         }
 
         while radius < data.len() {
@@ -565,7 +566,7 @@ impl TrailBuffer {
             }
 
             if !self.motion_true
-                && data[radius] == 0
+                && data[radius] <= 1
                 && trail[radius] > 0
                 && trail[radius] < max_trail_value
             {
@@ -588,8 +589,8 @@ impl TrailBuffer {
         }
 
         if angle == 0 {
-            log::debug!("Trail after trails: {:?}", trail);
-            log::debug!("Spoke after trails: {:?}", data);
+            log::trace!("Trail after trails: {:?}", trail);
+            log::trace!("Spoke after trails: {:?}", data);
         }
     }
 
@@ -635,7 +636,7 @@ impl TrailBuffer {
         }
     }
 
-    pub(super) fn set_doppler_trail_only(&mut self, v: bool) {
+    fn set_doppler_trail_only(&mut self, v: bool) {
         self.minimal_legend_value = Self::compute_minimal_legend_value(&self.legend, v);
     }
 }

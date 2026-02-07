@@ -189,7 +189,7 @@ impl Capabilities {
             spokes_per_revolution: info.spokes_per_revolution,
             max_spoke_length: info.max_spoke_len,
             pixel_values: info.pixel_values,
-            legend: info.legend.clone(),
+            legend: info.get_legend(),
             has_doppler: info.doppler,
             has_dual_range: info.dual_range,
             has_dual_radar: info.which.is_some(),
