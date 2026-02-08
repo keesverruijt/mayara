@@ -34,6 +34,7 @@ pub(super) fn routes(axum: axum::Router<Web>) -> axum::Router<Web> {
     axum.add(get_radars())
         .add(get_interfaces())
         .add(get_radar())
+        .add(get_control_value())
         .add(set_control_value())
         .route("/v3/api/stream", get(stream_handler))
         .add(openapi())
@@ -427,6 +428,54 @@ async fn set_control_value(
     }
 
     StatusCode::OK.into_response()
+}
+
+/// PUT /v2/api/radars/{radar_id}/controls/{control_id}
+/// Sets a control value on the radar
+#[endpoint(
+    method = "GET",
+    path = "/v3/api/radars/{radar_id}/controls/{control_id}",
+    description = "Get the value of a radar control"
+)]
+async fn get_control_value(
+    Path(params): Path<RadarControlIdParam>,
+    State(state): State<Web>,
+) -> Response {
+    let (radar_id, control_id) = (params.radar_id, params.control_id);
+    log::debug!("GET radar {} control {}", radar_id, control_id,);
+
+    // Get the radar info and control  without holding the lock across await
+    let radars = state.radars;
+
+    match radars.get_by_id(radar_id) {
+        Some(radar) => {
+            // Look up the control by name
+            match radar.controls.get_by_id(&control_id) {
+                Some(c) => {
+                    let control_value = ControlValue::from(&c, None);
+                    Json(control_value).into_response()
+                }
+                None => {
+                    // Debug: list all available controls
+                    let available = radar.controls.get_control_keys();
+                    log::warn!(
+                        "Control '{}' not found. Available controls: {:?}",
+                        control_id,
+                        available
+                    );
+                    (
+                        StatusCode::BAD_REQUEST,
+                        format!(
+                            "Unknown control '{}' -- use {:?} instead",
+                            control_id, available
+                        ),
+                    )
+                        .into_response()
+                }
+            }
+        }
+        None => RadarError::NoSuchRadar(radar_id).into_response(),
+    }
 }
 
 #[derive(Deserialize)]

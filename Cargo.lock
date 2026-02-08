@@ -1538,6 +1538,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_repr",
+ "serde_string_enum",
  "serde_with",
  "sha1",
  "socket2 0.5.10",
@@ -1553,6 +1554,7 @@ dependencies = [
  "tokio-util",
  "tower",
  "tungstenite 0.26.2",
+ "unicase",
  "utoipa",
  "w32-error",
  "windows",
@@ -2667,6 +2669,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.114",
+]
+
+[[package]]
+name = "serde_string_enum"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc057e156c7ee0eecf104019415e2089fe55f4e8fc92d49059bcb22548b97028"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde",
+ "syn 2.0.114",
+ "unicase",
 ]
 
 [[package]]

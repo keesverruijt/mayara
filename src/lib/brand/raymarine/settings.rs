@@ -4,7 +4,7 @@ use crate::{
     Cli,
     brand::raymarine::RaymarineModel,
     radar::{NAUTICAL_MILE_F64, RadarInfo},
-    settings::{Control, ControlId, HAS_AUTO_NOT_ADJUSTABLE, SharedControls},
+    settings::{Control, ControlId, HAS_AUTO_NOT_ADJUSTABLE, SharedControls, Units},
 };
 
 use super::BaseModel;
@@ -23,14 +23,13 @@ pub fn new(args: &Cli, model: BaseModel) -> SharedControls {
     controls.insert(
         ControlId::BearingAlignment,
         Control::new_numeric(ControlId::BearingAlignment, -180., 180.)
-            .unit("Deg")
-            .wire_scale_factor(1800., true)
+            .unit(Units::Degrees)
+            .wire_scale_factor(10., true)
             .wire_offset(-1.),
     );
     controls.insert(
         ControlId::Gain,
-        Control::new_auto(ControlId::Gain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE)
-            .wire_scale_factor(100., false),
+        Control::new_auto(ControlId::Gain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE),
     );
     controls.insert(
         ControlId::InterferenceRejection,
@@ -48,9 +47,9 @@ pub fn new(args: &Cli, model: BaseModel) -> SharedControls {
     controls.insert(
         ControlId::RotationSpeed,
         Control::new_numeric(ControlId::RotationSpeed, 0., 99.)
-            .wire_scale_factor(990., true) // 0.1 RPM
+            .wire_scale_step(0.1) // 0.1 RPM
             .read_only(true)
-            .unit("RPM"),
+            .unit(Units::RotationsPerMinute),
     );
 
     match model {
@@ -82,29 +81,29 @@ pub fn new(args: &Cli, model: BaseModel) -> SharedControls {
             controls.insert(
                 ControlId::NoTransmitStart1,
                 Control::new_numeric(ControlId::NoTransmitStart1, 0., 359.)
-                    .unit("Deg")
-                    .wire_scale_factor(3590., true)
+                    .unit(Units::Degrees)
+                    .wire_scale_step(0.1)
                     .has_enabled(),
             );
             controls.insert(
                 ControlId::NoTransmitEnd1,
                 Control::new_numeric(ControlId::NoTransmitEnd1, 0., 359.)
-                    .unit("Deg")
-                    .wire_scale_factor(3590., true)
+                    .unit(Units::Degrees)
+                    .wire_scale_step(0.1)
                     .has_enabled(),
             );
             controls.insert(
                 ControlId::NoTransmitStart2,
                 Control::new_numeric(ControlId::NoTransmitStart2, 0., 359.)
-                    .unit("Deg")
-                    .wire_scale_factor(3590., true)
+                    .unit(Units::Degrees)
+                    .wire_scale_step(0.1)
                     .has_enabled(),
             );
             controls.insert(
                 ControlId::NoTransmitEnd2,
                 Control::new_numeric(ControlId::NoTransmitEnd2, 0., 359.)
-                    .unit("Deg")
-                    .wire_scale_factor(3590., true)
+                    .unit(Units::Degrees)
+                    .wire_scale_step(0.1)
                     .has_enabled(),
             );
             controls.insert(
@@ -180,7 +179,8 @@ pub fn update_when_model_known(
     }
 
     let max_value = 36. * NAUTICAL_MILE_F64 as f32;
-    let mut range_control = Control::new_numeric(ControlId::Range, 50., max_value).unit("m");
+    let mut range_control =
+        Control::new_numeric(ControlId::Range, 50., max_value).unit(Units::Meters);
     range_control.set_valid_ranges(&radar_info.ranges);
     controls.insert(ControlId::Range, range_control);
 

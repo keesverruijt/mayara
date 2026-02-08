@@ -2,7 +2,9 @@ use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
 use serde::{Deserialize, Deserializer, Serialize, de::Visitor, ser::Serializer};
 use serde_json::{Number, Value};
+use serde_string_enum::{DeserializeLabeledStringEnum, SerializeLabeledStringEnum};
 use std::cell::RefCell;
+use std::f64::consts::PI;
 use std::{
     borrow::Cow,
     collections::HashMap,
@@ -327,14 +329,7 @@ impl SharedControls {
     }
 
     fn send_to_all_clients(&self, control: &Control) {
-        let control_value = crate::settings::ControlValue {
-            id: control.item().control_id,
-            value: control.value(),
-            auto: control.auto,
-            enabled: control.enabled,
-            dynamic_read_only: control.dynamic_read_only,
-            error: None,
-        };
+        let control_value = ControlValue::from(control, None);
         let locked = self.controls.read().unwrap();
         match locked.all_clients_tx.send(control_value.clone()) {
             Err(_e) => {}
@@ -744,12 +739,69 @@ pub struct ControlUpdate {
     pub control_value: ControlValue,
 }
 
+#[derive(
+    Copy, PartialEq, SerializeLabeledStringEnum, DeserializeLabeledStringEnum, Clone, Debug,
+)]
+pub enum Units {
+    #[string = "m"]
+    Meters,
+    #[string = "km"]
+    KiloMeters,
+    #[string = "nm"]
+    NauticalMiles,
+    #[string = "m/s"]
+    MetersPerSecond,
+    #[string = "kn"]
+    Knots,
+    #[string = "deg"]
+    Degrees,
+    #[string = "rad"]
+    Radians,
+    #[string = "rad/s"]
+    RadiansPerSecond,
+    #[string = "rpm"]
+    RotationsPerMinute,
+    #[string = "s"]
+    Seconds,
+    #[string = "min"]
+    Minutes,
+    #[string = "h"]
+    Hours,
+}
+
+const TO_SI_CONVERSIONS: [(Units, Units, f64); 7] = [
+    (Units::NauticalMiles, Units::Meters, 1852.),
+    (Units::KiloMeters, Units::Meters, 1000.),
+    (Units::Knots, Units::MetersPerSecond, 1852. / 3600.),
+    (Units::Degrees, Units::Radians, PI / 180.),
+    (
+        Units::RotationsPerMinute,
+        Units::RadiansPerSecond,
+        2. * PI / 60.,
+    ),
+    (Units::Minutes, Units::Seconds, 60.),
+    (Units::Hours, Units::Seconds, 3600.),
+];
+
+impl Units {
+    pub(crate) fn to_si(&self, value: f64) -> (Units, f64) {
+        for (from, to, factor) in TO_SI_CONVERSIONS {
+            if *self == from {
+                return (to, value * factor);
+            }
+        }
+        (*self, value)
+    }
+}
+
 // This is what we send back and forth internally between (web) clients and radar managers for v1
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlValue {
     pub id: ControlId,
     pub value: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub units: Option<Units>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -765,6 +817,7 @@ impl ControlValue {
         ControlValue {
             id,
             value,
+            units: None,
             auto: None,
             enabled: None,
             dynamic_read_only: None,
@@ -776,9 +829,10 @@ impl ControlValue {
         ControlValue {
             id: control.item().control_id,
             value: control.value(),
+            units: control.item().unit.clone(),
             auto: control.auto,
             enabled: control.enabled,
-            dynamic_read_only: None,
+            dynamic_read_only: control.dynamic_read_only,
             error,
         }
     }
@@ -893,7 +947,7 @@ impl Control {
 
     pub(crate) fn wire_scale_step(mut self, step: f32) -> Self {
         self.item.step_value = Some(step);
-        self.item.wire_scale_factor = Some(self.item.max_value.unwrap_or(1.) / step);
+        self.item.wire_scale_factor = self.item.step_value.map(|s| 1. / s);
 
         self
     }
@@ -901,8 +955,7 @@ impl Control {
     pub(crate) fn wire_scale_factor(mut self, wire_scale_factor: f32, with_step: bool) -> Self {
         self.item.wire_scale_factor = Some(wire_scale_factor);
         if with_step {
-            self.item.step_value =
-                Some(self.item.max_value.unwrap_or(1.) / self.item.wire_scale_factor.unwrap_or(1.));
+            self.item.step_value = self.item.wire_scale_factor.map(|f| 1. / f);
         }
 
         self
@@ -914,8 +967,8 @@ impl Control {
         self
     }
 
-    pub(crate) fn unit<S: AsRef<str>>(mut self, unit: S) -> Control {
-        self.item.unit = Some(unit.as_ref().to_string());
+    pub(crate) fn unit(mut self, unit: Units) -> Control {
+        self.item.unit = Some(unit);
 
         self
     }
@@ -1175,19 +1228,16 @@ impl Control {
                 value -= wire_offset;
             }
         }
-        if let (Some(wire_scale_factor), Some(max_value)) =
-            (self.item.wire_scale_factor, self.item.max_value)
-        {
+        if let Some(wire_scale_factor) = self.item.wire_scale_factor {
             // One of the reasons we use f32 is because Navico wire format for some things is
             // tenths of degrees. To make things uniform we map these to a float with .1 precision.
-            if wire_scale_factor != max_value {
-                log::trace!("{} map value {}", self.item.control_id, value);
-                value = value * max_value / wire_scale_factor;
 
-                // TODO! Not sure about the following line
-                auto_value = auto_value.map(|v| v * max_value / wire_scale_factor);
-                log::trace!("{} map value to scaled {}", self.item.control_id, value);
-            }
+            log::trace!("{} map value {}", self.item.control_id, value);
+            value = value / wire_scale_factor;
+
+            // TODO! Not sure about the following line
+            auto_value = auto_value.map(|v| v / wire_scale_factor);
+            log::trace!("{} map value to scaled {}", self.item.control_id, value);
         }
 
         // RANGE MAPPING
@@ -1383,7 +1433,7 @@ pub struct ControlDefinition {
     #[serde(skip)]
     wire_offset: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) unit: Option<String>,
+    pub(crate) unit: Option<Units>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) descriptions: Option<HashMap<i32, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1410,7 +1460,7 @@ impl ControlDefinition {
         step_value: Option<f32>,
         wire_scale_factor: Option<f32>,
         wire_offset: Option<f32>,
-        unit: Option<String>,
+        unit: Option<Units>,
         descriptions: Option<HashMap<i32, String>>,
         valid_values: Option<Vec<i32>>,
         is_read_only: bool,

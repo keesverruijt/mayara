@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::{
     Cli,
     radar::{NAUTICAL_MILE, RadarInfo, range::Ranges},
-    settings::{Control, ControlId, HAS_AUTO_NOT_ADJUSTABLE, SharedControls},
+    settings::{Control, ControlId, HAS_AUTO_NOT_ADJUSTABLE, SharedControls, Units},
 };
 
 use super::{FURUNO_SPOKES, RadarModel};
@@ -17,7 +17,7 @@ pub fn new(args: &Cli) -> SharedControls {
     );
 
     let max_value = 120. * NAUTICAL_MILE as f32;
-    let range_control = Control::new_numeric(ControlId::Range, 0., max_value).unit("m");
+    let range_control = Control::new_numeric(ControlId::Range, 0., max_value).unit(Units::Meters);
     // Note: valid range values are set per-model in update_when_model_known()
     controls.insert(ControlId::Range, range_control);
 
@@ -38,23 +38,21 @@ pub fn new(args: &Cli) -> SharedControls {
         ControlId::OperatingHours,
         Control::new_numeric(ControlId::OperatingHours, 0., 999999.)
             .read_only(true)
-            .unit("h"),
+            .unit(Units::Hours),
     );
 
     controls.insert(
         ControlId::RotationSpeed,
         Control::new_numeric(ControlId::RotationSpeed, 0., 99.)
-            .wire_scale_factor(990., true)
+            .wire_scale_factor(10., true)
             .read_only(true)
-            .unit("RPM"),
+            .unit(Units::RotationsPerMinute),
     );
 
     if log::log_enabled!(log::Level::Debug) {
         controls.insert(
             ControlId::Spokes,
-            Control::new_numeric(ControlId::Spokes, 0., FURUNO_SPOKES as f32)
-                .read_only(true)
-                .unit("per rotation"),
+            Control::new_numeric(ControlId::Spokes, 0., FURUNO_SPOKES as f32).read_only(true),
         );
     }
 
@@ -109,26 +107,26 @@ pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version:
     info.controls.insert(
         ControlId::NoTransmitStart1,
         Control::new_numeric(ControlId::NoTransmitStart1, -180., 180.)
-            .unit("Deg")
+            .unit(Units::Degrees)
             .wire_offset(-1.),
     );
     info.controls.insert(
         ControlId::NoTransmitEnd1,
         Control::new_numeric(ControlId::NoTransmitEnd1, -180., 180.)
-            .unit("Deg")
+            .unit(Units::Degrees)
             .wire_offset(-1.),
     );
 
     info.controls.insert(
         ControlId::NoTransmitStart2,
         Control::new_numeric(ControlId::NoTransmitStart2, -180., 180.)
-            .unit("Deg")
+            .unit(Units::Degrees)
             .wire_offset(-1.),
     );
     info.controls.insert(
         ControlId::NoTransmitEnd2,
         Control::new_numeric(ControlId::NoTransmitEnd2, -180., 180.)
-            .unit("Deg")
+            .unit(Units::Degrees)
             .wire_offset(-1.),
     );
 
@@ -142,25 +140,28 @@ pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version:
         // Noise Reduction (Signal Processing feature 3)
         info.controls.insert(
             ControlId::NoiseRejection,
-            Control::new_numeric(ControlId::NoiseRejection, 0., 1.).unit("boolean"),
+            Control::new_list(ControlId::NoiseRejection, &["Off", "On"]),
         );
 
         // Interference Rejection (Signal Processing feature 0)
         info.controls.insert(
             ControlId::InterferenceRejection,
-            Control::new_numeric(ControlId::InterferenceRejection, 0., 1.).unit("boolean"),
+            Control::new_list(ControlId::InterferenceRejection, &["Off", "On"]),
         );
 
         // Target Separation (RezBoost / Beam Sharpening)
         info.controls.insert(
             ControlId::TargetSeparation,
-            Control::new_numeric(ControlId::TargetSeparation, 0., 3.).unit("level"),
+            Control::new_list(
+                ControlId::TargetSeparation,
+                &["Off", "Low", "Medium", "High"],
+            ),
         );
 
         // Bird Mode
         info.controls.insert(
             ControlId::BirdMode,
-            Control::new_numeric(ControlId::BirdMode, 0., 3.).unit("level"),
+            Control::new_list(ControlId::BirdMode, &["Off", "Low", "Medium", "High"]),
         );
 
         // Doppler (Target Analyzer): Off, Target, Rain
