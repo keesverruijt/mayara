@@ -1,25 +1,25 @@
 ### TODO.md
 
-Working:
 
-* Start, logging
-* Detect BR24, 3G, 4G and HALO radars
-* Detect Raymarine radars (tested with Quantum 2)
-* Detect Furuno radars (tested with DRS4D-NXT)
-* Provide webserver for static and dynamic pages
-* Serve Navico and Furuno radar data
-* Control Navico radar (tested with 4G and HALO)
-* Trails in relative mode
-* Getting heading and location from Signal K or NMEA 0183 server
+A list of things still to do before this code has caught back up with Dirk's vibe coded version:
 
-Work in Progress:
+1. Implement proper Signal K GET and PUT requests that allow all data to be retrieved by a HTTP client. Most are there but some distance to go.
+   1.1 - Return values in SI units, including in the definition of controls
+   1.2 - Accept values in any unit that can be converted and apply it correctly.
 
-* Target acquisition (M)ARPA
-* Detect Garmin xHD (but not yet know if different from HD)
-* Furuno control
+2. Implement Signal K delta updates, in the official way with subscriptions etc.
+   After step 1 this should be do-able.
 
-TODO:
+3. Check and finagle the Furuno code back into operation. It should work, but hasn't been tested.
 
-* Guard zones
-* Everything else
+4. Re-implement the radar recording and playback.
 
+5. Re-implement the debugger. Or a better one?
+
+
+After that:
+
+* Target acquisition (M)ARPA using internal matching code
+* Guard zones (internal)
+* Timed Transmit
+* Garmin support (on hold until developer shows up)
