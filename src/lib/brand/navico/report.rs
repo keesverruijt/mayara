@@ -831,13 +831,13 @@ impl NavicoReportReceiver {
     fn set_control(
         &mut self,
         control_id: &ControlId,
-        value: f32,
+        value: f64,
         auto: Option<bool>,
     ) -> Result<Option<()>, ControlError> {
         self.common.info.controls.set(control_id, value, auto)
     }
 
-    fn set(&mut self, control_id: &ControlId, value: f32, auto: Option<bool>) {
+    fn set(&mut self, control_id: &ControlId, value: f64, auto: Option<bool>) {
         match self.set_control(control_id, value, auto) {
             Err(e) => {
                 log::error!("{}: {}", self.common.key, e.to_string());
@@ -859,15 +859,15 @@ impl NavicoReportReceiver {
         };
     }
 
-    fn set_value(&mut self, control_id: &ControlId, value: f32) {
+    fn set_value(&mut self, control_id: &ControlId, value: f64) {
         self.set(control_id, value, None)
     }
 
-    fn set_value_auto(&mut self, control_id: &ControlId, value: f32, auto: u8) {
+    fn set_value_auto(&mut self, control_id: &ControlId, value: f64, auto: u8) {
         self.set(control_id, value, Some(auto > 0))
     }
 
-    fn set_value_with_many_auto(&mut self, control_id: &ControlId, value: f32, auto_value: f32) {
+    fn set_value_with_many_auto(&mut self, control_id: &ControlId, value: f64, auto_value: f64) {
         match self
             .common
             .info
@@ -1136,7 +1136,7 @@ impl NavicoReportReceiver {
                 bail!("{}: Unknown radar status {}", self.common.key, status);
             }
         };
-        self.set_value(&ControlId::Power, status as i32 as f32);
+        self.set_value(&ControlId::Power, status as i32 as f64);
         Ok(())
     }
 
@@ -1156,10 +1156,10 @@ impl NavicoReportReceiver {
         let target_expansion = report.target_expansion as i32;
         let target_boost = report.target_boost as i32;
 
-        self.set_value(&ControlId::Range, range as f32);
+        self.set_value(&ControlId::Range, range as f64);
         if self.model == Model::HALO {
             if let Some(halo_mode) = HaloMode::from_i32(mode) {
-                self.set_value(&ControlId::Mode, mode as f32);
+                self.set_value(&ControlId::Mode, mode as f64);
                 let dynamic_read_only = halo_mode != HaloMode::Custom;
                 let controls = &self.common.info.controls;
                 for ct in &DYNAMIC_READ_ONLY_CONTROLS {
@@ -1171,9 +1171,9 @@ impl NavicoReportReceiver {
 
             // todo!() if mode !=
         }
-        self.set_value_auto(&ControlId::Gain, gain as f32, gain_auto);
+        self.set_value_auto(&ControlId::Gain, gain as f64, gain_auto);
         if self.model != Model::HALO {
-            self.set_value_auto(&ControlId::Sea, sea as f32, sea_auto);
+            self.set_value_auto(&ControlId::Sea, sea as f64, sea_auto);
         } else {
             self.common
                 .info
@@ -1181,13 +1181,13 @@ impl NavicoReportReceiver {
                 .set_auto_state(&ControlId::Sea, sea_auto > 0)
                 .unwrap(); // Only crashes if control not supported which would be an internal bug
         }
-        self.set_value(&ControlId::Rain, rain as f32);
+        self.set_value(&ControlId::Rain, rain as f64);
         self.set_value(
             &ControlId::InterferenceRejection,
-            interference_rejection as f32,
+            interference_rejection as f64,
         );
-        self.set_value(&ControlId::TargetExpansion, target_expansion as f32);
-        self.set_value(&ControlId::TargetBoost, target_boost as f32);
+        self.set_value(&ControlId::TargetExpansion, target_expansion as f64);
+        self.set_value(&ControlId::TargetBoost, target_boost as f64);
 
         self.process_range(range).await?;
 
@@ -1240,7 +1240,7 @@ impl NavicoReportReceiver {
         }
 
         let firmware = format!("{} {}", firmware_date, firmware_time);
-        self.set_value(&ControlId::OperatingHours, hours as f32);
+        self.set_value(&ControlId::OperatingHours, hours as f64);
         self.set_string(&ControlId::FirmwareVersion, firmware);
 
         Ok(())
@@ -1253,14 +1253,14 @@ impl NavicoReportReceiver {
 
         self.set_value(
             &ControlId::BearingAlignment,
-            i16::from_le_bytes(report.bearing_alignment) as f32,
+            i16::from_le_bytes(report.bearing_alignment) as f64,
         );
         self.set_value(
             &ControlId::AntennaHeight,
-            u16::from_le_bytes(report.antenna_height) as f32,
+            u16::from_le_bytes(report.antenna_height) as f64,
         );
         if self.model == Model::HALO {
-            self.set_value(&ControlId::AccentLight, report.accent_light as f32);
+            self.set_value(&ControlId::AccentLight, report.accent_light as f64);
         }
 
         Ok(())
@@ -1284,13 +1284,13 @@ impl NavicoReportReceiver {
             let enabled = Some(blanking.enabled > 0);
             self.common.info.controls.set_value_auto_enabled(
                 &start,
-                start_angle as f32,
+                start_angle as f64,
                 None,
                 enabled,
             )?;
             self.common.info.controls.set_value_auto_enabled(
                 &end,
-                end_angle as f32,
+                end_angle as f64,
                 None,
                 enabled,
             )?;
@@ -1322,13 +1322,13 @@ impl NavicoReportReceiver {
             let enabled = Some(blanking.enabled > 0);
             self.common.info.controls.set_value_auto_enabled(
                 &start,
-                start_angle as f32,
+                start_angle as f64,
                 None,
                 enabled,
             )?;
             self.common.info.controls.set_value_auto_enabled(
                 &end,
-                end_angle as f32,
+                end_angle as f64,
                 None,
                 enabled,
             )?;
@@ -1412,8 +1412,8 @@ impl NavicoReportReceiver {
                     self.doppler = doppler_mode;
                 }
             }
-            self.set_value(&ControlId::Doppler, doppler_state as f32);
-            self.set_value(&ControlId::DopplerSpeedThreshold, doppler_speed as f32);
+            self.set_value(&ControlId::Doppler, doppler_state as f64);
+            self.set_value(&ControlId::DopplerSpeedThreshold, doppler_speed as f64);
 
             log::debug!(
                 "{}: report w={} x={:?}",
@@ -1448,31 +1448,31 @@ impl NavicoReportReceiver {
                     self.doppler = doppler_mode;
                 }
             }
-            self.set_value(&ControlId::Doppler, doppler_state as f32);
-            self.set_value(&ControlId::DopplerSpeedThreshold, doppler_speed as f32);
+            self.set_value(&ControlId::Doppler, doppler_state as f64);
+            self.set_value(&ControlId::DopplerSpeedThreshold, doppler_speed as f64);
         }
 
         if self.model == Model::HALO {
-            self.set_value(&ControlId::SeaState, sea_state as f32);
+            self.set_value(&ControlId::SeaState, sea_state as f64);
             self.set_value_with_many_auto(
                 &ControlId::Sea,
-                sea_clutter as f32,
-                auto_sea_clutter as f32,
+                sea_clutter as f64,
+                auto_sea_clutter as f64,
             );
         }
         self.set_value(
             &ControlId::LocalInterferenceRejection,
-            local_interference_rejection as f32,
+            local_interference_rejection as f64,
         );
-        self.set_value(&ControlId::ScanSpeed, scan_speed as f32);
+        self.set_value(&ControlId::ScanSpeed, scan_speed as f64);
         self.set_value_auto(
             &ControlId::SideLobeSuppression,
-            sidelobe_suppression as f32,
+            sidelobe_suppression as f64,
             sidelobe_suppression_auto,
         );
-        self.set_value(&ControlId::NoiseRejection, noise_reduction as f32);
+        self.set_value(&ControlId::NoiseRejection, noise_reduction as f64);
         if self.model == Model::HALO || self.model == Model::Gen4 {
-            self.set_value(&ControlId::TargetSeparation, target_sep as f32);
+            self.set_value(&ControlId::TargetSeparation, target_sep as f64);
         } else if target_sep > 0 {
             log::trace!(
                 "{}: Target separation value {} not supported on model {}",

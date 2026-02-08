@@ -16,7 +16,7 @@ pub fn new(args: &Cli) -> SharedControls {
         Control::new_string(ControlId::UserName).read_only(false),
     );
 
-    let max_value = 120. * NAUTICAL_MILE as f32;
+    let max_value = 120. * NAUTICAL_MILE as f64;
     let range_control = Control::new_numeric(ControlId::Range, 0., max_value).unit(Units::Meters);
     // Note: valid range values are set per-model in update_when_model_known()
     controls.insert(ControlId::Range, range_control);
@@ -52,7 +52,7 @@ pub fn new(args: &Cli) -> SharedControls {
     if log::log_enabled!(log::Level::Debug) {
         controls.insert(
             ControlId::Spokes,
-            Control::new_numeric(ControlId::Spokes, 0., FURUNO_SPOKES as f32).read_only(true),
+            Control::new_numeric(ControlId::Spokes, 0., FURUNO_SPOKES as f64).read_only(true),
         );
     }
 

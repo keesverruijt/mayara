@@ -22,7 +22,7 @@ fn on_off_command(cmd: &mut Vec<u8>, lead: &[u8], on_off: u8) {
 pub async fn set_control(
     command: &mut Command,
     cv: &ControlValue,
-    value: f32,
+    value: f64,
     _controls: &SharedControls, // Not used now, but useful if controls depend on other controls
 ) -> Result<(), RadarError> {
     let deci_value = (value * 10.0) as i32;

@@ -214,7 +214,7 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
             Power::Standby // Default to Standby if unknown
         }
     };
-    receiver.set_value(&ControlId::Power, status as i32 as f32);
+    receiver.set_value(&ControlId::Power, status as i32 as f64);
 
     if receiver.common.info.ranges.is_empty() {
         let mut ranges = Ranges::empty();
@@ -240,31 +240,31 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
         .info
         .ranges
         .get_distance(report.range_index as usize);
-    receiver.set_value(&ControlId::Range, range_meters as f32);
+    receiver.set_value(&ControlId::Range, range_meters as f64);
     receiver.range_meters = range_meters as u32;
     receiver.state = ReceiverState::StatusRequestReceived;
 
     let mode = report.mode as usize;
     if mode <= 3 {
-        receiver.set_value(&ControlId::Mode, mode as f32);
+        receiver.set_value(&ControlId::Mode, mode as f64);
         receiver.set_value_auto(
             &ControlId::Gain,
-            report.controls[mode].gain as f32,
+            report.controls[mode].gain as f64,
             report.controls[mode].gain_auto,
         );
         receiver.set_value_auto(
             &ControlId::ColorGain,
-            report.controls[mode].color_gain as f32,
+            report.controls[mode].color_gain as f64,
             report.controls[mode].color_gain_auto,
         );
         receiver.set_value_auto(
             &ControlId::Sea,
-            report.controls[mode].sea as f32,
+            report.controls[mode].sea as f64,
             report.controls[mode].sea_auto,
         );
         receiver.set_value_enabled(
             &ControlId::Rain,
-            report.controls[mode].rain as f32,
+            report.controls[mode].rain as f64,
             report.controls[mode].rain_enabled,
         );
     } else {
@@ -272,37 +272,37 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
     }
     receiver.set_value(
         &ControlId::SeaClutterCurve,
-        (report.sea_clutter_curve + 1) as f32,
+        (report.sea_clutter_curve + 1) as f64,
     );
-    receiver.set_value(&ControlId::TargetExpansion, report.target_expansion as f32);
+    receiver.set_value(&ControlId::TargetExpansion, report.target_expansion as f64);
     receiver.set_value(
         &ControlId::InterferenceRejection,
-        report.interference_rejection as f32,
+        report.interference_rejection as f64,
     );
     receiver.set_value(
         &ControlId::BearingAlignment,
-        i16::from_le_bytes(report.bearing_offset) as f32,
+        i16::from_le_bytes(report.bearing_offset) as f64,
     );
-    receiver.set_value(&ControlId::MainBangSuppression, report.mbs_enabled as f32);
+    receiver.set_value(&ControlId::MainBangSuppression, report.mbs_enabled as f64);
 
     receiver.set_value_enabled(
         &ControlId::NoTransmitStart1,
-        u16::from_le_bytes(report.blank_start_1) as f32,
+        u16::from_le_bytes(report.blank_start_1) as f64,
         report.blank_enabled_1,
     );
     receiver.set_value_enabled(
         &ControlId::NoTransmitEnd1,
-        u16::from_le_bytes(report.blank_end_1) as f32,
+        u16::from_le_bytes(report.blank_end_1) as f64,
         report.blank_enabled_1,
     );
     receiver.set_value_enabled(
         &ControlId::NoTransmitStart2,
-        u16::from_le_bytes(report.blank_start_2) as f32,
+        u16::from_le_bytes(report.blank_start_2) as f64,
         report.blank_enabled_2,
     );
     receiver.set_value_enabled(
         &ControlId::NoTransmitEnd2,
-        u16::from_le_bytes(report.blank_end_2) as f32,
+        u16::from_le_bytes(report.blank_end_2) as f64,
         report.blank_enabled_2,
     );
 }
@@ -394,6 +394,6 @@ pub(super) fn process_doppler_report(receiver: &mut RaymarineReportReceiver, dat
     };
 
     log::trace!("{}: Doppler {} -> {doppler}", receiver.common.key, data[4]);
-    receiver.set_value(&ControlId::Doppler, doppler as f32);
+    receiver.set_value(&ControlId::Doppler, doppler as f64);
     receiver.common.info.set_doppler(doppler > 0);
 }

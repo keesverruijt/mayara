@@ -32,7 +32,7 @@ fn get_angle_value(ct: &ControlId, controls: &SharedControls) -> i16 {
 pub async fn set_control(
     command: &mut Command,
     cv: &ControlValue,
-    value: f32,
+    value: f64,
     controls: &SharedControls,
 ) -> Result<(), RadarError> {
     let auto: u8 = if cv.auto.unwrap_or(false) { 1 } else { 0 };

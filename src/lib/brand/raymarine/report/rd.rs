@@ -386,7 +386,7 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
             Power::Standby // Default to Standby if unknown
         }
     };
-    receiver.set_value(&ControlId::Power, status as i32 as f32);
+    receiver.set_value(&ControlId::Power, status as i32 as f64);
 
     if receiver.common.info.ranges.is_empty() {
         let mut ranges = Ranges::empty();
@@ -411,8 +411,8 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
     receiver.range_meters = range_meters as u32;
     log::info!("{}: range_meters={}", receiver.common.key, range_meters);
 
-    receiver.set_value(&ControlId::Range, range_meters as f32);
-    receiver.set_value_auto(&ControlId::Gain, report.gain as f32, report.auto_gain);
+    receiver.set_value(&ControlId::Range, range_meters as f64);
+    receiver.set_value_auto(&ControlId::Gain, report.gain as f64, report.auto_gain);
 
     receiver.set_value_auto(&ControlId::Sea, report.sea, report.auto_sea);
     receiver.set_value_enabled(&ControlId::Rain, report.rain, report.rain_enabled);

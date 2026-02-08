@@ -224,7 +224,7 @@ impl RaymarineReportReceiver {
         auto: Option<bool>,
         enabled: Option<bool>,
     ) where
-        f32: From<T>,
+        f64: From<T>,
     {
         match self
             .common
@@ -254,21 +254,21 @@ impl RaymarineReportReceiver {
 
     fn set_value<T>(&mut self, control_id: &ControlId, value: T)
     where
-        f32: From<T>,
+        f64: From<T>,
     {
         self.set(control_id, value.into(), None, None)
     }
 
     fn set_value_auto<T>(&mut self, control_id: &ControlId, value: T, auto: u8)
     where
-        f32: From<T>,
+        f64: From<T>,
     {
         self.set(control_id, value, Some(auto > 0), None)
     }
 
     fn set_value_enabled<T>(&mut self, control_id: &ControlId, value: T, enabled: u8)
     where
-        f32: From<T>,
+        f64: From<T>,
     {
         self.set(control_id, value, None, Some(enabled > 0))
     }
@@ -295,7 +295,7 @@ impl RaymarineReportReceiver {
             .common
             .info
             .controls
-            .set_wire_range(control_id, min as f32, max as f32)
+            .set_wire_range(control_id, min as f64, max as f64)
         {
             Err(e) => {
                 log::error!("{}: {}", self.common.key, e.to_string());

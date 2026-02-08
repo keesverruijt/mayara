@@ -70,7 +70,7 @@ impl Command {
         Ok(())
     }
 
-    fn scale_100_to_byte(a: f32) -> u8 {
+    fn scale_100_to_byte(a: f64) -> u8 {
         // Map range 0..100 to 0..255
         let mut r = a * 255.0 / 100.0;
         if r > 255.0 {

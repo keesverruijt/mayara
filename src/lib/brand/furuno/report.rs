@@ -262,7 +262,7 @@ impl FurunoReportReceiver {
         Ok(())
     }
 
-    fn set(&mut self, control_id: &ControlId, value: f32, auto: Option<bool>) {
+    fn set(&mut self, control_id: &ControlId, value: f64, auto: Option<bool>) {
         match self.common.info.controls.set(control_id, value, auto) {
             Err(e) => {
                 log::error!("{}: {}", self.common.key, e.to_string());
@@ -283,11 +283,11 @@ impl FurunoReportReceiver {
         };
     }
 
-    fn set_value(&mut self, control_id: &ControlId, value: f32) {
+    fn set_value(&mut self, control_id: &ControlId, value: f64) {
         self.set(control_id, value, None)
     }
 
-    fn set_value_auto(&mut self, control_id: &ControlId, value: f32, auto: u8) {
+    fn set_value_auto(&mut self, control_id: &ControlId, value: f64, auto: u8) {
         match self
             .common
             .info
@@ -314,7 +314,7 @@ impl FurunoReportReceiver {
     }
 
     #[allow(dead_code)]
-    fn set_value_with_many_auto(&mut self, control_id: &ControlId, value: f32, auto_value: f32) {
+    fn set_value_with_many_auto(&mut self, control_id: &ControlId, value: f64, auto_value: f64) {
         match self
             .common
             .info
@@ -418,9 +418,9 @@ impl FurunoReportReceiver {
             cmd,
             strings
         );
-        let numbers: Vec<f32> = strings
+        let numbers: Vec<f64> = strings
             .iter()
-            .map(|s| s.trim().parse::<f32>().unwrap_or(0.0))
+            .map(|s| s.trim().parse::<f64>().unwrap_or(0.0))
             .collect();
 
         if numbers.len() != strings.len() {
@@ -447,7 +447,7 @@ impl FurunoReportReceiver {
                     _ => Power::Off,
                 };
                 // TODO check values with generic values [1 = Standby, 2 = Transmit but the others...]
-                self.set_value(&ControlId::Power, generic_state as i32 as f32);
+                self.set_value(&ControlId::Power, generic_state as i32 as f64);
             }
             CommandId::Gain => {
                 // Response format: $N63,{auto},{value},0,80,0
@@ -539,7 +539,7 @@ impl FurunoReportReceiver {
                         )
                     })?;
 
-                self.set_value(&ControlId::Range, range_meters as f32);
+                self.set_value(&ControlId::Range, range_meters as f64);
             }
             CommandId::OnTime => {
                 let hours = numbers[0] / 3600.0;
@@ -560,7 +560,7 @@ impl FurunoReportReceiver {
                 }
                 // Convert 0-255 to 0-100%
                 let percent = (numbers[0] as i32 * 100) / 255;
-                self.set_value(&ControlId::MainBangSuppression, percent as f32);
+                self.set_value(&ControlId::MainBangSuppression, percent as f64);
             }
 
             // NXT-specific features
@@ -967,7 +967,7 @@ impl FurunoReportReceiver {
                 .common
                 .info
                 .controls
-                .set(&ControlId::Range, metadata.range as f32, None);
+                .set(&ControlId::Range, metadata.range as f64, None);
         }
         // Convert the spoke data to bytes
 

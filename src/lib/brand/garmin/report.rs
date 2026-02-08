@@ -1,6 +1,6 @@
 use log::{debug, log_enabled, trace, warn};
 
-use crate::util::{c_string, PrintableSlice};
+use crate::util::{PrintableSlice, c_string};
 
 pub fn process(report: &[u8]) {
     if report.len() < size_of::<u32>() * 2 + size_of::<u8>() {
@@ -59,7 +59,7 @@ pub fn process(report: &[u8]) {
             debug!("Autogain level {}", value);
         }
         0x0930 => {
-            debug!("Bearing alignment {}", value as i32 as f32 / 32.0);
+            debug!("Bearing alignment {}", value as i32 as f64 / 32.0);
         }
         0x0932 => {
             debug!("Crosstalk rejection {}", value);
@@ -83,10 +83,10 @@ pub fn process(report: &[u8]) {
             debug!("No transmit zone mode {}", value);
         }
         0x0940 => {
-            debug!("No transmit zone start {}", value as i32 as f32 / 32.0);
+            debug!("No transmit zone start {}", value as i32 as f64 / 32.0);
         }
         0x0941 => {
-            debug!("No transmit zone end {}", value as i32 as f32 / 32.0);
+            debug!("No transmit zone end {}", value as i32 as f64 / 32.0);
         }
         0x0942 => {
             debug!("Time idle mode {}", value);
@@ -118,16 +118,14 @@ pub fn process(report: &[u8]) {
                         packet_type,
                         value,
                         value,
-                        value as i32 as f32 / 32.0
+                        value as i32 as f64 / 32.0
                     );
                 } else if len == 1 || len == 2 {
                     trace!("0x{:04X}: value 0x{:X} / {}", packet_type, value, value);
                 } else {
                     trace!(
                         "0x{:04X}: Unknown report: {:02X?} len {}",
-                        packet_type,
-                        data,
-                        len
+                        packet_type, data, len
                     );
                     trace!("                        {}", PrintableSlice::new(data));
                 }

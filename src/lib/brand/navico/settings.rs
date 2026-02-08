@@ -128,7 +128,7 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
         Model::Gen3 => 36.,
         Model::Gen4 | Model::HaloOrG4 => 48.,
         Model::HALO => 96.,
-    }) * NAUTICAL_MILE_F64 as f32;
+    }) * NAUTICAL_MILE_F64;
     let mut range_control = Control::new_numeric(ControlId::Range, 50., max_value)
         .unit(Units::Meters)
         .wire_scale_factor(10., false); // Radar sends and receives in decimeters

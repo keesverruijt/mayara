@@ -447,7 +447,7 @@ impl SharedControls {
         enabled: Option<bool>,
     ) -> Result<Option<()>, ControlError>
     where
-        f32: From<T>,
+        f64: From<T>,
     {
         let control = {
             let mut locked = self.controls.write().unwrap();
@@ -472,8 +472,8 @@ impl SharedControls {
     pub fn set_wire_range(
         &self,
         control_id: &ControlId,
-        min: f32,
-        max: f32,
+        min: f64,
+        max: f64,
     ) -> Result<Option<()>, ControlError> {
         let control = {
             let mut locked = self.controls.write().unwrap();
@@ -500,7 +500,7 @@ impl SharedControls {
     pub fn set(
         &self,
         control_id: &ControlId,
-        value: f32,
+        value: f64,
         auto: Option<bool>,
     ) -> Result<Option<()>, ControlError> {
         let control = {
@@ -537,7 +537,7 @@ impl SharedControls {
         &self,
         control_id: &ControlId,
         auto: bool,
-        value: f32,
+        value: f64,
     ) -> Result<Option<()>, ControlError> {
         self.set(control_id, value, Some(auto))
     }
@@ -545,8 +545,8 @@ impl SharedControls {
     pub fn set_value_with_many_auto(
         &self,
         control_id: &ControlId,
-        value: f32,
-        auto_value: f32,
+        value: f64,
+        auto_value: f64,
     ) -> Result<Option<()>, ControlError> {
         let control = {
             let mut locked = self.controls.write().unwrap();
@@ -584,7 +584,7 @@ impl SharedControls {
                         .parse::<i32>()
                         .map_err(|_| ControlError::Invalid(control_id.clone(), value))?;
                     control
-                        .set(i as f32, None, None, None)
+                        .set(i as f64, None, None, None)
                         .map(|_| Some(control.clone()))
                 }
             } else {
@@ -620,18 +620,18 @@ impl SharedControls {
                                 ControlError::Invalid(control_id.clone(), format!("{:?}", value))
                             })?;
                             control
-                                .set(i as f32, None, None, None)
+                                .set(i as f64, None, None, None)
                                 .map(|_| Some(control.clone()))
                         }
                         Value::Bool(b) => {
-                            let i = b as i32 as f32;
+                            let i = b as i32 as f64;
                             control
-                                .set(i as f32, None, None, None)
+                                .set(i as f64, None, None, None)
                                 .map(|_| Some(control.clone()))
                         }
                         Value::Number(n) => match n.as_f64() {
                             Some(n) => control
-                                .set(n as f32, None, None, None)
+                                .set(n as f64, None, None, None)
                                 .map(|_| Some(control.clone())),
                             None => Err(ControlError::Invalid(
                                 control_id.clone(),
@@ -860,8 +860,8 @@ impl ControlValue {
         .map_err(|_| RadarError::CannotSetControlIdValue(self.id, self.value.clone()))
     }
 
-    pub fn as_f32(&self) -> Result<f32, RadarError> {
-        self.as_f64().map(|n| n as f32)
+    pub fn as_f32(&self) -> Result<f64, RadarError> {
+        self.as_f64().map(|n| n as f64)
     }
 
     pub fn as_f64(&self) -> Result<f64, RadarError> {
@@ -902,9 +902,9 @@ pub struct Control {
     #[serde(flatten)]
     item: ControlDefinition,
     #[serde(skip)]
-    pub value: Option<f32>,
+    pub value: Option<f64>,
     #[serde(skip)]
-    pub auto_value: Option<f32>,
+    pub auto_value: Option<f64>,
     #[serde(skip)]
     pub description: Option<String>,
     #[serde(skip)]
@@ -945,14 +945,14 @@ impl Control {
         }
     }
 
-    pub(crate) fn wire_scale_step(mut self, step: f32) -> Self {
+    pub(crate) fn wire_scale_step(mut self, step: f64) -> Self {
         self.item.step_value = Some(step);
         self.item.wire_scale_factor = self.item.step_value.map(|s| 1. / s);
 
         self
     }
 
-    pub(crate) fn wire_scale_factor(mut self, wire_scale_factor: f32, with_step: bool) -> Self {
+    pub(crate) fn wire_scale_factor(mut self, wire_scale_factor: f64, with_step: bool) -> Self {
         self.item.wire_scale_factor = Some(wire_scale_factor);
         if with_step {
             self.item.step_value = self.item.wire_scale_factor.map(|f| 1. / f);
@@ -961,7 +961,7 @@ impl Control {
         self
     }
 
-    pub(crate) fn wire_offset(mut self, wire_offset: f32) -> Self {
+    pub(crate) fn wire_offset(mut self, wire_offset: f64) -> Self {
         self.item.wire_offset = Some(wire_offset);
 
         self
@@ -985,7 +985,7 @@ impl Control {
         self
     }
 
-    pub(crate) fn new_numeric(control_id: ControlId, min_value: f32, max_value: f32) -> Self {
+    pub(crate) fn new_numeric(control_id: ControlId, min_value: f64, max_value: f64) -> Self {
         let min_value = Some(min_value);
         let max_value = Some(max_value);
         let control = Self::new(ControlDefinition::new(
@@ -1010,8 +1010,8 @@ impl Control {
 
     pub(crate) fn new_auto(
         control_id: ControlId,
-        min_value: f32,
-        max_value: f32,
+        min_value: f64,
+        max_value: f64,
         automatic: AutomaticValue,
     ) -> Self {
         let min_value = Some(min_value);
@@ -1036,7 +1036,7 @@ impl Control {
     }
 
     pub(crate) fn new_list(control_id: ControlId, descriptions: &[&str]) -> Self {
-        let description_count = ((descriptions.len() as i32) - 1) as f32;
+        let description_count = ((descriptions.len() as i32) - 1) as f64;
         Self::new(ControlDefinition::new(
             control_id,
             ControlDataType::Number,
@@ -1070,9 +1070,9 @@ impl Control {
             None,
             false,
             Some(0.),
-            Some(((descriptions.len() as i32) - 1) as f32),
+            Some(((descriptions.len() as i32) - 1) as f64),
             None,
-            Some(((descriptions.len() as i32) - 1) as f32),
+            Some(((descriptions.len() as i32) - 1) as f64),
             None,
             None,
             Some(descriptions),
@@ -1147,9 +1147,9 @@ impl Control {
     //     self.auto
     // }
 
-    fn to_number(&self, v: f32) -> Number {
+    fn to_number(&self, v: f64) -> Number {
         if let Some(n) = {
-            if v == v as i32 as f32 {
+            if v == v as i32 as f64 {
                 Number::from_i128(v as i128)
             } else {
                 Number::from_f64(v as f64)
@@ -1170,12 +1170,12 @@ impl Control {
             return Value::Number(self.to_number(self.auto_value.unwrap()));
         }
 
-        let v: f32 = self.value.unwrap_or(self.item.default_value.unwrap_or(0.));
+        let v: f64 = self.value.unwrap_or(self.item.default_value.unwrap_or(0.));
 
         Value::Number(self.to_number(v))
     }
 
-    pub fn as_f32(&self) -> Option<f32> {
+    pub fn as_f32(&self) -> Option<f64> {
         self.value
     }
 
@@ -1208,8 +1208,8 @@ impl Control {
     ///
     pub fn set(
         &mut self,
-        mut value: f32,
-        mut auto_value: Option<f32>,
+        mut value: f64,
+        mut auto_value: Option<f64>,
         auto: Option<bool>,
         enabled: Option<bool>,
     ) -> Result<Option<()>, ControlError> {
@@ -1229,7 +1229,7 @@ impl Control {
             }
         }
         if let Some(wire_scale_factor) = self.item.wire_scale_factor {
-            // One of the reasons we use f32 is because Navico wire format for some things is
+            // One of the reasons we use f64 is because Navico wire format for some things is
             // tenths of degrees. To make things uniform we map these to a float with .1 precision.
 
             log::trace!("{} map value {}", self.item.control_id, value);
@@ -1266,12 +1266,12 @@ impl Control {
         let step = self.item.step_value.unwrap_or(1.0);
         match step {
             0.1 => {
-                value = (value * 10.) as i32 as f32 / 10.;
-                auto_value = auto_value.map(|value| (value * 10.) as i32 as f32 / 10.);
+                value = (value * 10.) as i32 as f64 / 10.;
+                auto_value = auto_value.map(|value| (value * 10.) as i32 as f64 / 10.);
             }
             1.0 => {
-                value = value as i32 as f32;
-                auto_value = auto_value.map(|value| value as i32 as f32);
+                value = value as i32 as f64;
+                auto_value = auto_value.map(|value| value as i32 as f64);
             }
             _ => {
                 value = (value / step).round() * step;
@@ -1324,8 +1324,8 @@ impl Control {
     ///
     pub(crate) fn set_wire_range(
         &mut self,
-        min: f32,
-        max: f32,
+        min: f64,
+        max: f64,
     ) -> Result<Option<()>, ControlError> {
         let max = Some(max - min);
         let min = if min != 0.0 { Some(min) } else { None };
@@ -1376,8 +1376,8 @@ pub struct AutomaticValue {
     //#[serde(skip)]
     //pub(crate) auto_descriptions: Option<Vec<String>>,
     pub(crate) has_auto_adjustable: bool,
-    pub(crate) auto_adjust_min_value: f32,
-    pub(crate) auto_adjust_max_value: f32,
+    pub(crate) auto_adjust_min_value: f64,
+    pub(crate) auto_adjust_max_value: f64,
 }
 
 pub(crate) const HAS_AUTO_NOT_ADJUSTABLE: AutomaticValue = AutomaticValue {
@@ -1421,17 +1421,17 @@ pub struct ControlDefinition {
     #[serde(skip_serializing_if = "is_false")]
     pub(crate) has_enabled: bool,
     #[serde(skip)]
-    default_value: Option<f32>,
+    default_value: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) min_value: Option<f32>,
+    pub(crate) min_value: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) max_value: Option<f32>,
+    pub(crate) max_value: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    step_value: Option<f32>,
+    step_value: Option<f64>,
     #[serde(skip)]
-    wire_scale_factor: Option<f32>,
+    wire_scale_factor: Option<f64>,
     #[serde(skip)]
-    wire_offset: Option<f32>,
+    wire_offset: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) unit: Option<Units>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1452,14 +1452,14 @@ impl ControlDefinition {
     fn new(
         control_id: ControlId,
         data_type: ControlDataType,
-        default_value: Option<f32>,
+        default_value: Option<f64>,
         automatic: Option<AutomaticValue>,
         has_enabled: bool,
-        min_value: Option<f32>,
-        max_value: Option<f32>,
-        step_value: Option<f32>,
-        wire_scale_factor: Option<f32>,
-        wire_offset: Option<f32>,
+        min_value: Option<f64>,
+        max_value: Option<f64>,
+        step_value: Option<f64>,
+        wire_scale_factor: Option<f64>,
+        wire_offset: Option<f64>,
         unit: Option<Units>,
         descriptions: Option<HashMap<i32, String>>,
         valid_values: Option<Vec<i32>>,
@@ -1867,9 +1867,9 @@ pub enum ControlError {
     #[error("Control {0} not supported on this radar")]
     NotSupported(ControlId),
     #[error("Control {0} value {1} is lower than minimum value {2}")]
-    TooLow(ControlId, f32, f32),
+    TooLow(ControlId, f64, f64),
     #[error("Control {0} value {1} is higher than maximum value {2}")]
-    TooHigh(ControlId, f32, f32),
+    TooHigh(ControlId, f64, f64),
     #[error("Control {0} value {1} is not a legal value")]
     Invalid(ControlId, String),
     #[error("Control {0} does not support Auto")]
