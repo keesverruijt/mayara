@@ -20,7 +20,7 @@ use super::{
 
 use mayara::{
     radar::{Legend, RadarError},
-    settings::{ApiVersion, Control, ControlType},
+    settings::{ApiVersion, Control, ControlId},
 };
 
 const RADAR_URI: &str = "/v1/api/radars";
@@ -103,7 +103,7 @@ async fn get_radars(
     let mut api: HashMap<String, RadarApi> = HashMap::new();
     for info in state.radars.get_active().clone() {
         let legend = info.get_legend();
-        let id = format!("radar-{}", info.id);
+        let id = format!("{}", info.id);
         let stream_url = format!("ws://{}{}{}", host, SPOKES_URI, id);
         let control_url = format!("ws://{}{}{}", host, CONTROL_URI, id);
         let name = info.controls.user_name();
@@ -164,7 +164,7 @@ async fn control_handler(
 
     let ws = ws.accept_compression(true);
 
-    match state.radars.get_by_id(&params.key).clone() {
+    match state.radars.get_by_id(params.key) {
         Some(radar) => {
             let shutdown_rx = state.shutdown_tx.subscribe();
 
@@ -172,7 +172,7 @@ async fn control_handler(
             // we can customize the callback by sending additional info such as address.
             ws.on_upgrade(move |socket| control_stream(socket, radar, ApiVersion::V1, shutdown_rx))
         }
-        None => RadarError::NoSuchRadar(params.key.to_string()).into_response(),
+        None => RadarError::NoSuchRadar(params.key).into_response(),
     }
 }
 
@@ -186,7 +186,7 @@ async fn control_stream(
     mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
 ) {
     let mut broadcast_control_rx = radar.new_client_subscription();
-    let (reply_tx, mut reply_rx) = tokio::sync::mpsc::channel(ControlType::COUNT);
+    let (reply_tx, mut reply_rx) = tokio::sync::mpsc::channel(ControlId::COUNT);
 
     log::debug!("Starting /control v1 websocket");
 

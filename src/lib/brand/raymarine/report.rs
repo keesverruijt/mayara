@@ -11,7 +11,7 @@ use crate::brand::raymarine::RaymarineModel;
 use crate::network::create_udp_multicast_listen;
 use crate::radar::range::Ranges;
 use crate::radar::{BYTE_LOOKUP_LENGTH, CommonRadar, Legend, RadarError, RadarInfo, SharedRadars};
-use crate::settings::ControlType;
+use crate::settings::ControlId;
 
 // use super::command::Command;
 use super::command::Command;
@@ -219,7 +219,7 @@ impl RaymarineReportReceiver {
     }
     fn set<T>(
         &mut self,
-        control_type: &ControlType,
+        control_id: &ControlId,
         value: T,
         auto: Option<bool>,
         enabled: Option<bool>,
@@ -230,18 +230,18 @@ impl RaymarineReportReceiver {
             .common
             .info
             .controls
-            .set_value_auto_enabled(control_type, value, auto, enabled)
+            .set_value_auto_enabled(control_id, value, auto, enabled)
         {
             Err(e) => {
                 log::error!("{}: {}", self.common.key, e.to_string());
             }
             Ok(Some(())) => {
                 if log::log_enabled!(log::Level::Debug) {
-                    let control = self.common.info.controls.get(control_type).unwrap();
+                    let control = self.common.info.controls.get(control_id).unwrap();
                     log::trace!(
                         "{}: Control '{}' new value {} auto {:?} enabled {:?}",
                         self.common.key,
-                        control_type,
+                        control_id,
                         control.value(),
                         control.auto,
                         control.enabled
@@ -252,28 +252,28 @@ impl RaymarineReportReceiver {
         };
     }
 
-    fn set_value<T>(&mut self, control_type: &ControlType, value: T)
+    fn set_value<T>(&mut self, control_id: &ControlId, value: T)
     where
         f32: From<T>,
     {
-        self.set(control_type, value.into(), None, None)
+        self.set(control_id, value.into(), None, None)
     }
 
-    fn set_value_auto<T>(&mut self, control_type: &ControlType, value: T, auto: u8)
+    fn set_value_auto<T>(&mut self, control_id: &ControlId, value: T, auto: u8)
     where
         f32: From<T>,
     {
-        self.set(control_type, value, Some(auto > 0), None)
+        self.set(control_id, value, Some(auto > 0), None)
     }
 
-    fn set_value_enabled<T>(&mut self, control_type: &ControlType, value: T, enabled: u8)
+    fn set_value_enabled<T>(&mut self, control_id: &ControlId, value: T, enabled: u8)
     where
         f32: From<T>,
     {
-        self.set(control_type, value, None, Some(enabled > 0))
+        self.set(control_id, value, None, Some(enabled > 0))
     }
 
-    fn set_string(&mut self, control: &ControlType, value: String) {
+    fn set_string(&mut self, control: &ControlId, value: String) {
         match self.common.info.controls.set_string(control, value) {
             Err(e) => {
                 log::error!("{}: {}", self.common.key, e.to_string());
@@ -290,23 +290,23 @@ impl RaymarineReportReceiver {
         };
     }
 
-    fn set_wire_range(&mut self, control_type: &ControlType, min: u8, max: u8) {
+    fn set_wire_range(&mut self, control_id: &ControlId, min: u8, max: u8) {
         match self
             .common
             .info
             .controls
-            .set_wire_range(control_type, min as f32, max as f32)
+            .set_wire_range(control_id, min as f32, max as f32)
         {
             Err(e) => {
                 log::error!("{}: {}", self.common.key, e.to_string());
             }
             Ok(Some(())) => {
                 if log::log_enabled!(log::Level::Debug) {
-                    let control = self.common.info.controls.get(control_type).unwrap();
+                    let control = self.common.info.controls.get(control_id).unwrap();
                     log::trace!(
                         "{}: Control '{}' new wire min {} max {} value {} auto {:?} enabled {:?} ",
                         self.common.key,
-                        control_type,
+                        control_id,
                         min,
                         max,
                         control.value(),

@@ -6,7 +6,7 @@ use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::radar::target::{METERS_PER_DEGREE_LATITUDE, meters_per_degree_longitude};
 use crate::radar::trail::cartesian::PointInt;
 use crate::radar::{BLOB_HISTORY_COLORS, GeoPosition, Legend, SpokeBearing};
-use crate::settings::{ControlError, ControlType, ControlValue, SharedControls};
+use crate::settings::{ControlError, ControlId, ControlValue, SharedControls};
 use crate::{Cli, TargetMode};
 
 use super::target::TargetBuffer;
@@ -61,7 +61,7 @@ impl TrailBuffer {
 
         let legend = info.get_legend();
         let mut minimal_legend_value = 0;
-        if let Some(control) = info.controls.get(&ControlType::DopplerTrailsOnly) {
+        if let Some(control) = info.controls.get(&ControlId::DopplerTrailsOnly) {
             if let Some(value) = control.value {
                 let value = value > 0.;
                 minimal_legend_value = Self::compute_minimal_legend_value(&legend, value);
@@ -101,11 +101,11 @@ impl TrailBuffer {
         cv: &ControlValue,
     ) -> Result<(), RadarError> {
         let mut reply = match cv.id {
-            ControlType::ClearTrails => {
+            ControlId::ClearTrails => {
                 self.clear();
                 return Ok(());
             }
-            ControlType::DopplerTrailsOnly => {
+            ControlId::DopplerTrailsOnly => {
                 let r = controls.set_value(&cv.id, cv.value.clone());
                 if r.is_ok() {
                     let value = controls.get(&cv.id).unwrap().as_u16().unwrap_or(0) > 0;
@@ -113,7 +113,7 @@ impl TrailBuffer {
                 }
                 return r.map(|_| ()).map_err(|e| RadarError::ControlError(e));
             }
-            ControlType::TargetTrails => {
+            ControlId::TargetTrails => {
                 let r = controls.set_value(&cv.id, cv.value.clone());
                 if r.is_ok() {
                     let value = controls.get(&cv.id).unwrap().as_u16().unwrap_or(0);
@@ -121,17 +121,17 @@ impl TrailBuffer {
                 }
                 return r.map(|_| ()).map_err(|e| RadarError::ControlError(e));
             }
-            ControlType::TrailsMotion => match cv.as_bool() {
+            ControlId::TrailsMotion => match cv.as_bool() {
                 Ok(true_motion) => self
                     .set_trails_mode(true_motion)
                     .map_err(|e| RadarError::ControlError(e)),
                 Err(e) => Err(e),
             },
-            ControlType::ClearTargets => {
+            ControlId::ClearTargets => {
                 self.targets.as_mut().map(|t| t.delete_all_targets());
                 return Ok(());
             }
-            ControlType::DopplerAutoTrack => match cv.as_bool() {
+            ControlId::DopplerAutoTrack => match cv.as_bool() {
                 Ok(arpa) => {
                     if let Some(ref mut targets) = self.targets {
                         if let Err(e) = targets.set_arpa_via_doppler(arpa) {
@@ -140,12 +140,12 @@ impl TrailBuffer {
                             Ok(())
                         }
                     } else {
-                        Err(RadarError::CannotSetControlType(cv.id))
+                        Err(RadarError::CannotSetControlId(cv.id))
                     }
                 }
                 Err(e) => Err(e),
             },
-            _ => Err(RadarError::CannotSetControlType(cv.id)),
+            _ => Err(RadarError::CannotSetControlId(cv.id)),
         };
 
         // If we are still here, we still need to set the control value
@@ -161,10 +161,10 @@ impl TrailBuffer {
     pub fn set_trails_mode(&mut self, value: bool) -> Result<(), ControlError> {
         if value {
             if !self.have_heading {
-                return Err(ControlError::NoHeading(ControlType::TrailsMotion, "True"));
+                return Err(ControlError::NoHeading(ControlId::TrailsMotion, "True"));
             }
             if crate::navdata::get_radar_position().is_none() {
-                return Err(ControlError::NoPosition(ControlType::TrailsMotion, "True"));
+                return Err(ControlError::NoPosition(ControlId::TrailsMotion, "True"));
             }
         }
         self.motion_true = value;

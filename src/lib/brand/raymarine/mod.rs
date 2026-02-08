@@ -433,7 +433,7 @@ impl RaymarineLocator {
 
     fn found(&self, info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
         info.controls
-            .set_string(&crate::settings::ControlType::UserName, info.key())
+            .set_string(&crate::settings::ControlId::UserName, info.key())
             .unwrap();
 
         if let Some(mut info) = radars.located(info) {

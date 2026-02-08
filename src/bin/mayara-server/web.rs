@@ -127,7 +127,7 @@ async fn openapi(State(_state): State<Web>) -> impl IntoResponse {
 }
 #[derive(Deserialize)]
 struct WebSocketHandlerParameters {
-    key: String,
+    key: usize,
 }
 
 #[debug_handler]
@@ -141,7 +141,7 @@ async fn spokes_handler(
 
     let ws = ws.accept_compression(true);
 
-    match state.radars.get_by_id(&params.key).clone() {
+    match state.radars.get_by_id(params.key) {
         Some(radar) => {
             let shutdown_rx = state.shutdown_tx.subscribe();
             let radar_message_rx = radar.message_tx.subscribe();
@@ -149,7 +149,7 @@ async fn spokes_handler(
             // we can customize the callback by sending additional info such as address.
             ws.on_upgrade(move |socket| spokes_stream(socket, radar_message_rx, shutdown_rx))
         }
-        None => RadarError::NoSuchRadar(params.key.to_string()).into_response(),
+        None => RadarError::NoSuchRadar(params.key).into_response(),
     }
 }
 

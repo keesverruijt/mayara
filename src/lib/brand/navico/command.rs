@@ -6,7 +6,7 @@ use tokio::net::UdpSocket;
 use crate::brand::CommandSender;
 use crate::network::create_multicast_send;
 use crate::radar::{Power, RadarError, RadarInfo};
-use crate::settings::{ControlType, ControlValue, SharedControls};
+use crate::settings::{ControlId, ControlValue, SharedControls};
 
 use super::Model;
 
@@ -90,13 +90,13 @@ impl Command {
 
     fn generate_fake_error(v: i32) -> Result<(), RadarError> {
         match v {
-            11 => Err(RadarError::CannotSetControlType(ControlType::Rain)),
-            12 => Err(RadarError::CannotSetControlType(ControlType::Power)),
-            _ => Err(RadarError::NoSuchRadar("FakeRadarKey".to_string())),
+            11 => Err(RadarError::CannotSetControlId(ControlId::Rain)),
+            12 => Err(RadarError::CannotSetControlId(ControlId::Power)),
+            _ => Err(RadarError::NoSuchRadar(1)),
         }
     }
 
-    fn get_angle_value(ct: &ControlType, controls: &SharedControls) -> i16 {
+    fn get_angle_value(ct: &ControlId, controls: &SharedControls) -> i16 {
         if let Some(control) = controls.get(ct) {
             if let Some(value) = control.value {
                 let value = (value * 10.0) as i32;
@@ -151,7 +151,7 @@ impl CommandSender for Command {
         let mut cmd = Vec::with_capacity(6);
 
         match cv.id {
-            ControlType::Power => {
+            ControlId::Power => {
                 let value = match Power::from_value(&cv.value).unwrap_or(Power::Standby) {
                     Power::Transmit => 1,
                     _ => 0,
@@ -163,20 +163,20 @@ impl CommandSender for Command {
                 cmd.extend_from_slice(&[0x01, 0xc1, value]);
             }
 
-            ControlType::Range => {
+            ControlId::Range => {
                 let decimeters: i32 = deci_value;
                 log::trace!("range {value} -> {decimeters}");
 
                 cmd.extend_from_slice(&[0x03, 0xc1]);
                 cmd.extend_from_slice(&decimeters.to_le_bytes());
             }
-            ControlType::BearingAlignment => {
+            ControlId::BearingAlignment => {
                 let value: i16 = Self::mod_deci_degrees(deci_value) as i16;
 
                 cmd.extend_from_slice(&[0x05, 0xc1]);
                 cmd.extend_from_slice(&value.to_le_bytes());
             }
-            ControlType::Gain => {
+            ControlId::Gain => {
                 let v = Self::scale_100_to_byte(value);
                 let auto = auto as u32;
 
@@ -184,7 +184,7 @@ impl CommandSender for Command {
                 cmd.extend_from_slice(&auto.to_le_bytes());
                 cmd.extend_from_slice(&v.to_le_bytes());
             }
-            ControlType::Sea => {
+            ControlId::Sea => {
                 if self.model == Model::HALO {
                     // Capture data:
                     // Data: 11c101000004 = Auto
@@ -217,133 +217,133 @@ impl CommandSender for Command {
                     cmd.extend_from_slice(&v.to_be_bytes());
                 }
             }
-            ControlType::Rain => {
+            ControlId::Rain => {
                 let v = Self::scale_100_to_byte(value);
                 cmd.extend_from_slice(&[0x06, 0xc1, 0x04, 0, 0, 0, 0, 0, 0, 0, v]);
             }
-            ControlType::SideLobeSuppression => {
+            ControlId::SideLobeSuppression => {
                 let v = Self::scale_100_to_byte(value);
 
                 cmd.extend_from_slice(&[0x06, 0xc1, 0x05, 0, 0, 0, auto, 0, 0, 0, v]);
             }
-            ControlType::InterferenceRejection => {
+            ControlId::InterferenceRejection => {
                 cmd.extend_from_slice(&[0x08, 0xc1, value as u8]);
             }
-            ControlType::TargetExpansion => {
+            ControlId::TargetExpansion => {
                 if self.model == Model::HALO {
                     cmd.extend_from_slice(&[0x12, 0xc1, value as u8]);
                 } else {
                     cmd.extend_from_slice(&[0x09, 0xc1, value as u8]);
                 }
             }
-            ControlType::TargetBoost => {
+            ControlId::TargetBoost => {
                 cmd.extend_from_slice(&[0x0a, 0xc1, value as u8]);
             }
-            ControlType::SeaState => {
+            ControlId::SeaState => {
                 cmd.extend_from_slice(&[0x0b, 0xc1, value as u8]);
             }
-            ControlType::NoTransmitStart1 => {
+            ControlId::NoTransmitStart1 => {
                 let value_start: i16 = Self::mod_deci_degrees(deci_value) as i16;
-                let value_end: i16 = Self::get_angle_value(&ControlType::NoTransmitEnd1, controls);
+                let value_end: i16 = Self::get_angle_value(&ControlId::NoTransmitEnd1, controls);
                 cmd = self
                     .send_no_transmit_cmd(value_start, value_end, enabled, 0)
                     .await?;
             }
-            ControlType::NoTransmitStart2 => {
+            ControlId::NoTransmitStart2 => {
                 let value_start: i16 = Self::mod_deci_degrees(deci_value) as i16;
-                let value_end: i16 = Self::get_angle_value(&ControlType::NoTransmitEnd2, controls);
+                let value_end: i16 = Self::get_angle_value(&ControlId::NoTransmitEnd2, controls);
                 cmd = self
                     .send_no_transmit_cmd(value_start, value_end, enabled, 1)
                     .await?;
             }
-            ControlType::NoTransmitStart3 => {
+            ControlId::NoTransmitStart3 => {
                 let value_start: i16 = Self::mod_deci_degrees(deci_value) as i16;
-                let value_end: i16 = Self::get_angle_value(&ControlType::NoTransmitEnd3, controls);
+                let value_end: i16 = Self::get_angle_value(&ControlId::NoTransmitEnd3, controls);
                 cmd = self
                     .send_no_transmit_cmd(value_start, value_end, enabled, 2)
                     .await?;
             }
-            ControlType::NoTransmitStart4 => {
+            ControlId::NoTransmitStart4 => {
                 let value_start: i16 = Self::mod_deci_degrees(deci_value) as i16;
-                let value_end: i16 = Self::get_angle_value(&ControlType::NoTransmitEnd4, controls);
+                let value_end: i16 = Self::get_angle_value(&ControlId::NoTransmitEnd4, controls);
                 cmd = self
                     .send_no_transmit_cmd(value_start, value_end, enabled, 3)
                     .await?;
             }
-            ControlType::NoTransmitEnd1 => {
+            ControlId::NoTransmitEnd1 => {
                 let value_start: i16 =
-                    Self::get_angle_value(&ControlType::NoTransmitStart1, controls);
+                    Self::get_angle_value(&ControlId::NoTransmitStart1, controls);
                 let value_end: i16 = Self::mod_deci_degrees(deci_value) as i16;
                 cmd = self
                     .send_no_transmit_cmd(value_start, value_end, enabled, 0)
                     .await?;
             }
-            ControlType::NoTransmitEnd2 => {
+            ControlId::NoTransmitEnd2 => {
                 let value_start: i16 =
-                    Self::get_angle_value(&ControlType::NoTransmitStart2, controls);
+                    Self::get_angle_value(&ControlId::NoTransmitStart2, controls);
                 let value_end: i16 = Self::mod_deci_degrees(deci_value) as i16;
                 cmd = self
                     .send_no_transmit_cmd(value_start, value_end, enabled, 1)
                     .await?;
             }
-            ControlType::NoTransmitEnd3 => {
+            ControlId::NoTransmitEnd3 => {
                 let value_start: i16 =
-                    Self::get_angle_value(&ControlType::NoTransmitStart3, controls);
+                    Self::get_angle_value(&ControlId::NoTransmitStart3, controls);
                 let value_end: i16 = Self::mod_deci_degrees(deci_value) as i16;
                 cmd = self
                     .send_no_transmit_cmd(value_start, value_end, enabled, 2)
                     .await?;
             }
-            ControlType::NoTransmitEnd4 => {
+            ControlId::NoTransmitEnd4 => {
                 let value_start: i16 =
-                    Self::get_angle_value(&ControlType::NoTransmitStart4, controls);
+                    Self::get_angle_value(&ControlId::NoTransmitStart4, controls);
                 let value_end: i16 = Self::mod_deci_degrees(deci_value) as i16;
                 cmd = self
                     .send_no_transmit_cmd(value_start, value_end, enabled, 3)
                     .await?;
             }
-            ControlType::LocalInterferenceRejection => {
+            ControlId::LocalInterferenceRejection => {
                 cmd.extend_from_slice(&[0x0e, 0xc1, value as u8]);
             }
-            ControlType::ScanSpeed => {
+            ControlId::ScanSpeed => {
                 cmd.extend_from_slice(&[0x0f, 0xc1, value as u8]);
             }
-            ControlType::Mode => {
+            ControlId::Mode => {
                 cmd.extend_from_slice(&[0x10, 0xc1, value as u8]);
             }
-            ControlType::NoiseRejection => {
+            ControlId::NoiseRejection => {
                 cmd.extend_from_slice(&[0x21, 0xc1, value as u8]);
             }
-            ControlType::TargetSeparation => {
+            ControlId::TargetSeparation => {
                 cmd.extend_from_slice(&[0x22, 0xc1, value as u8]);
             }
-            ControlType::Doppler => {
+            ControlId::Doppler => {
                 cmd.extend_from_slice(&[0x23, 0xc1, value as u8]);
             }
-            ControlType::DopplerSpeedThreshold => {
+            ControlId::DopplerSpeedThreshold => {
                 let value = (value * 100.0) as u16;
                 let value = max(0, min(1594, value));
                 cmd.extend_from_slice(&[0x24, 0xc1]);
                 cmd.extend_from_slice(&value.to_le_bytes());
             }
-            ControlType::AntennaHeight => {
+            ControlId::AntennaHeight => {
                 let value = deci_value as u16;
                 cmd.extend_from_slice(&[0x30, 0xc1, 0x01, 0, 0, 0]);
                 cmd.extend_from_slice(&value.to_le_bytes());
                 cmd.extend_from_slice(&[0, 0]);
             }
-            ControlType::AccentLight => {
+            ControlId::AccentLight => {
                 cmd.extend_from_slice(&[0x31, 0xc1, value as u8]);
             }
 
             // Non-hardware settings
-            _ => return Err(RadarError::CannotSetControlType(cv.id)),
+            _ => return Err(RadarError::CannotSetControlId(cv.id)),
         };
 
         log::debug!("{}: Send command {:02X?}", self.info.key(), cmd);
         self.send(&cmd).await?;
 
-        if self.fake_errors && cv.id == ControlType::Rain && value > 10. {
+        if self.fake_errors && cv.id == ControlId::Rain && value > 10. {
             return Self::generate_fake_error(value as i32);
         }
         Ok(())

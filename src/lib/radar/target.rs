@@ -16,7 +16,7 @@ use crate::{
     navdata,
     protos::RadarMessage::radar_message::Spoke,
     radar::NAUTICAL_MILE_F64,
-    settings::{ControlError, ControlType},
+    settings::{ControlError, ControlId},
 };
 
 use super::{GeoPosition, Legend, RadarInfo};
@@ -833,7 +833,7 @@ impl TargetBuffer {
 
     pub fn set_arpa_via_doppler(&mut self, arpa: bool) -> Result<(), ControlError> {
         if arpa && !self.setup.have_doppler {
-            return Err(ControlError::NotSupported(ControlType::DopplerAutoTrack));
+            return Err(ControlError::NotSupported(ControlId::DopplerAutoTrack));
         }
         self.arpa_via_doppler = arpa;
         Ok(())

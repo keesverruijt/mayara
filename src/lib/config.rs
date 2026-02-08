@@ -11,7 +11,7 @@ use std::time::SystemTime;
 
 use crate::radar::RadarInfo;
 use crate::radar::range::Ranges;
-use crate::settings::ControlType;
+use crate::settings::ControlId;
 
 pub fn get_project_dirs() -> ProjectDirs {
     directories::ProjectDirs::from("net", "verruijt", "mayara")
@@ -153,7 +153,7 @@ impl Persistence {
             radar.user_name = user_name;
             modified = true;
         }
-        if let Some(cv) = radar_info.controls.get(&ControlType::Range) {
+        if let Some(cv) = radar_info.controls.get(&ControlId::Range) {
             if let Some(ranges) = &cv.item().valid_values {
                 let ranges = Some(ranges.clone());
                 if radar.ranges != ranges {

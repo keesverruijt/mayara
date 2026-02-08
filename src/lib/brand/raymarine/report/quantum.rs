@@ -8,7 +8,7 @@ use crate::brand::raymarine::{RaymarineModel, hd_to_pixel_values, settings};
 use crate::radar::range::{Range, Ranges};
 use crate::radar::spoke::GenericSpoke;
 use crate::radar::{Power, SpokeBearing};
-use crate::settings::ControlType;
+use crate::settings::ControlId;
 
 use super::{RaymarineReportReceiver, ReceiverState};
 
@@ -214,7 +214,7 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
             Power::Standby // Default to Standby if unknown
         }
     };
-    receiver.set_value(&ControlType::Power, status as i32 as f32);
+    receiver.set_value(&ControlId::Power, status as i32 as f32);
 
     if receiver.common.info.ranges.is_empty() {
         let mut ranges = Ranges::empty();
@@ -240,30 +240,30 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
         .info
         .ranges
         .get_distance(report.range_index as usize);
-    receiver.set_value(&ControlType::Range, range_meters as f32);
+    receiver.set_value(&ControlId::Range, range_meters as f32);
     receiver.range_meters = range_meters as u32;
     receiver.state = ReceiverState::StatusRequestReceived;
 
     let mode = report.mode as usize;
     if mode <= 3 {
-        receiver.set_value(&ControlType::Mode, mode as f32);
+        receiver.set_value(&ControlId::Mode, mode as f32);
         receiver.set_value_auto(
-            &ControlType::Gain,
+            &ControlId::Gain,
             report.controls[mode].gain as f32,
             report.controls[mode].gain_auto,
         );
         receiver.set_value_auto(
-            &ControlType::ColorGain,
+            &ControlId::ColorGain,
             report.controls[mode].color_gain as f32,
             report.controls[mode].color_gain_auto,
         );
         receiver.set_value_auto(
-            &ControlType::Sea,
+            &ControlId::Sea,
             report.controls[mode].sea as f32,
             report.controls[mode].sea_auto,
         );
         receiver.set_value_enabled(
-            &ControlType::Rain,
+            &ControlId::Rain,
             report.controls[mode].rain as f32,
             report.controls[mode].rain_enabled,
         );
@@ -271,40 +271,37 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
         log::warn!("{}: Unknown mode {}", receiver.common.key, report.mode);
     }
     receiver.set_value(
-        &ControlType::SeaClutterCurve,
+        &ControlId::SeaClutterCurve,
         (report.sea_clutter_curve + 1) as f32,
     );
+    receiver.set_value(&ControlId::TargetExpansion, report.target_expansion as f32);
     receiver.set_value(
-        &ControlType::TargetExpansion,
-        report.target_expansion as f32,
-    );
-    receiver.set_value(
-        &ControlType::InterferenceRejection,
+        &ControlId::InterferenceRejection,
         report.interference_rejection as f32,
     );
     receiver.set_value(
-        &ControlType::BearingAlignment,
+        &ControlId::BearingAlignment,
         i16::from_le_bytes(report.bearing_offset) as f32,
     );
-    receiver.set_value(&ControlType::MainBangSuppression, report.mbs_enabled as f32);
+    receiver.set_value(&ControlId::MainBangSuppression, report.mbs_enabled as f32);
 
     receiver.set_value_enabled(
-        &ControlType::NoTransmitStart1,
+        &ControlId::NoTransmitStart1,
         u16::from_le_bytes(report.blank_start_1) as f32,
         report.blank_enabled_1,
     );
     receiver.set_value_enabled(
-        &ControlType::NoTransmitEnd1,
+        &ControlId::NoTransmitEnd1,
         u16::from_le_bytes(report.blank_end_1) as f32,
         report.blank_enabled_1,
     );
     receiver.set_value_enabled(
-        &ControlType::NoTransmitStart2,
+        &ControlId::NoTransmitStart2,
         u16::from_le_bytes(report.blank_start_2) as f32,
         report.blank_enabled_2,
     );
     receiver.set_value_enabled(
-        &ControlType::NoTransmitEnd2,
+        &ControlId::NoTransmitEnd2,
         u16::from_le_bytes(report.blank_end_2) as f32,
         report.blank_enabled_2,
     );
@@ -397,6 +394,6 @@ pub(super) fn process_doppler_report(receiver: &mut RaymarineReportReceiver, dat
     };
 
     log::trace!("{}: Doppler {} -> {doppler}", receiver.common.key, data[4]);
-    receiver.set_value(&ControlType::Doppler, doppler as f32);
+    receiver.set_value(&ControlId::Doppler, doppler as f32);
     receiver.common.info.set_doppler(doppler > 0);
 }

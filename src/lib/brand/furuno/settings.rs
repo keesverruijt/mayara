@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::{
     Cli,
     radar::{NAUTICAL_MILE, RadarInfo, range::Ranges},
-    settings::{Control, ControlType, HAS_AUTO_NOT_ADJUSTABLE, SharedControls},
+    settings::{Control, ControlId, HAS_AUTO_NOT_ADJUSTABLE, SharedControls},
 };
 
 use super::{FURUNO_SPOKES, RadarModel};
@@ -12,38 +12,38 @@ pub fn new(args: &Cli) -> SharedControls {
     let mut controls = HashMap::new();
 
     controls.insert(
-        ControlType::UserName,
-        Control::new_string(ControlType::UserName).read_only(false),
+        ControlId::UserName,
+        Control::new_string(ControlId::UserName).read_only(false),
     );
 
     let max_value = 120. * NAUTICAL_MILE as f32;
-    let range_control = Control::new_numeric(ControlType::Range, 0., max_value).unit("m");
+    let range_control = Control::new_numeric(ControlId::Range, 0., max_value).unit("m");
     // Note: valid range values are set per-model in update_when_model_known()
-    controls.insert(ControlType::Range, range_control);
+    controls.insert(ControlId::Range, range_control);
 
     controls.insert(
-        ControlType::Gain,
-        Control::new_auto(ControlType::Gain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE),
+        ControlId::Gain,
+        Control::new_auto(ControlId::Gain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE),
     );
     controls.insert(
-        ControlType::Sea,
-        Control::new_auto(ControlType::Sea, 0., 100., HAS_AUTO_NOT_ADJUSTABLE),
+        ControlId::Sea,
+        Control::new_auto(ControlId::Sea, 0., 100., HAS_AUTO_NOT_ADJUSTABLE),
     );
     controls.insert(
-        ControlType::Rain,
-        Control::new_auto(ControlType::Rain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE),
+        ControlId::Rain,
+        Control::new_auto(ControlId::Rain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE),
     );
 
     controls.insert(
-        ControlType::OperatingHours,
-        Control::new_numeric(ControlType::OperatingHours, 0., 999999.)
+        ControlId::OperatingHours,
+        Control::new_numeric(ControlId::OperatingHours, 0., 999999.)
             .read_only(true)
             .unit("h"),
     );
 
     controls.insert(
-        ControlType::RotationSpeed,
-        Control::new_numeric(ControlType::RotationSpeed, 0., 99.)
+        ControlId::RotationSpeed,
+        Control::new_numeric(ControlId::RotationSpeed, 0., 99.)
             .wire_scale_factor(990., true)
             .read_only(true)
             .unit("RPM"),
@@ -51,8 +51,8 @@ pub fn new(args: &Cli) -> SharedControls {
 
     if log::log_enabled!(log::Level::Debug) {
         controls.insert(
-            ControlType::Spokes,
-            Control::new_numeric(ControlType::Spokes, 0., FURUNO_SPOKES as f32)
+            ControlId::Spokes,
+            Control::new_numeric(ControlId::Spokes, 0., FURUNO_SPOKES as f32)
                 .read_only(true)
                 .unit("per rotation"),
         );
@@ -66,11 +66,11 @@ pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version:
     log::debug!("update_when_model_known: {}", model_name);
     info.controls.set_model_name(model_name.to_string());
 
-    let mut control = Control::new_string(ControlType::SerialNumber);
+    let mut control = Control::new_string(ControlId::SerialNumber);
     if let Some(serial_number) = info.serial_no.as_ref() {
         control.set_string(serial_number.to_string());
     }
-    info.controls.insert(ControlType::SerialNumber, control);
+    info.controls.insert(ControlId::SerialNumber, control);
 
     // Update the UserName; it had to be present at start so it could be loaded from
     // config. Override it if it is still the 'Furuno ... ' name.
@@ -93,41 +93,41 @@ pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version:
         ranges
     );
     info.controls
-        .set_valid_ranges(&ControlType::Range, &ranges)
+        .set_valid_ranges(&ControlId::Range, &ranges)
         .expect("Set valid values");
 
     // TODO: Add controls based on reverse engineered capability table
 
     info.controls.insert(
-        ControlType::FirmwareVersion,
-        Control::new_string(ControlType::FirmwareVersion),
+        ControlId::FirmwareVersion,
+        Control::new_string(ControlId::FirmwareVersion),
     );
     info.controls
-        .set_string(&ControlType::FirmwareVersion, version.to_string())
+        .set_string(&ControlId::FirmwareVersion, version.to_string())
         .expect("FirmwareVersion");
 
     info.controls.insert(
-        ControlType::NoTransmitStart1,
-        Control::new_numeric(ControlType::NoTransmitStart1, -180., 180.)
+        ControlId::NoTransmitStart1,
+        Control::new_numeric(ControlId::NoTransmitStart1, -180., 180.)
             .unit("Deg")
             .wire_offset(-1.),
     );
     info.controls.insert(
-        ControlType::NoTransmitEnd1,
-        Control::new_numeric(ControlType::NoTransmitEnd1, -180., 180.)
+        ControlId::NoTransmitEnd1,
+        Control::new_numeric(ControlId::NoTransmitEnd1, -180., 180.)
             .unit("Deg")
             .wire_offset(-1.),
     );
 
     info.controls.insert(
-        ControlType::NoTransmitStart2,
-        Control::new_numeric(ControlType::NoTransmitStart2, -180., 180.)
+        ControlId::NoTransmitStart2,
+        Control::new_numeric(ControlId::NoTransmitStart2, -180., 180.)
             .unit("Deg")
             .wire_offset(-1.),
     );
     info.controls.insert(
-        ControlType::NoTransmitEnd2,
-        Control::new_numeric(ControlType::NoTransmitEnd2, -180., 180.)
+        ControlId::NoTransmitEnd2,
+        Control::new_numeric(ControlId::NoTransmitEnd2, -180., 180.)
             .unit("Deg")
             .wire_offset(-1.),
     );
@@ -141,32 +141,32 @@ pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version:
 
         // Noise Reduction (Signal Processing feature 3)
         info.controls.insert(
-            ControlType::NoiseRejection,
-            Control::new_numeric(ControlType::NoiseRejection, 0., 1.).unit("boolean"),
+            ControlId::NoiseRejection,
+            Control::new_numeric(ControlId::NoiseRejection, 0., 1.).unit("boolean"),
         );
 
         // Interference Rejection (Signal Processing feature 0)
         info.controls.insert(
-            ControlType::InterferenceRejection,
-            Control::new_numeric(ControlType::InterferenceRejection, 0., 1.).unit("boolean"),
+            ControlId::InterferenceRejection,
+            Control::new_numeric(ControlId::InterferenceRejection, 0., 1.).unit("boolean"),
         );
 
         // Target Separation (RezBoost / Beam Sharpening)
         info.controls.insert(
-            ControlType::TargetSeparation,
-            Control::new_numeric(ControlType::TargetSeparation, 0., 3.).unit("level"),
+            ControlId::TargetSeparation,
+            Control::new_numeric(ControlId::TargetSeparation, 0., 3.).unit("level"),
         );
 
         // Bird Mode
         info.controls.insert(
-            ControlType::BirdMode,
-            Control::new_numeric(ControlType::BirdMode, 0., 3.).unit("level"),
+            ControlId::BirdMode,
+            Control::new_numeric(ControlId::BirdMode, 0., 3.).unit("level"),
         );
 
         // Doppler (Target Analyzer): Off, Target, Rain
         info.controls.insert(
-            ControlType::Doppler,
-            Control::new_list(ControlType::Doppler, &["Off", "Target", "Rain"]),
+            ControlId::Doppler,
+            Control::new_list(ControlId::Doppler, &["Off", "Target", "Rain"]),
         );
     }
 }

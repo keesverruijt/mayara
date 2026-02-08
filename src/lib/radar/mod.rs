@@ -28,7 +28,7 @@ use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::spoke::{GenericSpoke, to_protobuf_spoke};
 use crate::radar::trail::TrailBuffer;
 use crate::settings::{
-    ControlDestination, ControlError, ControlType, ControlUpdate, ControlValue, RadarControlValue,
+    ControlDestination, ControlError, ControlId, ControlUpdate, ControlValue, RadarControlValue,
     SharedControls,
 };
 use crate::{Brand, Cli, TargetMode};
@@ -57,17 +57,17 @@ pub enum RadarError {
     #[error("Shutdown")]
     Shutdown,
     #[error("No such control '{0}'")]
-    InvalidControlType(String),
+    InvalidControlId(String),
     #[error("{0}")]
     ControlError(#[from] ControlError),
     #[error("Cannot set value for control '{0}'")]
-    CannotSetControlType(ControlType),
+    CannotSetControlId(ControlId),
     #[error("Cannot control '{0}' to value {1}")]
-    CannotSetControlTypeValue(ControlType, Value),
+    CannotSetControlIdValue(ControlId, Value),
     #[error("Missing value for control '{0}'")]
-    MissingValue(ControlType),
-    #[error("No such radar with key '{0}'")]
-    NoSuchRadar(String),
+    MissingValue(ControlId),
+    #[error("No such radar with id '{0}'")]
+    NoSuchRadar(usize),
     #[error("Cannot parse JSON '{0}'")]
     ParseJson(String),
     #[error("Cannot parse NMEA0183 '{0}'")]
@@ -331,7 +331,7 @@ impl RadarInfo {
         );
 
         if diff < 10000. && diff > 300. {
-            let _ = self.controls.set_string(&ControlType::RotationSpeed, rpm);
+            let _ = self.controls.set_string(&ControlId::RotationSpeed, rpm);
             diff as u32
         } else {
             0
@@ -354,7 +354,7 @@ impl RadarInfo {
         );
 
         if diff < 10000. && diff > 300. {
-            let _ = self.controls.set_string(&ControlType::RotationSpeed, rpm);
+            let _ = self.controls.set_string(&ControlId::RotationSpeed, rpm);
             diff as u32
         } else {
             0
@@ -362,8 +362,7 @@ impl RadarInfo {
     }
 
     pub fn set_ranges(&mut self, ranges: Ranges) -> Result<(), RadarError> {
-        self.controls
-            .set_valid_ranges(&ControlType::Range, &ranges)?;
+        self.controls.set_valid_ranges(&ControlId::Range, &ranges)?;
         self.ranges = ranges;
         Ok(())
     }
@@ -559,12 +558,11 @@ impl SharedRadars {
         radars.info.get(key).cloned()
     }
 
-    pub fn get_by_id(&self, key: &str) -> Option<RadarInfo> {
+    pub fn get_by_id(&self, id: usize) -> Option<RadarInfo> {
         let radars = self.radars.read().unwrap();
-        for info in radars.info.iter() {
-            let id = format!("radar-{}", info.1.id);
-            if id == key {
-                return Some(info.1.clone());
+        for (_, info) in radars.info.iter() {
+            if info.id == id {
+                return Some(info.clone());
             }
         }
         None
@@ -962,7 +960,7 @@ impl CommonRadar {
                 let _ = self
                     .info
                     .controls
-                    .set_value(&ControlType::Spokes, Value::Number(self.spoke_count.into()));
+                    .set_value(&ControlId::Spokes, Value::Number(self.spoke_count.into()));
 
                 self.spoke_count = 0;
             }

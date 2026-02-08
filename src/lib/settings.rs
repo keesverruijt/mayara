@@ -64,7 +64,7 @@ pub struct Controls {
     replay: bool,
 
     #[serde(flatten)]
-    controls: HashMap<ControlType, Control>,
+    controls: HashMap<ControlId, Control>,
 
     #[serde(skip)]
     radar_id: Option<String>,
@@ -77,7 +77,7 @@ pub struct Controls {
 }
 
 impl Controls {
-    pub(self) fn insert(&mut self, control_type: ControlType, value: Control) {
+    pub(self) fn insert(&mut self, control_id: ControlId, value: Control) {
         let v = Control {
             item: ControlDefinition {
                 is_read_only: self.replay || value.item.is_read_only,
@@ -86,15 +86,15 @@ impl Controls {
             ..value
         };
 
-        self.controls.insert(control_type, v);
+        self.controls.insert(control_id, v);
     }
 
-    pub(self) fn new_base(args: &Cli, mut controls: HashMap<ControlType, Control>) -> Self {
+    pub(self) fn new_base(args: &Cli, mut controls: HashMap<ControlId, Control>) -> Self {
         // Add _mandatory_ controls
-        if !controls.contains_key(&ControlType::ModelName) {
+        if !controls.contains_key(&ControlId::ModelName) {
             controls.insert(
-                ControlType::ModelName,
-                Control::new_string(ControlType::ModelName).read_only(true),
+                ControlId::ModelName,
+                Control::new_string(ControlId::ModelName).read_only(true),
             );
         }
 
@@ -107,15 +107,15 @@ impl Controls {
         // Add controls that are not radar dependent
 
         controls.insert(
-            ControlType::UserName,
-            Control::new_string(ControlType::UserName).read_only(false),
+            ControlId::UserName,
+            Control::new_string(ControlId::UserName).read_only(false),
         );
 
         if args.targets != TargetMode::None {
             controls.insert(
-                ControlType::TargetTrails,
+                ControlId::TargetTrails,
                 Control::new_map(
-                    ControlType::TargetTrails,
+                    ControlId::TargetTrails,
                     HashMap::from([
                         (0, "Off".to_string()),
                         (1, "15s".to_string()),
@@ -129,22 +129,22 @@ impl Controls {
             );
 
             controls.insert(
-                ControlType::TrailsMotion,
+                ControlId::TrailsMotion,
                 Control::new_map(
-                    ControlType::TrailsMotion,
+                    ControlId::TrailsMotion,
                     HashMap::from([(0, "Relative".to_string()), (1, "True".to_string())]),
                 ),
             );
 
             controls.insert(
-                ControlType::ClearTrails,
-                Control::new_button(ControlType::ClearTrails),
+                ControlId::ClearTrails,
+                Control::new_button(ControlId::ClearTrails),
             );
 
             if args.targets == TargetMode::Arpa {
                 controls.insert(
-                    ControlType::ClearTargets,
-                    Control::new_button(ControlType::ClearTargets),
+                    ControlId::ClearTargets,
+                    Control::new_button(ControlId::ClearTargets),
                 );
             }
         }
@@ -197,15 +197,15 @@ impl SharedControls {
     // Create a new set of controls, for a radar.
     // There is only one set that is shared amongst the various threads and
     // structs, hence the word Shared.
-    pub fn new(args: &Cli, mut controls: HashMap<ControlType, Control>) -> SharedControls {
+    pub fn new(args: &Cli, mut controls: HashMap<ControlId, Control>) -> SharedControls {
         // All radars must have the same Status control
         let mut control = Control::new_list(
-            ControlType::Power,
+            ControlId::Power,
             &["Off", "Standby", "Transmit", "Preparing"],
         )
         .send_always();
         control.set_valid_values([1, 2].to_vec()); // Only allow setting to Standby (index 1) and Transmit (index 2)
-        controls.insert(ControlType::Power, control);
+        controls.insert(ControlId::Power, control);
 
         SharedControls {
             controls: Arc::new(RwLock::new(Controls::new_base(args, controls))),
@@ -228,7 +228,7 @@ impl SharedControls {
         locked.control_update_tx.clone()
     }
 
-    pub fn get_controls(&self) -> Option<HashMap<ControlType, Control>> {
+    pub fn get_controls(&self) -> Option<HashMap<ControlId, Control>> {
         match self.controls.read() {
             Ok(locked) => Some(locked.controls.clone()),
             Err(_) => None,
@@ -275,11 +275,11 @@ impl SharedControls {
                         self.send_to_command_handler(control_value.clone(), reply_tx.clone())
                     }
                     ControlDestination::ReadOnly => {
-                        Err(RadarError::CannotSetControlType(control_value.id))
+                        Err(RadarError::CannotSetControlId(control_value.id))
                     }
                 }
             }
-            None => Err(RadarError::CannotSetControlType(control_value.id)),
+            None => Err(RadarError::CannotSetControlId(control_value.id)),
         } {
             self.send_error_to_client(reply_tx, &control_value, &e)
                 .await
@@ -328,7 +328,7 @@ impl SharedControls {
 
     fn send_to_all_clients(&self, control: &Control) {
         let control_value = crate::settings::ControlValue {
-            id: control.item().control_type,
+            id: control.item().control_id,
             value: control.value(),
             auto: control.auto,
             enabled: control.enabled,
@@ -341,7 +341,7 @@ impl SharedControls {
             Ok(cnt) => {
                 log::trace!(
                     "Sent control value {} to {} JSON clients",
-                    control.item().control_type,
+                    control.item().control_id,
                     cnt
                 );
             }
@@ -354,7 +354,7 @@ impl SharedControls {
                 Ok(cnt) => {
                     log::trace!(
                         "Sent control value {} to {} SK clients",
-                        control.item().control_type,
+                        control.item().control_id,
                         cnt
                     );
                 }
@@ -393,26 +393,26 @@ impl SharedControls {
             log::warn!("User tried to set invalid {}: {}", cv.id, e);
             Ok(())
         } else {
-            Err(RadarError::CannotSetControlType(cv.id))
+            Err(RadarError::CannotSetControlId(cv.id))
         }
     }
 
     // ******* GET & SET METHODS
 
-    pub fn insert(&self, control_type: ControlType, value: Control) {
+    pub fn insert(&self, control_id: ControlId, value: Control) {
         let mut locked = self.controls.write().unwrap();
 
-        locked.insert(control_type, value);
+        locked.insert(control_id, value);
     }
 
-    pub fn get(&self, control_type: &ControlType) -> Option<Control> {
+    pub fn get(&self, control_id: &ControlId) -> Option<Control> {
         let locked = self.controls.read().unwrap();
 
-        locked.controls.get(control_type).cloned()
+        locked.controls.get(control_id).cloned()
     }
 
     pub fn get_by_id(&self, control_id: &str) -> Option<Control> {
-        match ControlType::parse_str(Cow::Borrowed(control_id)) {
+        match ControlId::parse_str(Cow::Borrowed(control_id)) {
             Ok(cv) => self.get(&cv),
             Err(_) => None,
         }
@@ -424,29 +424,29 @@ impl SharedControls {
         locked.controls.iter().map(|(k, _)| k.into()).collect()
     }
 
-    pub fn contains_key(&self, control_type: &ControlType) -> bool {
+    pub fn contains_key(&self, control_id: &ControlId) -> bool {
         let locked = self.controls.read().unwrap();
 
-        locked.controls.contains_key(control_type)
+        locked.controls.contains_key(control_id)
     }
 
-    pub fn set_refresh(&self, control_type: &ControlType) {
+    pub fn set_refresh(&self, control_id: &ControlId) {
         let mut locked = self.controls.write().unwrap();
-        if let Some(control) = locked.controls.get_mut(control_type) {
+        if let Some(control) = locked.controls.get_mut(control_id) {
             control.needs_refresh = true;
         }
     }
 
-    pub fn set_dynamic_read_only(&self, control_type: &ControlType, read_only: bool) {
+    pub fn set_dynamic_read_only(&self, control_id: &ControlId, read_only: bool) {
         let mut locked = self.controls.write().unwrap();
-        if let Some(control) = locked.controls.get_mut(control_type) {
+        if let Some(control) = locked.controls.get_mut(control_id) {
             control.set_dynamic_read_only(read_only);
         }
     }
 
     pub fn set_value_auto_enabled<T>(
         &self,
-        control_type: &ControlType,
+        control_id: &ControlId,
         value: T,
         auto: Option<bool>,
         enabled: Option<bool>,
@@ -456,12 +456,12 @@ impl SharedControls {
     {
         let control = {
             let mut locked = self.controls.write().unwrap();
-            if let Some(control) = locked.controls.get_mut(control_type) {
+            if let Some(control) = locked.controls.get_mut(control_id) {
                 Ok(control
                     .set(value.into(), None, auto, enabled)?
                     .map(|_| control.clone()))
             } else {
-                Err(ControlError::NotSupported(*control_type))
+                Err(ControlError::NotSupported(*control_id))
             }
         }?;
 
@@ -476,16 +476,16 @@ impl SharedControls {
 
     pub fn set_wire_range(
         &self,
-        control_type: &ControlType,
+        control_id: &ControlId,
         min: f32,
         max: f32,
     ) -> Result<Option<()>, ControlError> {
         let control = {
             let mut locked = self.controls.write().unwrap();
-            if let Some(control) = locked.controls.get_mut(control_type) {
+            if let Some(control) = locked.controls.get_mut(control_id) {
                 Ok(control.set_wire_range(min, max)?.map(|_| control.clone()))
             } else {
-                Err(ControlError::NotSupported(*control_type))
+                Err(ControlError::NotSupported(*control_id))
             }
         }?;
 
@@ -504,18 +504,18 @@ impl SharedControls {
     //
     pub fn set(
         &self,
-        control_type: &ControlType,
+        control_id: &ControlId,
         value: f32,
         auto: Option<bool>,
     ) -> Result<Option<()>, ControlError> {
         let control = {
             let mut locked = self.controls.write().unwrap();
-            if let Some(control) = locked.controls.get_mut(control_type) {
+            if let Some(control) = locked.controls.get_mut(control_id) {
                 Ok(control
                     .set(value, None, auto, None)?
                     .map(|_| control.clone()))
             } else {
-                Err(ControlError::NotSupported(*control_type))
+                Err(ControlError::NotSupported(*control_id))
             }
         }?;
 
@@ -528,44 +528,40 @@ impl SharedControls {
         }
     }
 
-    pub fn set_auto_state(
-        &self,
-        control_type: &ControlType,
-        auto: bool,
-    ) -> Result<(), ControlError> {
+    pub fn set_auto_state(&self, control_id: &ControlId, auto: bool) -> Result<(), ControlError> {
         let mut locked = self.controls.write().unwrap();
-        if let Some(control) = locked.controls.get_mut(control_type) {
+        if let Some(control) = locked.controls.get_mut(control_id) {
             control.set_auto(auto);
         } else {
-            return Err(ControlError::NotSupported(*control_type));
+            return Err(ControlError::NotSupported(*control_id));
         };
         Ok(())
     }
 
     pub fn set_value_auto(
         &self,
-        control_type: &ControlType,
+        control_id: &ControlId,
         auto: bool,
         value: f32,
     ) -> Result<Option<()>, ControlError> {
-        self.set(control_type, value, Some(auto))
+        self.set(control_id, value, Some(auto))
     }
 
     pub fn set_value_with_many_auto(
         &self,
-        control_type: &ControlType,
+        control_id: &ControlId,
         value: f32,
         auto_value: f32,
     ) -> Result<Option<()>, ControlError> {
         let control = {
             let mut locked = self.controls.write().unwrap();
-            if let Some(control) = locked.controls.get_mut(control_type) {
+            if let Some(control) = locked.controls.get_mut(control_id) {
                 let auto = control.auto;
                 Ok(control
                     .set(value, Some(auto_value), auto, None)?
                     .map(|_| control.clone()))
             } else {
-                Err(ControlError::NotSupported(*control_type))
+                Err(ControlError::NotSupported(*control_id))
             }
         }?;
 
@@ -580,24 +576,24 @@ impl SharedControls {
 
     pub fn set_string(
         &self,
-        control_type: &ControlType,
+        control_id: &ControlId,
         value: String,
     ) -> Result<Option<String>, ControlError> {
         let control = {
             let mut locked = self.controls.write().unwrap();
-            if let Some(control) = locked.controls.get_mut(control_type) {
+            if let Some(control) = locked.controls.get_mut(control_id) {
                 if control.item().data_type == ControlDataType::String {
                     Ok(control.set_string(value).map(|_| control.clone()))
                 } else {
                     let i = value
                         .parse::<i32>()
-                        .map_err(|_| ControlError::Invalid(control_type.clone(), value))?;
+                        .map_err(|_| ControlError::Invalid(control_id.clone(), value))?;
                     control
                         .set(i as f32, None, None, None)
                         .map(|_| Some(control.clone()))
                 }
             } else {
-                Err(ControlError::NotSupported(*control_type))
+                Err(ControlError::NotSupported(*control_id))
             }
         }?;
 
@@ -611,22 +607,22 @@ impl SharedControls {
 
     pub fn set_value(
         &self,
-        control_type: &ControlType,
+        control_id: &ControlId,
         value: Value,
     ) -> Result<Option<String>, ControlError> {
         let control = {
             let mut locked = self.controls.write().unwrap();
-            if let Some(control) = locked.controls.get_mut(control_type) {
+            if let Some(control) = locked.controls.get_mut(control_id) {
                 if control.item().data_type == ControlDataType::String {
                     match value {
                         Value::String(s) => Ok(control.set_string(s).map(|_| control.clone())),
-                        _ => Err(ControlError::Invalid(*control_type, format!("{:?}", value))),
+                        _ => Err(ControlError::Invalid(*control_id, format!("{:?}", value))),
                     }
                 } else {
                     match value.clone() {
                         Value::String(s) => {
                             let i = s.parse::<i32>().map_err(|_| {
-                                ControlError::Invalid(control_type.clone(), format!("{:?}", value))
+                                ControlError::Invalid(control_id.clone(), format!("{:?}", value))
                             })?;
                             control
                                 .set(i as f32, None, None, None)
@@ -643,18 +639,18 @@ impl SharedControls {
                                 .set(n as f32, None, None, None)
                                 .map(|_| Some(control.clone())),
                             None => Err(ControlError::Invalid(
-                                control_type.clone(),
+                                control_id.clone(),
                                 format!("{:?}", value),
                             )),
                         },
                         _ => Err(ControlError::Invalid(
-                            control_type.clone(),
+                            control_id.clone(),
                             format!("{:?}", value),
                         )),
                     }
                 }
             } else {
-                Err(ControlError::NotSupported(*control_type))
+                Err(ControlError::NotSupported(*control_id))
             }
         }?;
 
@@ -679,37 +675,36 @@ impl SharedControls {
 
     pub fn set_user_name(&self, name: String) {
         let mut locked = self.controls.write().unwrap();
-        let control = locked.controls.get_mut(&ControlType::UserName).unwrap();
+        let control = locked.controls.get_mut(&ControlId::UserName).unwrap();
         control.set_string(name);
     }
 
     pub fn user_name(&self) -> String {
-        self.get(&ControlType::UserName)
+        self.get(&ControlId::UserName)
             .and_then(|c| c.description)
             .unwrap()
     }
 
     pub fn set_model_name(&self, name: String) {
         let mut locked = self.controls.write().unwrap();
-        let control = locked.controls.get_mut(&ControlType::ModelName).unwrap();
+        let control = locked.controls.get_mut(&ControlId::ModelName).unwrap();
         control.set_string(name.clone());
     }
 
     pub fn model_name(&self) -> Option<String> {
-        self.get(&ControlType::ModelName)
-            .and_then(|c| c.description)
+        self.get(&ControlId::ModelName).and_then(|c| c.description)
     }
 
     pub fn set_valid_values(
         &self,
-        control_type: &ControlType,
+        control_id: &ControlId,
         valid_values: Vec<i32>,
     ) -> Result<(), ControlError> {
         let mut locked = self.controls.write().unwrap();
         locked
             .controls
-            .get_mut(control_type)
-            .ok_or(ControlError::NotSupported(*control_type))
+            .get_mut(control_id)
+            .ok_or(ControlError::NotSupported(*control_id))
             .map(|c| {
                 c.set_valid_values(valid_values);
                 ()
@@ -718,14 +713,14 @@ impl SharedControls {
 
     pub fn set_valid_ranges(
         &self,
-        control_type: &ControlType,
+        control_id: &ControlId,
         ranges: &Ranges,
     ) -> Result<(), ControlError> {
         let mut locked = self.controls.write().unwrap();
         locked
             .controls
-            .get_mut(control_type)
-            .ok_or(ControlError::NotSupported(*control_type))
+            .get_mut(control_id)
+            .ok_or(ControlError::NotSupported(*control_id))
             .map(|c| {
                 c.set_valid_ranges(ranges);
                 ()
@@ -735,7 +730,7 @@ impl SharedControls {
 
     pub(crate) fn get_status(&self) -> Option<Power> {
         let locked = self.controls.read().unwrap();
-        if let Some(control) = locked.controls.get(&ControlType::Power) {
+        if let Some(control) = locked.controls.get(&ControlId::Power) {
             return Power::from_value(&control.value()).ok();
         }
 
@@ -753,7 +748,7 @@ pub struct ControlUpdate {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlValue {
-    pub id: ControlType,
+    pub id: ControlId,
     pub value: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto: Option<bool>,
@@ -766,7 +761,7 @@ pub struct ControlValue {
 }
 
 impl ControlValue {
-    pub fn new(id: ControlType, value: Value) -> Self {
+    pub fn new(id: ControlId, value: Value) -> Self {
         ControlValue {
             id,
             value,
@@ -779,7 +774,7 @@ impl ControlValue {
 
     pub fn from(control: &Control, error: Option<String>) -> Self {
         ControlValue {
-            id: control.item().control_type,
+            id: control.item().control_id,
             value: control.value(),
             auto: control.auto,
             enabled: control.enabled,
@@ -795,7 +790,7 @@ impl ControlValue {
     pub fn as_i32(&self) -> Result<i32, RadarError> {
         self.as_i64()?
             .try_into()
-            .map_err(|_| RadarError::CannotSetControlTypeValue(self.id, self.value.clone()))
+            .map_err(|_| RadarError::CannotSetControlIdValue(self.id, self.value.clone()))
     }
 
     pub fn as_i64(&self) -> Result<i64, RadarError> {
@@ -808,7 +803,7 @@ impl ControlValue {
             Value::Number(n) => n.as_i64().ok_or(RadarError::EnumerationFailed),
             _ => Err(RadarError::EnumerationFailed),
         }
-        .map_err(|_| RadarError::CannotSetControlTypeValue(self.id, self.value.clone()))
+        .map_err(|_| RadarError::CannotSetControlIdValue(self.id, self.value.clone()))
     }
 
     pub fn as_f32(&self) -> Result<f32, RadarError> {
@@ -825,7 +820,7 @@ impl ControlValue {
             Value::Number(n) => n.as_f64().ok_or(RadarError::EnumerationFailed),
             _ => Err(RadarError::EnumerationFailed),
         }
-        .map_err(|_| RadarError::CannotSetControlTypeValue(self.id, self.value.clone()))
+        .map_err(|_| RadarError::CannotSetControlIdValue(self.id, self.value.clone()))
     }
 }
 
@@ -937,11 +932,11 @@ impl Control {
         self
     }
 
-    pub(crate) fn new_numeric(control_type: ControlType, min_value: f32, max_value: f32) -> Self {
+    pub(crate) fn new_numeric(control_id: ControlId, min_value: f32, max_value: f32) -> Self {
         let min_value = Some(min_value);
         let max_value = Some(max_value);
         let control = Self::new(ControlDefinition::new(
-            control_type,
+            control_id,
             ControlDataType::Number,
             min_value,
             None,
@@ -961,7 +956,7 @@ impl Control {
     }
 
     pub(crate) fn new_auto(
-        control_type: ControlType,
+        control_id: ControlId,
         min_value: f32,
         max_value: f32,
         automatic: AutomaticValue,
@@ -969,7 +964,7 @@ impl Control {
         let min_value = Some(min_value);
         let max_value = Some(max_value);
         Self::new(ControlDefinition::new(
-            control_type,
+            control_id,
             ControlDataType::Number,
             min_value,
             Some(automatic),
@@ -987,10 +982,10 @@ impl Control {
         ))
     }
 
-    pub(crate) fn new_list(control_type: ControlType, descriptions: &[&str]) -> Self {
+    pub(crate) fn new_list(control_id: ControlId, descriptions: &[&str]) -> Self {
         let description_count = ((descriptions.len() as i32) - 1) as f32;
         Self::new(ControlDefinition::new(
-            control_type,
+            control_id,
             ControlDataType::Number,
             Some(0.),
             None,
@@ -1014,9 +1009,9 @@ impl Control {
         ))
     }
 
-    pub(crate) fn new_map(control_type: ControlType, descriptions: HashMap<i32, String>) -> Self {
+    pub(crate) fn new_map(control_id: ControlId, descriptions: HashMap<i32, String>) -> Self {
         Self::new(ControlDefinition::new(
-            control_type,
+            control_id,
             ControlDataType::Number,
             Some(0.),
             None,
@@ -1034,9 +1029,9 @@ impl Control {
         ))
     }
 
-    pub(crate) fn new_string(control_type: ControlType) -> Self {
+    pub(crate) fn new_string(control_id: ControlId) -> Self {
         Self::new(ControlDefinition::new(
-            control_type,
+            control_id,
             ControlDataType::String,
             None,
             None,
@@ -1054,9 +1049,9 @@ impl Control {
         ))
     }
 
-    pub(crate) fn new_button(control_type: ControlType) -> Self {
+    pub(crate) fn new_button(control_id: ControlId) -> Self {
         Self::new(ControlDefinition::new(
-            control_type,
+            control_id,
             ControlDataType::Button,
             None,
             None,
@@ -1142,7 +1137,7 @@ impl Control {
         self.needs_refresh = self.auto != Some(auto);
         log::trace!(
             "Setting {} auto {} changed: {}",
-            self.item.control_type,
+            self.item.control_id,
             auto,
             self.needs_refresh
         );
@@ -1186,12 +1181,12 @@ impl Control {
             // One of the reasons we use f32 is because Navico wire format for some things is
             // tenths of degrees. To make things uniform we map these to a float with .1 precision.
             if wire_scale_factor != max_value {
-                log::trace!("{} map value {}", self.item.control_type, value);
+                log::trace!("{} map value {}", self.item.control_id, value);
                 value = value * max_value / wire_scale_factor;
 
                 // TODO! Not sure about the following line
                 auto_value = auto_value.map(|v| v * max_value / wire_scale_factor);
-                log::trace!("{} map value to scaled {}", self.item.control_type, value);
+                log::trace!("{} map value to scaled {}", self.item.control_id, value);
             }
         }
 
@@ -1201,21 +1196,17 @@ impl Control {
                 && value > max_value
                 && value <= 2. * max_value
             {
-                // debug!("{} value {} -> ", self.item.control_type, value);
+                // debug!("{} value {} -> ", self.item.control_id, value);
                 value -= 2. * max_value;
-                // debug!("{} ..... {}", self.item.control_type, value);
+                // debug!("{} ..... {}", self.item.control_id, value);
             }
 
             if value < min_value {
-                return Err(ControlError::TooLow(
-                    self.item.control_type,
-                    value,
-                    min_value,
-                ));
+                return Err(ControlError::TooLow(self.item.control_id, value, min_value));
             }
             if value > max_value {
                 return Err(ControlError::TooHigh(
-                    self.item.control_type,
+                    self.item.control_id,
                     value,
                     max_value,
                 ));
@@ -1237,10 +1228,10 @@ impl Control {
                 auto_value = auto_value.map(|value| (value / step).round() * step);
             }
         }
-        log::trace!("{} map value to rounded {}", self.item.control_type, value);
+        log::trace!("{} map value to rounded {}", self.item.control_id, value);
 
         if auto.is_some() && self.item.automatic.is_none() {
-            Err(ControlError::NoAuto(self.item.control_type))
+            Err(ControlError::NoAuto(self.item.control_id))
         } else if self.value != Some(value)
             || self.auto_value != auto_value
             || self.auto != auto
@@ -1266,7 +1257,7 @@ impl Control {
         if &self.description != &value {
             self.description = value;
             self.needs_refresh = false;
-            log::trace!("Set {} to {:?}", self.item.control_type, self.description);
+            log::trace!("Set {} to {:?}", self.item.control_id, self.description);
             Some(())
         } else if self.needs_refresh {
             self.needs_refresh = false;
@@ -1368,7 +1359,7 @@ pub(crate) enum ControlDestination {
 pub struct ControlDefinition {
     pub(crate) id: u8,
     #[serde(skip)]
-    pub control_type: ControlType,
+    pub control_id: ControlId,
     name: &'static str,
     description: &'static str,
     category: Category,
@@ -1409,7 +1400,7 @@ fn is_false(v: &bool) -> bool {
 
 impl ControlDefinition {
     fn new(
-        control_type: ControlType,
+        control_id: ControlId,
         data_type: ControlDataType,
         default_value: Option<f32>,
         automatic: Option<AutomaticValue>,
@@ -1432,11 +1423,11 @@ impl ControlDefinition {
         };
 
         ControlDefinition {
-            id: control_type as u8,
-            control_type,
-            name: control_type.get_name(),
-            description: control_type.get_description(),
-            category: control_type.get_category(),
+            id: control_id as u8,
+            control_id,
+            name: control_id.get_name(),
+            description: control_id.get_description(),
+            category: control_id.get_category(),
             data_type,
             automatic,
             has_enabled,
@@ -1475,7 +1466,7 @@ impl ControlDefinition {
 // The order is the one in which we deem the representation is "right"
 // when present as a straight list of controls. This is the same order
 // as shown in the radar page for HALO on NOS MFDs.
-pub enum ControlType {
+pub enum ControlId {
     Power,
     WarmupTime,
     Range,
@@ -1549,7 +1540,7 @@ pub enum ControlType {
     UserName,
 }
 
-impl Display for ControlType {
+impl Display for ControlId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s: &'static str = self.into();
 
@@ -1557,261 +1548,258 @@ impl Display for ControlType {
     }
 }
 
-impl ControlType {
-    pub fn from_u8(value: u8) -> ControlType {
+impl ControlId {
+    pub fn from_u8(value: u8) -> ControlId {
         FromPrimitive::from_u8(value).unwrap()
     }
 
-    pub fn parse_str(s: Cow<'_, str>) -> Result<ControlType, RadarError> {
+    pub fn parse_str(s: Cow<'_, str>) -> Result<ControlId, RadarError> {
         // Numeric discriminant encoded as string
         if let Ok(num) = s.parse::<u8>() {
             return match FromPrimitive::from_u8(num) {
                 Some(ct) => Ok(ct),
-                None => Err(RadarError::InvalidControlType(
-                    "invalid ControlType discriminant".to_string(),
+                None => Err(RadarError::InvalidControlId(
+                    "invalid ControlId discriminant".to_string(),
                 )),
             };
         }
 
         // Case-insensitive name lookup (Strum)
-        ControlType::from_str(&s).map_err(|_| {
-            RadarError::InvalidControlType("invalid ControlType discriminant".to_string())
-        })
+        ControlId::from_str(&s)
+            .map_err(|_| RadarError::InvalidControlId("invalid ControlId discriminant".to_string()))
     }
 
     pub fn get_category(&self) -> Category {
         match self {
-            ControlType::Power
-            | ControlType::BirdMode
-            | ControlType::Range
-            | ControlType::Mode
-            | ControlType::Gain
-            | ControlType::ColorGain
-            | ControlType::Sea
-            | ControlType::SeaState
-            | ControlType::Rain
-            | ControlType::Doppler
-            | ControlType::DopplerMode
-            | ControlType::TargetTrails
-            | ControlType::ClearTargets
-            | ControlType::ClearTrails => Category::Base,
-            ControlType::AccentLight
-            | ControlType::AntennaHeight
-            | ControlType::BearingAlignment
-            | ControlType::NoTransmitEnd1
-            | ControlType::NoTransmitEnd2
-            | ControlType::NoTransmitEnd3
-            | ControlType::NoTransmitEnd4
-            | ControlType::NoTransmitStart1
-            | ControlType::NoTransmitStart2
-            | ControlType::NoTransmitStart3
-            | ControlType::NoTransmitStart4 => Category::Installation,
-            ControlType::ModelName
-            | ControlType::WarmupTime
-            | ControlType::FirmwareVersion
-            | ControlType::OperatingHours
-            | ControlType::TransmitHours
-            | ControlType::MagnetronCurrent
-            | ControlType::RotationSpeed
-            | ControlType::SerialNumber
-            | ControlType::SignalStrength => Category::Info,
+            ControlId::Power
+            | ControlId::BirdMode
+            | ControlId::Range
+            | ControlId::Mode
+            | ControlId::Gain
+            | ControlId::ColorGain
+            | ControlId::Sea
+            | ControlId::SeaState
+            | ControlId::Rain
+            | ControlId::Doppler
+            | ControlId::DopplerMode
+            | ControlId::TargetTrails
+            | ControlId::ClearTargets
+            | ControlId::ClearTrails => Category::Base,
+            ControlId::AccentLight
+            | ControlId::AntennaHeight
+            | ControlId::BearingAlignment
+            | ControlId::NoTransmitEnd1
+            | ControlId::NoTransmitEnd2
+            | ControlId::NoTransmitEnd3
+            | ControlId::NoTransmitEnd4
+            | ControlId::NoTransmitStart1
+            | ControlId::NoTransmitStart2
+            | ControlId::NoTransmitStart3
+            | ControlId::NoTransmitStart4 => Category::Installation,
+            ControlId::ModelName
+            | ControlId::WarmupTime
+            | ControlId::FirmwareVersion
+            | ControlId::OperatingHours
+            | ControlId::TransmitHours
+            | ControlId::MagnetronCurrent
+            | ControlId::RotationSpeed
+            | ControlId::SerialNumber
+            | ControlId::SignalStrength => Category::Info,
             _ => Category::Advanced,
         }
     }
 
     pub fn get_description(&self) -> &'static str {
         match self {
-            ControlType::AccentLight => "Strength of the accent light",
-            ControlType::AntennaHeight => "Height of the antenna above waterline",
-            ControlType::BearingAlignment => {
-                "Alignment of the antenna relative to the vessel's bow"
-            }
-            ControlType::ClearTargets => "Clear all ARPA targets",
-            ControlType::ClearTrails => "Clear target trails",
-            ControlType::ColorGain => "Adjust the color curve relative to gain",
-            ControlType::DisplayTiming => "Display timing",
-            ControlType::Doppler => {
+            ControlId::AccentLight => "Strength of the accent light",
+            ControlId::AntennaHeight => "Height of the antenna above waterline",
+            ControlId::BearingAlignment => "Alignment of the antenna relative to the vessel's bow",
+            ControlId::ClearTargets => "Clear all ARPA targets",
+            ControlId::ClearTrails => "Clear target trails",
+            ControlId::ColorGain => "Adjust the color curve relative to gain",
+            ControlId::DisplayTiming => "Display timing",
+            ControlId::Doppler => {
                 "Targets coming towards or going away from own ship shown in different colors"
             }
-            ControlType::DopplerMode => "For what type of targets Doppler is used",
-            ControlType::DopplerAutoTrack => {
+            ControlId::DopplerMode => "For what type of targets Doppler is used",
+            ControlId::DopplerAutoTrack => {
                 "Convert all Doppler targets to ARPA targets automatically"
             }
-            ControlType::DopplerSpeedThreshold => "Threshold speed above which Doppler is applied",
-            ControlType::DopplerTrailsOnly => "Convert only Doppler targets to target trails",
-            ControlType::FirmwareVersion => "Version of the radar firmware",
-            ControlType::Ftc => "FTC",
-            ControlType::Gain => "How sensitive the radar is to returning echoes",
-            ControlType::InterferenceRejection => "Reduces interference from other radars",
-            ControlType::LocalInterferenceRejection => {
+            ControlId::DopplerSpeedThreshold => "Threshold speed above which Doppler is applied",
+            ControlId::DopplerTrailsOnly => "Convert only Doppler targets to target trails",
+            ControlId::FirmwareVersion => "Version of the radar firmware",
+            ControlId::Ftc => "FTC",
+            ControlId::Gain => "How sensitive the radar is to returning echoes",
+            ControlId::InterferenceRejection => "Reduces interference from other radars",
+            ControlId::LocalInterferenceRejection => {
                 "How much local interference rejection is applied"
             }
-            ControlType::BirdMode => "Level of optimization for bird targets",
-            ControlType::MagnetronCurrent => "The current supplied to the magnetron",
-            ControlType::MainBangSuppression => "Main bang suppression",
-            ControlType::Mode => "Choice of radar mode tuning to certain conditions, or custom",
-            ControlType::ModelName => "Manufacturer model name of the radar",
-            ControlType::NoTransmitEnd1 => "End angle of the (first) no-transmit sector",
-            ControlType::NoTransmitEnd2 => "End angle of the second no-transmit sector",
-            ControlType::NoTransmitEnd3 => "End angle of the third no-transmit sector",
-            ControlType::NoTransmitEnd4 => "End angle of the fourth no-transmit sector",
-            ControlType::NoTransmitStart1 => "Start angle of the (first) no-transmit sector",
-            ControlType::NoTransmitStart2 => "Start angle of the second no-transmit sector",
-            ControlType::NoTransmitStart3 => "Start angle of the third no-transmit sector",
-            ControlType::NoTransmitStart4 => "Start angle of the fourth no-transmit sector",
-            ControlType::Power => "Radar operational state",
-            ControlType::WarmupTime => {
+            ControlId::BirdMode => "Level of optimization for bird targets",
+            ControlId::MagnetronCurrent => "The current supplied to the magnetron",
+            ControlId::MainBangSuppression => "Main bang suppression",
+            ControlId::Mode => "Choice of radar mode tuning to certain conditions, or custom",
+            ControlId::ModelName => "Manufacturer model name of the radar",
+            ControlId::NoTransmitEnd1 => "End angle of the (first) no-transmit sector",
+            ControlId::NoTransmitEnd2 => "End angle of the second no-transmit sector",
+            ControlId::NoTransmitEnd3 => "End angle of the third no-transmit sector",
+            ControlId::NoTransmitEnd4 => "End angle of the fourth no-transmit sector",
+            ControlId::NoTransmitStart1 => "Start angle of the (first) no-transmit sector",
+            ControlId::NoTransmitStart2 => "Start angle of the second no-transmit sector",
+            ControlId::NoTransmitStart3 => "Start angle of the third no-transmit sector",
+            ControlId::NoTransmitStart4 => "Start angle of the fourth no-transmit sector",
+            ControlId::Power => "Radar operational state",
+            ControlId::WarmupTime => {
                 "How long the radar still needs to warm up before transmitting"
             }
-            ControlType::Range => "Maximum distance the radar is looking at",
-            ControlType::Sea => "Sea clutter suppression",
-            ControlType::SeaState => "Sea state for sea clutter suppression",
-            ControlType::Rain => "Rain clutter suppression",
-            ControlType::TargetTrails => "Whether target trails are shown",
-            ControlType::TrailsMotion => "How target trails behave",
-            ControlType::NoiseRejection => "Filters out noise",
-            ControlType::TargetBoost => "Level of how much small targets are boosted",
-            ControlType::TargetExpansion => "Increases target length for small targets",
-            ControlType::TargetSeparation => "Makes separation between targets more prominent",
-            ControlType::ScanSpeed => "Desired rotation speed of the radar antenna",
-            ControlType::SideLobeSuppression => "Level of side lobe suppression",
-            ControlType::Tune => "Method to finely tune the radar receiver",
-            ControlType::SeaClutterCurve => "Sea clutter curve",
-            ControlType::RotationSpeed => "How quickly the radar antenna rotates",
-            ControlType::SignalStrength => "Signal strength of the radar",
-            ControlType::OperatingHours => "How many hours the radar has been operating",
-            ControlType::TransmitHours => "How many hours the radar has been transmitting",
-            ControlType::SerialNumber => "Manufacturer serial number of the radar",
-            ControlType::Spokes => "How many spokes the radar transmits per rotation",
-            ControlType::UserName => "User defined name for the radar",
+            ControlId::Range => "Maximum distance the radar is looking at",
+            ControlId::Sea => "Sea clutter suppression",
+            ControlId::SeaState => "Sea state for sea clutter suppression",
+            ControlId::Rain => "Rain clutter suppression",
+            ControlId::TargetTrails => "Whether target trails are shown",
+            ControlId::TrailsMotion => "How target trails behave",
+            ControlId::NoiseRejection => "Filters out noise",
+            ControlId::TargetBoost => "Level of how much small targets are boosted",
+            ControlId::TargetExpansion => "Increases target length for small targets",
+            ControlId::TargetSeparation => "Makes separation between targets more prominent",
+            ControlId::ScanSpeed => "Desired rotation speed of the radar antenna",
+            ControlId::SideLobeSuppression => "Level of side lobe suppression",
+            ControlId::Tune => "Method to finely tune the radar receiver",
+            ControlId::SeaClutterCurve => "Sea clutter curve",
+            ControlId::RotationSpeed => "How quickly the radar antenna rotates",
+            ControlId::SignalStrength => "Signal strength of the radar",
+            ControlId::OperatingHours => "How many hours the radar has been operating",
+            ControlId::TransmitHours => "How many hours the radar has been transmitting",
+            ControlId::SerialNumber => "Manufacturer serial number of the radar",
+            ControlId::Spokes => "How many spokes the radar transmits per rotation",
+            ControlId::UserName => "User defined name for the radar",
         }
     }
 
     fn get_name(&self) -> &'static str {
         match self {
-            ControlType::AccentLight => "Accent light",
-            // ControlType::AllAuto => "All to Auto",
-            // ControlType::AntennaForward => "Antenna forward of GPS",
-            ControlType::AntennaHeight => "Antenna height",
-            // ControlType::AntennaStarboard => "Antenna starboard of GPS",
-            ControlType::BearingAlignment => "Bearing alignment",
-            // ControlType::ColorGain => "Color gain",
-            ControlType::ClearTargets => "Clear targets",
-            ControlType::ClearTrails => "Clear trails",
-            ControlType::ColorGain => "Color gain",
-            ControlType::DisplayTiming => "Display timing",
-            ControlType::Doppler => "Doppler",
-            ControlType::DopplerMode => "Doppler mode",
-            ControlType::DopplerAutoTrack => "Doppler Auto Track",
-            ControlType::DopplerSpeedThreshold => "Doppler speed threshold",
-            ControlType::DopplerTrailsOnly => "Doppler trails only",
-            ControlType::FirmwareVersion => "Firmware version",
-            ControlType::Ftc => "FTC",
-            ControlType::Gain => "Gain",
-            ControlType::InterferenceRejection => "Interference rejection",
-            ControlType::LocalInterferenceRejection => "Local interference rejection",
-            ControlType::BirdMode => "Bird mode",
-            // ControlType::MainBangSize => "Main bang size",
-            ControlType::MagnetronCurrent => "Magnetron current",
-            ControlType::MainBangSuppression => "Main bang suppression",
-            ControlType::Mode => "Mode",
-            ControlType::ModelName => "Model name",
-            ControlType::NoTransmitEnd1 => "No Transmit end",
-            ControlType::NoTransmitEnd2 => "No Transmit end (2)",
-            ControlType::NoTransmitEnd3 => "No Transmit end (3)",
-            ControlType::NoTransmitEnd4 => "No Transmit end (4)",
-            ControlType::NoTransmitStart1 => "No Transmit start",
-            ControlType::NoTransmitStart2 => "No Transmit start (2)",
-            ControlType::NoTransmitStart3 => "No Transmit start (3)",
-            ControlType::NoTransmitStart4 => "No Transmit start (4)",
-            ControlType::NoiseRejection => "Noise rejection",
-            ControlType::OperatingHours => "Operating hours",
-            ControlType::TransmitHours => "Transmit hours",
-            // ControlType::Orientation => "Orientation",
-            ControlType::Rain => "Rain clutter",
-            ControlType::Range => "Range",
-            ControlType::RotationSpeed => "Rotation speed",
-            // ControlType::Scaling => "Scaling",
-            ControlType::ScanSpeed => "Scan speed",
-            ControlType::Sea => "Sea clutter",
-            ControlType::SeaClutterCurve => "Sea clutter curve",
-            ControlType::SeaState => "Sea state",
-            ControlType::SerialNumber => "Serial Number",
-            ControlType::SideLobeSuppression => "Side lobe suppression",
-            // ControlType::Stc => "Sensitivity Time Control",
-            // ControlType::StcCurve => "STC curve",
-            ControlType::SignalStrength => "Signal strength",
-            ControlType::Power => "Power",
-            ControlType::TargetBoost => "Target boost",
-            ControlType::TargetExpansion => "Target expansion",
-            ControlType::TargetSeparation => "Target separation",
-            ControlType::TargetTrails => "Target trails",
-            // ControlType::TimedIdle => "Time idle",
-            // ControlType::TimedRun => "Timed run",
-            ControlType::TrailsMotion => "Target trails motion",
-            ControlType::Tune => "Tune",
-            // ControlType::TuneFine => "Fine tune",
-            ControlType::Spokes => "Spokes",
-            ControlType::UserName => "Custom name",
-            ControlType::WarmupTime => "Warmup time",
+            ControlId::AccentLight => "Accent light",
+            // ControlId::AllAuto => "All to Auto",
+            // ControlId::AntennaForward => "Antenna forward of GPS",
+            ControlId::AntennaHeight => "Antenna height",
+            // ControlId::AntennaStarboard => "Antenna starboard of GPS",
+            ControlId::BearingAlignment => "Bearing alignment",
+            // ControlId::ColorGain => "Color gain",
+            ControlId::ClearTargets => "Clear targets",
+            ControlId::ClearTrails => "Clear trails",
+            ControlId::ColorGain => "Color gain",
+            ControlId::DisplayTiming => "Display timing",
+            ControlId::Doppler => "Doppler",
+            ControlId::DopplerMode => "Doppler mode",
+            ControlId::DopplerAutoTrack => "Doppler Auto Track",
+            ControlId::DopplerSpeedThreshold => "Doppler speed threshold",
+            ControlId::DopplerTrailsOnly => "Doppler trails only",
+            ControlId::FirmwareVersion => "Firmware version",
+            ControlId::Ftc => "FTC",
+            ControlId::Gain => "Gain",
+            ControlId::InterferenceRejection => "Interference rejection",
+            ControlId::LocalInterferenceRejection => "Local interference rejection",
+            ControlId::BirdMode => "Bird mode",
+            // ControlId::MainBangSize => "Main bang size",
+            ControlId::MagnetronCurrent => "Magnetron current",
+            ControlId::MainBangSuppression => "Main bang suppression",
+            ControlId::Mode => "Mode",
+            ControlId::ModelName => "Model name",
+            ControlId::NoTransmitEnd1 => "No Transmit end",
+            ControlId::NoTransmitEnd2 => "No Transmit end (2)",
+            ControlId::NoTransmitEnd3 => "No Transmit end (3)",
+            ControlId::NoTransmitEnd4 => "No Transmit end (4)",
+            ControlId::NoTransmitStart1 => "No Transmit start",
+            ControlId::NoTransmitStart2 => "No Transmit start (2)",
+            ControlId::NoTransmitStart3 => "No Transmit start (3)",
+            ControlId::NoTransmitStart4 => "No Transmit start (4)",
+            ControlId::NoiseRejection => "Noise rejection",
+            ControlId::OperatingHours => "Operating hours",
+            ControlId::TransmitHours => "Transmit hours",
+            // ControlId::Orientation => "Orientation",
+            ControlId::Rain => "Rain clutter",
+            ControlId::Range => "Range",
+            ControlId::RotationSpeed => "Rotation speed",
+            // ControlId::Scaling => "Scaling",
+            ControlId::ScanSpeed => "Scan speed",
+            ControlId::Sea => "Sea clutter",
+            ControlId::SeaClutterCurve => "Sea clutter curve",
+            ControlId::SeaState => "Sea state",
+            ControlId::SerialNumber => "Serial Number",
+            ControlId::SideLobeSuppression => "Side lobe suppression",
+            // ControlId::Stc => "Sensitivity Time Control",
+            // ControlId::StcCurve => "STC curve",
+            ControlId::SignalStrength => "Signal strength",
+            ControlId::Power => "Power",
+            ControlId::TargetBoost => "Target boost",
+            ControlId::TargetExpansion => "Target expansion",
+            ControlId::TargetSeparation => "Target separation",
+            ControlId::TargetTrails => "Target trails",
+            // ControlId::TimedIdle => "Time idle",
+            // ControlId::TimedRun => "Timed run",
+            ControlId::TrailsMotion => "Target trails motion",
+            ControlId::Tune => "Tune",
+            // ControlId::TuneFine => "Fine tune",
+            ControlId::Spokes => "Spokes",
+            ControlId::UserName => "Custom name",
+            ControlId::WarmupTime => "Warmup time",
         }
     }
 
     pub(crate) fn get_destination(&self) -> ControlDestination {
         match self {
-            ControlType::AccentLight => ControlDestination::Command,
-            ControlType::AntennaHeight => ControlDestination::Command,
-            ControlType::BearingAlignment => ControlDestination::Command,
-            ControlType::BirdMode => ControlDestination::Command,
-            ControlType::ClearTargets => ControlDestination::Target,
-            ControlType::ClearTrails => ControlDestination::Trail,
-            ControlType::ColorGain => ControlDestination::Command,
-            ControlType::DisplayTiming => ControlDestination::Command,
-            ControlType::Power => ControlDestination::Command,
-            ControlType::WarmupTime => ControlDestination::ReadOnly,
-            ControlType::Range => ControlDestination::Command,
-            ControlType::Mode => ControlDestination::Command,
-            ControlType::Gain => ControlDestination::Command,
-            ControlType::Sea => ControlDestination::Command,
-            ControlType::SeaState => ControlDestination::Command,
-            ControlType::Rain => ControlDestination::Command,
-            ControlType::Doppler => ControlDestination::Command,
-            ControlType::DopplerMode => ControlDestination::Command,
-            ControlType::DopplerAutoTrack => ControlDestination::Target,
-            ControlType::DopplerSpeedThreshold => ControlDestination::Command,
-            ControlType::TargetTrails => ControlDestination::Trail,
-            ControlType::TrailsMotion => ControlDestination::Trail,
-            ControlType::DopplerTrailsOnly => ControlDestination::Trail,
-            ControlType::NoiseRejection => ControlDestination::Command,
-            ControlType::TargetBoost => ControlDestination::Command,
-            ControlType::TargetExpansion => ControlDestination::Command,
-            ControlType::InterferenceRejection => ControlDestination::Command,
-            ControlType::TargetSeparation => ControlDestination::Command,
-            ControlType::LocalInterferenceRejection => ControlDestination::Command,
-            ControlType::ScanSpeed => ControlDestination::Command,
-            ControlType::SideLobeSuppression => ControlDestination::Command,
-            ControlType::Tune => ControlDestination::Command,
-            ControlType::Ftc => ControlDestination::Command,
-            ControlType::MainBangSuppression => ControlDestination::Command,
-            ControlType::SeaClutterCurve => ControlDestination::Command,
-            ControlType::NoTransmitStart1 => ControlDestination::Command,
-            ControlType::NoTransmitEnd1 => ControlDestination::Command,
-            ControlType::NoTransmitStart2 => ControlDestination::Command,
-            ControlType::NoTransmitEnd2 => ControlDestination::Command,
-            ControlType::NoTransmitStart3 => ControlDestination::Command,
-            ControlType::NoTransmitEnd3 => ControlDestination::Command,
-            ControlType::NoTransmitStart4 => ControlDestination::Command,
-            ControlType::NoTransmitEnd4 => ControlDestination::Command,
-            ControlType::RotationSpeed => ControlDestination::Command,
-            ControlType::MagnetronCurrent => ControlDestination::Command,
-            ControlType::SignalStrength => ControlDestination::Command,
-            ControlType::OperatingHours => ControlDestination::ReadOnly,
-            ControlType::TransmitHours => ControlDestination::ReadOnly,
-            ControlType::ModelName => ControlDestination::ReadOnly,
-            ControlType::FirmwareVersion => ControlDestination::ReadOnly,
-            ControlType::SerialNumber => ControlDestination::ReadOnly,
-            ControlType::Spokes => ControlDestination::ReadOnly,
-            ControlType::UserName => ControlDestination::Internal,
+            ControlId::AccentLight => ControlDestination::Command,
+            ControlId::AntennaHeight => ControlDestination::Command,
+            ControlId::BearingAlignment => ControlDestination::Command,
+            ControlId::BirdMode => ControlDestination::Command,
+            ControlId::ClearTargets => ControlDestination::Target,
+            ControlId::ClearTrails => ControlDestination::Trail,
+            ControlId::ColorGain => ControlDestination::Command,
+            ControlId::DisplayTiming => ControlDestination::Command,
+            ControlId::Power => ControlDestination::Command,
+            ControlId::WarmupTime => ControlDestination::ReadOnly,
+            ControlId::Range => ControlDestination::Command,
+            ControlId::Mode => ControlDestination::Command,
+            ControlId::Gain => ControlDestination::Command,
+            ControlId::Sea => ControlDestination::Command,
+            ControlId::SeaState => ControlDestination::Command,
+            ControlId::Rain => ControlDestination::Command,
+            ControlId::Doppler => ControlDestination::Command,
+            ControlId::DopplerMode => ControlDestination::Command,
+            ControlId::DopplerAutoTrack => ControlDestination::Target,
+            ControlId::DopplerSpeedThreshold => ControlDestination::Command,
+            ControlId::TargetTrails => ControlDestination::Trail,
+            ControlId::TrailsMotion => ControlDestination::Trail,
+            ControlId::DopplerTrailsOnly => ControlDestination::Trail,
+            ControlId::NoiseRejection => ControlDestination::Command,
+            ControlId::TargetBoost => ControlDestination::Command,
+            ControlId::TargetExpansion => ControlDestination::Command,
+            ControlId::InterferenceRejection => ControlDestination::Command,
+            ControlId::TargetSeparation => ControlDestination::Command,
+            ControlId::LocalInterferenceRejection => ControlDestination::Command,
+            ControlId::ScanSpeed => ControlDestination::Command,
+            ControlId::SideLobeSuppression => ControlDestination::Command,
+            ControlId::Tune => ControlDestination::Command,
+            ControlId::Ftc => ControlDestination::Command,
+            ControlId::MainBangSuppression => ControlDestination::Command,
+            ControlId::SeaClutterCurve => ControlDestination::Command,
+            ControlId::NoTransmitStart1 => ControlDestination::Command,
+            ControlId::NoTransmitEnd1 => ControlDestination::Command,
+            ControlId::NoTransmitStart2 => ControlDestination::Command,
+            ControlId::NoTransmitEnd2 => ControlDestination::Command,
+            ControlId::NoTransmitStart3 => ControlDestination::Command,
+            ControlId::NoTransmitEnd3 => ControlDestination::Command,
+            ControlId::NoTransmitStart4 => ControlDestination::Command,
+            ControlId::NoTransmitEnd4 => ControlDestination::Command,
+            ControlId::RotationSpeed => ControlDestination::Command,
+            ControlId::MagnetronCurrent => ControlDestination::Command,
+            ControlId::SignalStrength => ControlDestination::Command,
+            ControlId::OperatingHours => ControlDestination::ReadOnly,
+            ControlId::TransmitHours => ControlDestination::ReadOnly,
+            ControlId::ModelName => ControlDestination::ReadOnly,
+            ControlId::FirmwareVersion => ControlDestination::ReadOnly,
+            ControlId::SerialNumber => ControlDestination::ReadOnly,
+            ControlId::Spokes => ControlDestination::ReadOnly,
+            ControlId::UserName => ControlDestination::Internal,
         }
     }
 }
@@ -1827,62 +1815,62 @@ pub enum Category {
 #[derive(Error, Debug)]
 pub enum ControlError {
     #[error("Control {0} not supported on this radar")]
-    NotSupported(ControlType),
+    NotSupported(ControlId),
     #[error("Control {0} value {1} is lower than minimum value {2}")]
-    TooLow(ControlType, f32, f32),
+    TooLow(ControlId, f32, f32),
     #[error("Control {0} value {1} is higher than maximum value {2}")]
-    TooHigh(ControlType, f32, f32),
+    TooHigh(ControlId, f32, f32),
     #[error("Control {0} value {1} is not a legal value")]
-    Invalid(ControlType, String),
+    Invalid(ControlId, String),
     #[error("Control {0} does not support Auto")]
-    NoAuto(ControlType),
+    NoAuto(ControlId),
     #[error("Control {0} value '{1}' requires true heading input")]
-    NoHeading(ControlType, &'static str),
+    NoHeading(ControlId, &'static str),
     #[error("Control {0} value '{1}' requires a GNSS position")]
-    NoPosition(ControlType, &'static str),
+    NoPosition(ControlId, &'static str),
 }
 
-impl<'de> Deserialize<'de> for ControlType {
+impl<'de> Deserialize<'de> for ControlId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_str(ControlTypeVisitor)
+        deserializer.deserialize_str(ControlIdVisitor)
     }
 }
 
-struct ControlTypeVisitor;
+struct ControlIdVisitor;
 
-impl<'de> Visitor<'de> for ControlTypeVisitor {
-    type Value = ControlType;
+impl<'de> Visitor<'de> for ControlIdVisitor {
+    type Value = ControlId;
 
     fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("a string containing a ControlType name or numeric discriminant")
+        f.write_str("a string containing a ControlId name or numeric discriminant")
     }
 
     fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
     where
         E: serde::de::Error,
     {
-        parse_control_type(Cow::Borrowed(v))
+        parse_control_id(Cow::Borrowed(v))
     }
 
     fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
     where
         E: serde::de::Error,
     {
-        parse_control_type(Cow::Borrowed(v))
+        parse_control_id(Cow::Borrowed(v))
     }
 
     fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
     where
         E: serde::de::Error,
     {
-        parse_control_type(Cow::Owned(v))
+        parse_control_id(Cow::Owned(v))
     }
 }
 
-fn parse_control_type<E>(s: Cow<'_, str>) -> Result<ControlType, E>
+fn parse_control_id<E>(s: Cow<'_, str>) -> Result<ControlId, E>
 where
     E: serde::de::Error,
 {
@@ -1890,15 +1878,15 @@ where
     if let Ok(num) = s.parse::<u8>() {
         return match FromPrimitive::from_u8(num) {
             Some(ct) => Ok(ct),
-            None => Err(E::custom("invalid ControlType discriminant")),
+            None => Err(E::custom("invalid ControlId discriminant")),
         };
     }
 
     // Case-insensitive name lookup (Strum)
-    ControlType::from_str(&s).map_err(|_| E::custom("invalid ControlType name"))
+    ControlId::from_str(&s).map_err(|_| E::custom("invalid ControlId name"))
 }
 
-impl Serialize for ControlType {
+impl Serialize for ControlId {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -1907,7 +1895,7 @@ impl Serialize for ControlType {
             ApiVersion::V3 => {
                 // camelCase string, zero allocation
                 let name: &'static str = (*self).into();
-                log::debug!("Serializing V3 ControlType {:?} as string {}", self, name);
+                log::debug!("Serializing V3 ControlId {:?} as string {}", self, name);
 
                 serializer.serialize_str(name)
             }
@@ -1918,7 +1906,7 @@ impl Serialize for ControlType {
                 let mut buf = itoa::Buffer::new();
                 let s = buf.format(*self as u8);
 
-                log::debug!("Serializing V1 ControlType {:?} as number {}", self, s);
+                log::debug!("Serializing V1 ControlId {:?} as number {}", self, s);
                 serializer.serialize_str(s)
             }
         }
@@ -1934,11 +1922,11 @@ mod test {
     #[test]
     fn serialize_control_value() {
         // Check that the ControlValue serializes correctly
-        let ct = ControlType::Gain;
+        let ct = ControlId::Gain;
         let cts = ct.to_string();
         assert_eq!(cts, "gain".to_string());
-        println!("ControlType as string: {}", cts);
-        match ControlType::parse_str(Cow::Owned(cts)) {
+        println!("ControlId as string: {}", cts);
+        match ControlId::parse_str(Cow::Owned(cts)) {
             Ok(c) => {
                 assert_eq!(c, ct);
             }
@@ -1952,7 +1940,7 @@ mod test {
 
         match serde_json::from_str::<ControlValue>(&json) {
             Ok(cv) => {
-                assert_eq!(cv.id, ControlType::Gain);
+                assert_eq!(cv.id, ControlId::Gain);
                 assert_eq!(cv.value, "49");
                 assert_eq!(cv.auto, Some(true));
                 assert_eq!(cv.enabled, Some(false));
@@ -1967,7 +1955,7 @@ mod test {
 
         match serde_json::from_str::<ControlValue>(&json) {
             Ok(cv) => {
-                assert_eq!(cv.id, ControlType::Gain);
+                assert_eq!(cv.id, ControlId::Gain);
                 assert_eq!(cv.value, "49");
                 assert_eq!(cv.auto, None);
                 assert_eq!(cv.enabled, None);
@@ -1988,22 +1976,22 @@ mod test {
         let args = Cli::parse_from(["my_program"]);
         let controls = SharedControls::new(&args, HashMap::new());
 
-        assert!(controls.set(&ControlType::TargetTrails, 0., None).is_ok());
+        assert!(controls.set(&ControlId::TargetTrails, 0., None).is_ok());
         assert_eq!(
-            controls.set(&ControlType::TargetTrails, 6., None).unwrap(),
+            controls.set(&ControlId::TargetTrails, 6., None).unwrap(),
             Some(())
         );
-        assert!(controls.set(&ControlType::TargetTrails, 7., None).is_err());
-        assert!(controls.set(&ControlType::TargetTrails, -1., None).is_err());
-        assert!(controls.set(&ControlType::TargetTrails, 0.3, None).is_ok());
+        assert!(controls.set(&ControlId::TargetTrails, 7., None).is_err());
+        assert!(controls.set(&ControlId::TargetTrails, -1., None).is_err());
+        assert!(controls.set(&ControlId::TargetTrails, 0.3, None).is_ok());
 
         assert!(
             controls
-                .set_value(&ControlType::TargetTrails, Value::String("3".to_string()))
+                .set_value(&ControlId::TargetTrails, Value::String("3".to_string()))
                 .is_ok()
         );
         assert_eq!(
-            controls.get(&ControlType::TargetTrails).unwrap().value,
+            controls.get(&ControlId::TargetTrails).unwrap().value,
             Some(3.)
         );
     }

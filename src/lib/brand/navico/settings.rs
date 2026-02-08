@@ -6,83 +6,83 @@ use super::{HaloMode, Model};
 use crate::{
     Cli,
     radar::{NAUTICAL_MILE_F64, RadarInfo},
-    settings::{AutomaticValue, Control, ControlType, HAS_AUTO_NOT_ADJUSTABLE, SharedControls},
+    settings::{AutomaticValue, Control, ControlId, HAS_AUTO_NOT_ADJUSTABLE, SharedControls},
 };
 
 pub fn new(args: &Cli, model: Option<&str>) -> SharedControls {
     let mut controls = HashMap::new();
 
-    let mut control = Control::new_string(ControlType::ModelName);
+    let mut control = Control::new_string(ControlId::ModelName);
     if model.is_some() {
         control.set_string(model.unwrap().to_string());
     }
-    controls.insert(ControlType::ModelName, control);
+    controls.insert(ControlId::ModelName, control);
 
     controls.insert(
-        ControlType::AntennaHeight,
-        Control::new_numeric(ControlType::AntennaHeight, 0., 9900.)
+        ControlId::AntennaHeight,
+        Control::new_numeric(ControlId::AntennaHeight, 0., 9900.)
             .wire_scale_factor(99000., false) // we report cm but network has mm
             .unit("cm"),
     );
     controls.insert(
-        ControlType::BearingAlignment,
-        Control::new_numeric(ControlType::BearingAlignment, -180., 180.)
+        ControlId::BearingAlignment,
+        Control::new_numeric(ControlId::BearingAlignment, -180., 180.)
             .unit("Deg")
             .wire_scale_factor(1800., true)
             .wire_offset(-1.),
     );
     controls.insert(
-        ControlType::Gain,
-        Control::new_auto(ControlType::Gain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE)
+        ControlId::Gain,
+        Control::new_auto(ControlId::Gain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE)
             .wire_scale_factor(255., false),
     );
     controls.insert(
-        ControlType::InterferenceRejection,
+        ControlId::InterferenceRejection,
         Control::new_list(
-            ControlType::InterferenceRejection,
+            ControlId::InterferenceRejection,
             &["Off", "Low", "Medium", "High"],
         ),
     );
     controls.insert(
-        ControlType::LocalInterferenceRejection,
+        ControlId::LocalInterferenceRejection,
         Control::new_list(
-            ControlType::LocalInterferenceRejection,
+            ControlId::LocalInterferenceRejection,
             &["Off", "Low", "Medium", "High"],
         ),
     );
     controls.insert(
-        ControlType::Rain,
-        Control::new_numeric(ControlType::Rain, 0., 100.).wire_scale_factor(255., false),
+        ControlId::Rain,
+        Control::new_numeric(ControlId::Rain, 0., 100.).wire_scale_factor(255., false),
     );
     controls.insert(
-        ControlType::TargetBoost,
-        Control::new_list(ControlType::TargetBoost, &["Off", "Low", "High"]),
+        ControlId::TargetBoost,
+        Control::new_list(ControlId::TargetBoost, &["Off", "Low", "High"]),
     );
 
     controls.insert(
-        ControlType::OperatingHours,
-        Control::new_numeric(ControlType::OperatingHours, 0., 999999.)
+        ControlId::OperatingHours,
+        Control::new_numeric(ControlId::OperatingHours, 0., 999999.)
             .read_only(true)
             .unit("h"),
     );
 
     controls.insert(
-        ControlType::RotationSpeed,
-        Control::new_numeric(ControlType::RotationSpeed, 0., 99.)
+        ControlId::RotationSpeed,
+        Control::new_numeric(ControlId::RotationSpeed, 0., 99.)
             .wire_scale_factor(990., true)
             .read_only(true)
             .unit("RPM"),
     );
 
     controls.insert(
-        ControlType::FirmwareVersion,
-        Control::new_string(ControlType::FirmwareVersion),
+        ControlId::FirmwareVersion,
+        Control::new_string(ControlId::FirmwareVersion),
     );
 
     controls.insert(
-        ControlType::SideLobeSuppression,
+        ControlId::SideLobeSuppression,
         Control::new_auto(
-            ControlType::SideLobeSuppression,
+            ControlId::SideLobeSuppression,
             0.,
             100.,
             HAS_AUTO_NOT_ADJUSTABLE,
@@ -96,11 +96,11 @@ pub fn new(args: &Cli, model: Option<&str>) -> SharedControls {
 pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_info: &RadarInfo) {
     controls.set_model_name(model.to_string());
 
-    let mut control = Control::new_string(ControlType::SerialNumber);
+    let mut control = Control::new_string(ControlId::SerialNumber);
     if let Some(serial_number) = radar_info.serial_no.as_ref() {
         control.set_string(serial_number.to_string());
     }
-    controls.insert(ControlType::SerialNumber, control);
+    controls.insert(ControlId::SerialNumber, control);
 
     // Update the UserName; it had to be present at start so it could be loaded from
     // config. Override it if it is still the 'Navico ... ' name.
@@ -126,20 +126,20 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
         Model::Gen4 | Model::HaloOrG4 => 48.,
         Model::HALO => 96.,
     }) * NAUTICAL_MILE_F64 as f32;
-    let mut range_control = Control::new_numeric(ControlType::Range, 50., max_value)
+    let mut range_control = Control::new_numeric(ControlId::Range, 50., max_value)
         .unit("m")
         .wire_scale_factor(10. * max_value, false); // Radar sends and receives in decimeters
     range_control.set_valid_ranges(&radar_info.ranges);
-    controls.insert(ControlType::Range, range_control);
+    controls.insert(ControlId::Range, range_control);
 
     if model == Model::HALO {
         controls.insert(
-            ControlType::Mode,
-            Control::new_list(ControlType::Mode, HaloMode::VARIANTS),
+            ControlId::Mode,
+            Control::new_list(ControlId::Mode, HaloMode::VARIANTS),
         );
         controls.insert(
-            ControlType::AccentLight,
-            Control::new_list(ControlType::AccentLight, &["Off", "Low", "Medium", "High"]),
+            ControlId::AccentLight,
+            Control::new_list(ControlId::AccentLight, &["Off", "Low", "Medium", "High"]),
         );
 
         for (_, start, end) in super::BLANKING_SETS {
@@ -163,14 +163,14 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
 
         controls.insert(
             // TODO: Investigate mapping on 4G
-            ControlType::SeaState,
-            Control::new_list(ControlType::SeaState, &["Calm", "Moderate", "Rough"]),
+            ControlId::SeaState,
+            Control::new_list(ControlId::SeaState, &["Calm", "Moderate", "Rough"]),
         );
 
         controls.insert(
-            ControlType::Sea,
+            ControlId::Sea,
             Control::new_auto(
-                ControlType::Sea,
+                ControlId::Sea,
                 0.,
                 100.,
                 AutomaticValue {
@@ -183,16 +183,16 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
         );
     } else {
         controls.insert(
-            ControlType::Sea,
-            Control::new_auto(ControlType::Sea, 0., 100., HAS_AUTO_NOT_ADJUSTABLE)
+            ControlId::Sea,
+            Control::new_auto(ControlId::Sea, 0., 100., HAS_AUTO_NOT_ADJUSTABLE)
                 .wire_scale_factor(255., false),
         );
     }
 
     controls.insert(
-        ControlType::ScanSpeed,
+        ControlId::ScanSpeed,
         Control::new_list(
-            ControlType::ScanSpeed,
+            ControlId::ScanSpeed,
             if model == Model::HALO {
                 &["Normal", "Medium", "Medium Plus", "Fast"]
             } else {
@@ -201,9 +201,9 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
         ),
     );
     controls.insert(
-        ControlType::TargetExpansion,
+        ControlId::TargetExpansion,
         Control::new_list(
-            ControlType::TargetExpansion,
+            ControlId::TargetExpansion,
             if model == Model::HALO {
                 &["Off", "Low", "Medium", "High"]
             } else {
@@ -212,9 +212,9 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
         ),
     );
     controls.insert(
-        ControlType::NoiseRejection,
+        ControlId::NoiseRejection,
         Control::new_list(
-            ControlType::NoiseRejection,
+            ControlId::NoiseRejection,
             if model == Model::HALO {
                 &["Off", "Low", "Medium", "High"]
             } else {
@@ -224,38 +224,38 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
     );
     if model == Model::HALO || model == Model::Gen4 {
         controls.insert(
-            ControlType::TargetSeparation,
+            ControlId::TargetSeparation,
             Control::new_list(
-                ControlType::TargetSeparation,
+                ControlId::TargetSeparation,
                 &["Off", "Low", "Medium", "High"],
             ),
         );
     }
     if model == Model::HALO {
         controls.insert(
-            ControlType::Doppler,
-            Control::new_list(ControlType::Doppler, &["Off", "Normal", "Approaching"]),
+            ControlId::Doppler,
+            Control::new_list(ControlId::Doppler, &["Off", "Normal", "Approaching"]),
         );
         controls.insert(
-            ControlType::DopplerAutoTrack,
-            Control::new_list(ControlType::DopplerAutoTrack, &["Off", "On"]),
+            ControlId::DopplerAutoTrack,
+            Control::new_list(ControlId::DopplerAutoTrack, &["Off", "On"]),
         );
         controls.insert(
-            ControlType::DopplerSpeedThreshold,
-            Control::new_numeric(ControlType::DopplerSpeedThreshold, 0., 15.94)
+            ControlId::DopplerSpeedThreshold,
+            Control::new_numeric(ControlId::DopplerSpeedThreshold, 0., 15.94)
                 .wire_scale_step(0.01)
                 .unit("m/s"),
         );
         controls.insert(
-            ControlType::DopplerTrailsOnly,
-            Control::new_list(ControlType::DopplerTrailsOnly, &["Off", "On"]),
+            ControlId::DopplerTrailsOnly,
+            Control::new_list(ControlId::DopplerTrailsOnly, &["Off", "On"]),
         );
     }
 
     controls.insert(
-        ControlType::NoiseRejection,
+        ControlId::NoiseRejection,
         Control::new_list(
-            ControlType::NoiseRejection,
+            ControlId::NoiseRejection,
             if model == Model::HALO {
                 &["Off", "Low", "Medium", "High"]
             } else {

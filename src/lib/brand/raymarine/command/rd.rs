@@ -1,5 +1,5 @@
 use crate::radar::{Power, RadarError};
-use crate::settings::{ControlType, ControlValue, SharedControls};
+use crate::settings::{ControlId, ControlValue, SharedControls};
 
 use super::Command;
 
@@ -33,7 +33,7 @@ pub async fn set_control(
     let mut cmd = Vec::with_capacity(6);
 
     match cv.id {
-        ControlType::Power => {
+        ControlId::Power => {
             let value = match Power::from_value(&cv.value).unwrap_or(Power::Standby) {
                 Power::Transmit => 1,
                 _ => 0,
@@ -41,7 +41,7 @@ pub async fn set_control(
             cmd.extend_from_slice(&[0x01, 0x80, 0x01, 0x00, value, 0x00, 0x00, 0x00]);
         }
 
-        ControlType::Range => {
+        ControlId::Range => {
             let value = value as i32;
             let ranges = &command.info.ranges;
             let index = if value < ranges.len() as i32 {
@@ -63,14 +63,14 @@ pub async fn set_control(
                 0x00, 0x00, 0x00,
             ]);
         }
-        ControlType::BearingAlignment => {
+        ControlId::BearingAlignment => {
             cmd.extend_from_slice(&[0x07, 0x82, 0x01, 0x00]);
             // to be consistent with the local bearing alignment of the pi
             // this bearing alignment works opposite to the one an a Lowrance display
             cmd.extend_from_slice(&(deci_value as u32).to_le_bytes());
         }
 
-        ControlType::Gain => {
+        ControlId::Gain => {
             on_off_command(&mut cmd, &[0x01, 0x83], auto);
             if auto == 0 {
                 command.send(&cmd).await?;
@@ -78,7 +78,7 @@ pub async fn set_control(
                 standard_command(&mut cmd, &[0x01, 0x83], v);
             }
         }
-        ControlType::Sea => {
+        ControlId::Sea => {
             on_off_command(&mut cmd, &[0x02, 0x83], auto);
             if auto == 0 {
                 command.send(&cmd).await?;
@@ -86,7 +86,7 @@ pub async fn set_control(
                 standard_command(&mut cmd, &[0x02, 0x83], v);
             }
         }
-        ControlType::Rain => {
+        ControlId::Rain => {
             on_off_command(&mut cmd, &[0x03, 0x83], auto);
             if auto == 0 {
                 command.send(&cmd).await?;
@@ -94,7 +94,7 @@ pub async fn set_control(
                 standard_command(&mut cmd, &[0x03, 0x83], v);
             }
         }
-        ControlType::Ftc => {
+        ControlId::Ftc => {
             let on_off = 1 - auto; // Ftc is really an on/off switch, so invert auto
             on_off_command(&mut cmd, &[0x04, 0x83], on_off);
             if on_off == 1 {
@@ -103,18 +103,18 @@ pub async fn set_control(
                 standard_command(&mut cmd, &[0x04, 0x83], v);
             }
         }
-        ControlType::MainBangSuppression => {
+        ControlId::MainBangSuppression => {
             let on_off = 1 - auto; // Ftc is really an on/off switch, so invert auto
             standard_command(&mut cmd, &[0x01, 0x82], on_off);
         }
-        ControlType::DisplayTiming => {
+        ControlId::DisplayTiming => {
             cmd.extend_from_slice(&[
                 0x02, 0x82, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00,
                 v, // Display timing value at offset 8
                 0x00, 0x00, 0x00,
             ]);
         }
-        ControlType::InterferenceRejection => {
+        ControlId::InterferenceRejection => {
             cmd.extend_from_slice(&[
                 0x07, 0x83, 0x01, 0x00,
                 v, // Interference rejection at offset 4, 0 - off, 1 - normal, 2 - high
@@ -123,7 +123,7 @@ pub async fn set_control(
         }
 
         // Non-hardware settings
-        _ => return Err(RadarError::CannotSetControlType(cv.id)),
+        _ => return Err(RadarError::CannotSetControlId(cv.id)),
     };
 
     log::info!("{}: Send command {:02X?}", command.info.key(), cmd);

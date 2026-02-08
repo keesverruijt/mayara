@@ -9,7 +9,7 @@ use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 use crate::locator::LocatorAddress;
 use crate::network::NetworkSocketAddrV4;
 use crate::radar::{RadarInfo, SharedRadars};
-use crate::settings::ControlType;
+use crate::settings::ControlId;
 use crate::util::PrintableSlice;
 use crate::util::c_string;
 use crate::{Brand, Cli};
@@ -213,12 +213,12 @@ enum HaloMode {
 }
 
 /// There are some controls that turn read-only when the HaloMode is not Custom
-const DYNAMIC_READ_ONLY_CONTROL_TYPES: [ControlType; 5] = [
-    ControlType::NoiseRejection,
-    ControlType::TargetExpansion,
-    ControlType::TargetSeparation,
-    ControlType::LocalInterferenceRejection,
-    ControlType::ScanSpeed,
+const DYNAMIC_READ_ONLY_CONTROLS: [ControlId; 5] = [
+    ControlId::NoiseRejection,
+    ControlId::TargetExpansion,
+    ControlId::TargetSeparation,
+    ControlId::LocalInterferenceRejection,
+    ControlId::ScanSpeed,
 ];
 
 const NAVICO_BEACON_SINGLE_SIZE: usize = size_of::<NavicoBeaconSingle>();
@@ -418,7 +418,7 @@ impl NavicoLocator {
 
     fn found(&self, info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
         info.controls
-            .set_string(&crate::settings::ControlType::UserName, info.key())
+            .set_string(&crate::settings::ControlId::UserName, info.key())
             .unwrap();
 
         if let Some(mut info) = radars.located(info) {
@@ -499,25 +499,9 @@ pub(super) fn new(args: &Cli, addresses: &mut Vec<LocatorAddress>) {
     }
 }
 
-const BLANKING_SETS: [(usize, ControlType, ControlType); 4] = [
-    (
-        0,
-        ControlType::NoTransmitStart1,
-        ControlType::NoTransmitEnd1,
-    ),
-    (
-        1,
-        ControlType::NoTransmitStart2,
-        ControlType::NoTransmitEnd2,
-    ),
-    (
-        2,
-        ControlType::NoTransmitStart3,
-        ControlType::NoTransmitEnd3,
-    ),
-    (
-        3,
-        ControlType::NoTransmitStart4,
-        ControlType::NoTransmitEnd4,
-    ),
+const BLANKING_SETS: [(usize, ControlId, ControlId); 4] = [
+    (0, ControlId::NoTransmitStart1, ControlId::NoTransmitEnd1),
+    (1, ControlId::NoTransmitStart2, ControlId::NoTransmitEnd2),
+    (2, ControlId::NoTransmitStart3, ControlId::NoTransmitEnd3),
+    (3, ControlId::NoTransmitStart4, ControlId::NoTransmitEnd4),
 ];

@@ -27,7 +27,7 @@ use tokio::sync::{
 use super::{Message, Web, WebSocket, WebSocketUpgrade};
 use mayara::{
     radar::{Legend, RadarError, RadarInfo, SharedRadars},
-    settings::{Control, ControlType, ControlValue, RadarControlValue},
+    settings::{Control, ControlId, ControlValue, RadarControlValue},
 };
 
 pub(super) fn routes(axum: axum::Router<Web>) -> axum::Router<Web> {
@@ -57,18 +57,18 @@ async fn openapi(State(_state): State<Web>) -> impl IntoResponse {
 #[serde(rename_all = "camelCase")]
 struct RadarApiV3 {
     id: String,
+    key: String,
     name: String,
     brand: String,
-    stream_url: String,
 }
 
 impl RadarApiV3 {
-    fn new(id: String, name: String, brand: String, stream_url: String) -> Self {
+    fn new(id: String, key: String, name: String, brand: String) -> Self {
         RadarApiV3 {
             id,
+            key,
             name,
             brand,
-            stream_url,
         }
     }
 }
@@ -107,11 +107,11 @@ async fn get_radars(
 
     let mut api: HashMap<String, RadarApiV3> = HashMap::new();
     for info in state.radars.get_active().clone() {
-        let id = format!("radar-{}", info.id);
-        let stream_url = format!("ws://{}{}{}", host, super::v1::SPOKES_URI, id);
+        let id = format!("{}", info.id);
+        let key = info.key();
         let name = info.controls.user_name();
         let brand = info.brand.to_string();
-        let v = RadarApiV3::new(id.to_owned(), name, brand, stream_url);
+        let v = RadarApiV3::new(id.to_owned(), key, name, brand);
 
         api.insert(id.to_owned(), v);
     }
@@ -166,7 +166,7 @@ struct Capabilities {
     name: String,
     stream_url: String,
     characteristics: Characteristics,
-    controls: HashMap<ControlType, Control>,
+    controls: HashMap<ControlId, Control>,
 }
 
 impl Capabilities {
@@ -175,7 +175,7 @@ impl Capabilities {
         name: String,
         stream_url: String,
         info: RadarInfo,
-        controls: HashMap<ControlType, Control>,
+        controls: HashMap<ControlId, Control>,
     ) -> Self {
         let characteristics = Characteristics {
             max_range: info.ranges.all.last().map_or(0, |r| r.distance() as u32),
@@ -198,10 +198,10 @@ impl Capabilities {
                 .filter(|(ctype, _)| {
                     matches!(
                         ctype,
-                        ControlType::NoTransmitStart1
-                            | ControlType::NoTransmitStart2
-                            | ControlType::NoTransmitStart3
-                            | ControlType::NoTransmitStart4
+                        ControlId::NoTransmitStart1
+                            | ControlId::NoTransmitStart2
+                            | ControlId::NoTransmitStart3
+                            | ControlId::NoTransmitStart4
                     )
                 })
                 .count() as u8,
@@ -222,7 +222,7 @@ impl Capabilities {
     description = "Get all static information about a specific radar"
 )]
 async fn get_radar(
-    Path(radar_id): Path<String>,
+    Path(radar_id): Path<usize>,
     State(state): State<Web>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: hyper::header::HeaderMap,
@@ -245,7 +245,7 @@ async fn get_radar(
 
     log::debug!("target host = '{}'", host);
 
-    if let Some(info) = state.radars.get_by_id(&radar_id).clone() {
+    if let Some(info) = state.radars.get_by_id(radar_id) {
         let id = format!("radar-{}", info.id);
         let stream_url = format!("ws://{}{}{}", host, super::v1::SPOKES_URI, id);
         let name = info.controls.user_name();
@@ -267,7 +267,7 @@ async fn get_radar(
 #[derive(Deserialize, ToSchema)]
 #[allow(dead_code)] // Instantiation hidden in extractor
 struct RadarControlIdParam {
-    radar_id: String,
+    radar_id: usize,
     control_id: String,
 }
 
@@ -299,11 +299,11 @@ async fn set_control_value(
         radar_id
     );
 
-    // Get the radar info and control type without holding the lock across await
-    let (controls, control_type) = {
+    // Get the radar info and control  without holding the lock across await
+    let (controls, control_value) = {
         let radars = state.radars.clone();
 
-        match radars.get_by_id(&radar_id) {
+        match radars.get_by_id(radar_id) {
             Some(radar) => {
                 // Look up the control by name
                 let control = match radar.controls.get_by_id(&control_id) {
@@ -319,7 +319,7 @@ async fn set_control_value(
                         return (
                             StatusCode::BAD_REQUEST,
                             format!(
-                                "Unknown control: {} -- use {:?} instead",
+                                "Unknown control '{}' -- use {:?} instead",
                                 control_id, available
                             ),
                         )
@@ -379,7 +379,7 @@ async fn set_control_value(
                 _ => (request.value.to_string(), None),
                 */
 
-                let mut control_value = ControlValue::new(control.item().control_type, value);
+                let mut control_value = ControlValue::new(control.item().control_id, value);
                 control_value.auto = auto;
                 log::debug!(
                     "Map request {:?} to controlValue {:?}",
@@ -400,7 +400,7 @@ async fn set_control_value(
 
     // Send the control request
     if let Err(e) = controls
-        .process_client_request(control_type, reply_tx)
+        .process_client_request(control_value, reply_tx)
         .await
     {
         return (
@@ -468,7 +468,7 @@ async fn ws_signalk_delta(
 ) {
     let mut broadcast_control_rx = radars.new_sk_client_subscription();
 
-    let (reply_tx, _reply_rx) = tokio::sync::mpsc::channel(4 * ControlType::COUNT);
+    let (reply_tx, _reply_rx) = tokio::sync::mpsc::channel(4 * ControlId::COUNT);
 
     log::debug!("Starting /stream v3 websocket");
 

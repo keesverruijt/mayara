@@ -8,7 +8,7 @@ use super::CommandMode;
 use crate::brand::CommandSender;
 use crate::radar::range::Ranges;
 use crate::radar::{Power, RadarError, RadarInfo};
-use crate::settings::{ControlType, ControlValue, SharedControls};
+use crate::settings::{ControlId, ControlValue, SharedControls};
 
 #[derive(Primitive, PartialEq, Eq, Debug, Clone)]
 pub(crate) enum CommandId {
@@ -180,7 +180,7 @@ impl Command {
         Ok(())
     }
 
-    fn get_angle_value(&self, ct: &ControlType) -> i32 {
+    fn get_angle_value(&self, ct: &ControlId) -> i32 {
         if let Some(control) = self.controls.get(ct) {
             if let Some(value) = control.value {
                 return value as i32;
@@ -200,13 +200,13 @@ impl Command {
 
         // Get current values
         let s1_start =
-            sector1_start.unwrap_or_else(|| self.get_angle_value(&ControlType::NoTransmitStart1));
+            sector1_start.unwrap_or_else(|| self.get_angle_value(&ControlId::NoTransmitStart1));
         let s1_end =
-            sector1_end.unwrap_or_else(|| self.get_angle_value(&ControlType::NoTransmitEnd1));
+            sector1_end.unwrap_or_else(|| self.get_angle_value(&ControlId::NoTransmitEnd1));
         let s2_start =
-            sector2_start.unwrap_or_else(|| self.get_angle_value(&ControlType::NoTransmitStart2));
+            sector2_start.unwrap_or_else(|| self.get_angle_value(&ControlId::NoTransmitStart2));
         let s2_end =
-            sector2_end.unwrap_or_else(|| self.get_angle_value(&ControlType::NoTransmitEnd2));
+            sector2_end.unwrap_or_else(|| self.get_angle_value(&ControlId::NoTransmitEnd2));
 
         // Calculate widths from start/end angles
         let s1_width = if s1_end >= s1_start {
@@ -269,7 +269,7 @@ impl Command {
         self.send(CommandMode::Request, CommandId::BlindSector, &[])
             .await?; // $R77
 
-        if self.controls.contains_key(&ControlType::BirdMode) {
+        if self.controls.contains_key(&ControlId::BirdMode) {
             // NXT-specific features (query signal processing features)
             self.send(CommandMode::Request, CommandId::SignalProcessing, &[0, 3])
                 .await?; // $R67,0,3 - Noise Reduction
@@ -315,7 +315,7 @@ impl CommandSender for Command {
         let mut cmd = Vec::with_capacity(6);
 
         let id: CommandId = match cv.id {
-            ControlType::Power => {
+            ControlId::Power => {
                 let value = match Power::from_value(&cv.value).unwrap_or(Power::Standby) {
                     Power::Transmit => 2,
                     _ => 1,
@@ -331,7 +331,7 @@ impl CommandSender for Command {
                 CommandId::Status
             }
 
-            ControlType::Range => {
+            ControlId::Range => {
                 // CRITICAL: Must use wire index, not array position!
                 // Wire indices are non-sequential (21=min, 0-15=normal, 19=36nm out of order)
                 let wire_index = meters_to_wire_index(value);
@@ -341,7 +341,7 @@ impl CommandSender for Command {
                 CommandId::Range
             }
 
-            ControlType::Gain => {
+            ControlId::Gain => {
                 // Format: $S63,{auto},{value},0,80,0
                 // From pcap: $S63,0,50,0,80,0 (manual, value=50)
                 cmd.push(auto);
@@ -351,7 +351,7 @@ impl CommandSender for Command {
                 cmd.push(0);
                 CommandId::Gain
             }
-            ControlType::Sea => {
+            ControlId::Sea => {
                 // Format: $S64,{auto},{value},50,0,0,0
                 // From pcap: $S64,{auto},{value},50,0,0,0
                 cmd.push(auto);
@@ -362,7 +362,7 @@ impl CommandSender for Command {
                 cmd.push(0);
                 CommandId::Sea
             }
-            ControlType::Rain => {
+            ControlId::Rain => {
                 // Format: $S65,{auto},{value},0,0,0,0
                 // From pcap: $S65,{auto},{value},0,0,0,0
                 cmd.push(auto);
@@ -374,40 +374,40 @@ impl CommandSender for Command {
                 CommandId::Rain
             }
 
-            ControlType::NoTransmitStart1 => {
+            ControlId::NoTransmitStart1 => {
                 cmd = self.fill_blind_sector(Some(value), None, None, None);
 
                 CommandId::BlindSector
             }
-            ControlType::NoTransmitEnd1 => {
+            ControlId::NoTransmitEnd1 => {
                 cmd = self.fill_blind_sector(None, Some(value), None, None);
 
                 CommandId::BlindSector
             }
-            ControlType::NoTransmitStart2 => {
+            ControlId::NoTransmitStart2 => {
                 cmd = self.fill_blind_sector(None, None, Some(value), None);
 
                 CommandId::BlindSector
             }
-            ControlType::NoTransmitEnd2 => {
+            ControlId::NoTransmitEnd2 => {
                 cmd = self.fill_blind_sector(None, None, None, Some(value));
 
                 CommandId::BlindSector
             }
-            ControlType::ScanSpeed => {
+            ControlId::ScanSpeed => {
                 // Format: $S89,{mode},0 where mode: 0=24RPM, 2=Auto
                 cmd.push(value);
                 cmd.push(0);
                 CommandId::ScanSpeed
             }
-            ControlType::AntennaHeight => {
+            ControlId::AntennaHeight => {
                 // Format: $S84,0,{meters},0
                 cmd.push(0);
                 cmd.push(value);
                 cmd.push(0);
                 CommandId::AntennaHeight
             }
-            ControlType::MainBangSuppression => {
+            ControlId::MainBangSuppression => {
                 // Format: $S83,{value_255},0
                 // Map 0-100% to 0-255
                 let value_255 = (value * 255) / 100;
@@ -417,7 +417,7 @@ impl CommandSender for Command {
             }
 
             // NXT-specific features
-            ControlType::NoiseRejection => {
+            ControlId::NoiseRejection => {
                 // Format: $S67,0,3,{enabled},0
                 // Feature 3 = Noise Reduction
                 let enabled = if value > 0 { 1 } else { 0 };
@@ -427,7 +427,7 @@ impl CommandSender for Command {
                 cmd.push(0);
                 CommandId::SignalProcessing
             }
-            ControlType::InterferenceRejection => {
+            ControlId::InterferenceRejection => {
                 // Format: $S67,0,0,{enabled},0
                 // Feature 0 = Interference Rejection
                 // Note: enabled=2 (not 1) per protocol spec
@@ -438,21 +438,21 @@ impl CommandSender for Command {
                 cmd.push(0);
                 CommandId::SignalProcessing
             }
-            ControlType::TargetSeparation => {
+            ControlId::TargetSeparation => {
                 // Format: $SEE,{level},0
                 // RezBoost (beam sharpening): 0=OFF, 1=Low, 2=Medium, 3=High
                 cmd.push(value);
                 cmd.push(0); // screen: 0=Primary
                 CommandId::RezBoost
             }
-            ControlType::BirdMode => {
+            ControlId::BirdMode => {
                 // Format: $SED,{level},0
                 // BirdMode: 0=OFF, 1=Low, 2=Medium, 3=High
                 cmd.push(value);
                 cmd.push(0); // screen: 0=Primary
                 CommandId::BirdMode
             }
-            ControlType::Doppler => {
+            ControlId::Doppler => {
                 // Format: $SEF,{enabled},{mode},0
                 // Target Analyzer: value 0=Off, 1=Target, 2=Rain
                 // Wire format: enabled=0/1, mode=0(Target)/1(Rain)
@@ -469,7 +469,7 @@ impl CommandSender for Command {
             }
 
             // Non-hardware settings
-            _ => return Err(RadarError::CannotSetControlType(cv.id)),
+            _ => return Err(RadarError::CannotSetControlId(cv.id)),
         };
 
         log::info!(

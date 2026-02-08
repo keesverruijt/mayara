@@ -1,5 +1,5 @@
 use crate::radar::{Power, RadarError};
-use crate::settings::{ControlType, ControlValue, SharedControls};
+use crate::settings::{ControlId, ControlValue, SharedControls};
 
 use super::Command;
 
@@ -18,7 +18,7 @@ fn two_value_command(cmd: &mut Vec<u8>, lead: &[u8], value1: u16, value2: u16) {
     cmd.extend_from_slice(&value2.to_le_bytes());
 }
 
-fn get_angle_value(ct: &ControlType, controls: &SharedControls) -> i16 {
+fn get_angle_value(ct: &ControlId, controls: &SharedControls) -> i16 {
     if let Some(control) = controls.get(ct) {
         if let Some(value) = control.value {
             let value = (value * 10.0) as i16;
@@ -42,7 +42,7 @@ pub async fn set_control(
     let mut cmd = Vec::with_capacity(6);
 
     match cv.id {
-        ControlType::Power => {
+        ControlId::Power => {
             let value = match Power::from_value(&cv.value).unwrap_or(Power::Standby) {
                 Power::Transmit => 1,
                 _ => 0,
@@ -50,7 +50,7 @@ pub async fn set_control(
             cmd.extend_from_slice(&[0x10, 0x00, 0x28, 0x00, value, 0x00, 0x00, 0x00]);
         }
 
-        ControlType::Range => {
+        ControlId::Range => {
             let value = value as i32;
             let ranges = &command.info.ranges;
             let index = if value < ranges.len() as i32 {
@@ -68,7 +68,7 @@ pub async fn set_control(
             log::trace!("range {value} -> {index}");
             one_byte_command(&mut cmd, &[0x01, 0x01], index);
         }
-        ControlType::Gain => {
+        ControlId::Gain => {
             one_byte_command(&mut cmd, &[0x01, 0x03], auto);
             if auto == 0 {
                 command.send(&cmd).await?;
@@ -76,7 +76,7 @@ pub async fn set_control(
                 one_byte_command(&mut cmd, &[0x02, 0x83], v);
             }
         }
-        ControlType::ColorGain => {
+        ControlId::ColorGain => {
             one_byte_command(&mut cmd, &[0x03, 0x03], auto);
             if auto == 0 {
                 command.send(&cmd).await?;
@@ -84,7 +84,7 @@ pub async fn set_control(
                 one_byte_command(&mut cmd, &[0x04, 0x03], v);
             }
         }
-        ControlType::Sea => {
+        ControlId::Sea => {
             one_byte_command(&mut cmd, &[0x05, 0x03], auto);
             if auto == 0 {
                 command.send(&cmd).await?;
@@ -92,7 +92,7 @@ pub async fn set_control(
                 one_byte_command(&mut cmd, &[0x06, 0x03], v);
             }
         }
-        ControlType::Rain => {
+        ControlId::Rain => {
             one_byte_command(&mut cmd, &[0x0b, 0x03], enabled);
             if enabled > 0 {
                 command.send(&cmd).await?;
@@ -100,51 +100,51 @@ pub async fn set_control(
                 one_byte_command(&mut cmd, &[0x0c, 0x03], v);
             }
         }
-        ControlType::TargetExpansion => {
+        ControlId::TargetExpansion => {
             one_byte_command(&mut cmd, &[0x0f, 0x03], v);
         }
-        ControlType::InterferenceRejection => {
+        ControlId::InterferenceRejection => {
             one_byte_command(&mut cmd, &[0x11, 0x03], v);
         }
-        ControlType::Mode => {
+        ControlId::Mode => {
             one_byte_command(&mut cmd, &[0x14, 0x03], v);
         }
-        ControlType::BearingAlignment => {
+        ControlId::BearingAlignment => {
             let deci_value = (value * 10.0) as i16;
             two_byte_command(&mut cmd, &[0x01, 0x04], deci_value as u16);
         }
-        ControlType::MainBangSuppression => {
+        ControlId::MainBangSuppression => {
             one_byte_command(&mut cmd, &[0x0a, 0x04], v);
         }
-        ControlType::NoTransmitStart1 => {
+        ControlId::NoTransmitStart1 => {
             let value_start: i16 = (value * 10.0) as i16;
-            let value_end: i16 = get_angle_value(&ControlType::NoTransmitEnd1, controls);
+            let value_end: i16 = get_angle_value(&ControlId::NoTransmitEnd1, controls);
             cmd = send_no_transmit_cmd(command, value_start, value_end, enabled, 0).await?;
         }
-        ControlType::NoTransmitEnd1 => {
-            let value_start: i16 = get_angle_value(&ControlType::NoTransmitStart1, controls);
+        ControlId::NoTransmitEnd1 => {
+            let value_start: i16 = get_angle_value(&ControlId::NoTransmitStart1, controls);
             let value_end: i16 = (value * 10.0) as i16;
             cmd = send_no_transmit_cmd(command, value_start, value_end, enabled, 0).await?;
         }
-        ControlType::NoTransmitStart2 => {
+        ControlId::NoTransmitStart2 => {
             let value_start: i16 = (value * 10.0) as i16;
-            let value_end: i16 = get_angle_value(&ControlType::NoTransmitEnd2, controls);
+            let value_end: i16 = get_angle_value(&ControlId::NoTransmitEnd2, controls);
             cmd = send_no_transmit_cmd(command, value_start, value_end, enabled, 1).await?;
         }
-        ControlType::NoTransmitEnd2 => {
-            let value_start: i16 = get_angle_value(&ControlType::NoTransmitStart2, controls);
+        ControlId::NoTransmitEnd2 => {
+            let value_start: i16 = get_angle_value(&ControlId::NoTransmitStart2, controls);
             let value_end: i16 = (value * 10.0) as i16;
             cmd = send_no_transmit_cmd(command, value_start, value_end, enabled, 1).await?;
         }
-        ControlType::SeaClutterCurve => {
+        ControlId::SeaClutterCurve => {
             one_byte_command(&mut cmd, &[0x12, 0x03], v - 1);
         }
-        ControlType::Doppler => {
+        ControlId::Doppler => {
             one_byte_command(&mut cmd, &[0x17, 0x03], v * 3); // 0x00 or 0x03
         }
 
         // Non-hardware settings
-        _ => return Err(RadarError::CannotSetControlType(cv.id)),
+        _ => return Err(RadarError::CannotSetControlId(cv.id)),
     };
 
     log::info!("{}: Send command {:02X?}", command.info.key(), cmd);
