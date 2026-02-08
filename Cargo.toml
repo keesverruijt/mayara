@@ -3,6 +3,11 @@ name = "mayara"
 version = "3.0.0"
 edition = "2024"
 rust-version = "1.90"
+description = "Marine radar server with REST API and WebSocket support"
+license = "Apache-2.0"
+readme = "README.md"
+keywords = ["radar", "marine", "server", "websocket", "rest-api"]
+categories = ["network-programming", "web-programming::http-server"]
 
 [lib]
 name = "mayara"
@@ -13,6 +18,8 @@ navico = []
 furuno = []
 garmin = []
 raymarine = []
+# Serve GUI files from filesystem instead of embedded (for development)
+dev = []
 # default = ["navico", "furuno", "raymarine"]
 default = ["navico", "furuno", "raymarine"]
 

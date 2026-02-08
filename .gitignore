@@ -1,4 +1,5 @@
 .DS_Store
 /web/*/api
+/web/v3/gui
 /target
 demo/work
