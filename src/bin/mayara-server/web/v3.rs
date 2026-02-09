@@ -42,7 +42,7 @@ pub(super) fn routes(axum: axum::Router<Web>) -> axum::Router<Web> {
 
 #[endpoint(
     method = "GET",
-    path = "/v3/api/openapi.json",
+    path = "/v3/api/resources/openapi.json",
     description = "OpenAPI spec"
 )]
 async fn openapi(State(_state): State<Web>) -> impl IntoResponse {
