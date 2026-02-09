@@ -23,20 +23,21 @@ pub fn new(args: &Cli, model: Option<&str>) -> SharedControls {
     controls.insert(
         ControlId::AntennaHeight,
         Control::new_numeric(ControlId::AntennaHeight, 0., 99.)
-            .wire_scale_factor(99000., false) // we report m but network has mm
+            .wire_scale_factor(1000., false)
+            .wire_scale_step(100.) // Allow control in decimeters
             .unit(Units::Meters),
     );
     controls.insert(
         ControlId::BearingAlignment,
         Control::new_numeric(ControlId::BearingAlignment, -180., 180.)
             .unit(Units::Degrees)
-            .wire_scale_factor(1800., true)
+            .wire_scale_factor(10., true)
             .wire_offset(-1.),
     );
     controls.insert(
         ControlId::Gain,
         Control::new_auto(ControlId::Gain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE)
-            .wire_scale_factor(255., false),
+            .wire_scale_factor(2.55, false),
     );
     controls.insert(
         ControlId::InterferenceRejection,
@@ -54,7 +55,7 @@ pub fn new(args: &Cli, model: Option<&str>) -> SharedControls {
     );
     controls.insert(
         ControlId::Rain,
-        Control::new_numeric(ControlId::Rain, 0., 100.).wire_scale_factor(255., false),
+        Control::new_numeric(ControlId::Rain, 0., 100.).wire_scale_factor(2.55, false),
     );
     controls.insert(
         ControlId::TargetBoost,
@@ -90,7 +91,7 @@ pub fn new(args: &Cli, model: Option<&str>) -> SharedControls {
             100.,
             HAS_AUTO_NOT_ADJUSTABLE,
         )
-        .wire_scale_factor(255., false),
+        .wire_scale_factor(2.55, false),
     );
 
     SharedControls::new(args, controls)
@@ -188,7 +189,7 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
         controls.insert(
             ControlId::Sea,
             Control::new_auto(ControlId::Sea, 0., 100., HAS_AUTO_NOT_ADJUSTABLE)
-                .wire_scale_factor(255., false),
+                .wire_scale_factor(2.55, false),
         );
     }
 

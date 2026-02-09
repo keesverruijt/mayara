@@ -947,7 +947,9 @@ impl Control {
 
     pub(crate) fn wire_scale_step(mut self, step: f64) -> Self {
         self.item.step_value = Some(step);
-        self.item.wire_scale_factor = self.item.step_value.map(|s| 1. / s);
+        if self.item.wire_scale_factor.is_none() {
+            self.item.wire_scale_factor = self.item.step_value.map(|s| 1. / s);
+        }
 
         self
     }
@@ -1867,9 +1869,9 @@ pub enum ControlError {
     #[error("Control {0} not supported on this radar")]
     NotSupported(ControlId),
     #[error("Control {0} value {1} is lower than minimum value {2}")]
-    TooLow(ControlId, f64, f64),
+    TooLow(ControlId, f64, f32),
     #[error("Control {0} value {1} is higher than maximum value {2}")]
-    TooHigh(ControlId, f64, f64),
+    TooHigh(ControlId, f32, f32),
     #[error("Control {0} value {1} is not a legal value")]
     Invalid(ControlId, String),
     #[error("Control {0} does not support Auto")]
