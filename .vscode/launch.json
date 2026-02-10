@@ -4,6 +4,20 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Cargo test",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib"
+                ]
+            },
+            "args": []
+        },
+        
 
 
         {
@@ -31,24 +45,6 @@
             "name": "Attach to running 'mayara'",
             "program": "${workspaceFolder}/target/mayara-server",
         },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "Debug unit tests in executable 'mayara-server'",
-            "cargo": {
-                "args": [
-                    "test",
-                    "--no-run",
-                    "--bin=mayara-server",
-                    "--package=mayara-server"
-                ],
-                "filter": {
-                    "name": "mayara-server",
-                    "kind": "bin"
-                }
-            },
-            "args": [],
-            "cwd": "${workspaceFolder}"
-        }
+        
     ]
 }
