@@ -2,6 +2,7 @@ use bincode::deserialize;
 use log::log_enabled;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::fmt::{self, Display};
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
@@ -98,9 +99,10 @@ enum RadarModel {
     DRS12ANXT,
     DRS25ANXT,
 }
-impl RadarModel {
-    fn to_str(&self) -> &str {
-        match self {
+
+impl Display for RadarModel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s: &'static str = match self {
             RadarModel::Unknown => "Unknown",
             RadarModel::FAR21x7 => "FAR21x7",
             RadarModel::DRS => "DRS",
@@ -114,7 +116,9 @@ impl RadarModel {
             RadarModel::FAR14x6 => "FAR14x6",
             RadarModel::DRS12ANXT => "DRS12ANXT",
             RadarModel::DRS25ANXT => "DRS25ANXT",
-        }
+        };
+
+        write!(f, "{}", s)
     }
 }
 
@@ -200,8 +204,7 @@ fn login_to_radar(radar_addr: SocketAddrV4) -> Result<u16, io::Error> {
 #[derive(Clone)]
 struct FurunoLocator {
     args: Cli,
-    radar_keys: HashMap<SocketAddrV4, String>,
-    model_found: bool,
+    half_found: HashMap<SocketAddrV4, RadarInfo>, // When the first of the two reports is found
 }
 
 impl RadarLocator for FurunoLocator {
@@ -222,15 +225,14 @@ impl RadarLocator for FurunoLocator {
 }
 
 impl FurunoLocator {
-    fn new(args: Cli, radar_keys: HashMap<SocketAddrV4, String>, model_found: bool) -> Self {
+    fn new(args: Cli) -> Self {
         FurunoLocator {
             args,
-            radar_keys,
-            model_found,
+            half_found: HashMap::new(),
         }
     }
 
-    fn found(&self, info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) -> bool {
+    fn found(&self, info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
         info.controls
             .set_string(&crate::settings::ControlId::UserName, info.key())
             .unwrap();
@@ -238,30 +240,18 @@ impl FurunoLocator {
         if let Some(mut info) = radars.located(info) {
             // It's new, start the RadarProcessor thread
 
-            // Load the model name afresh, it may have been modified from persisted data
-            /* let model = match info.model_name() {
-                Some(s) => Model::new(&s),
-                None => Model::Unknown,
-            };
-            if model != Model::Unknown {
-                let info2 = info.clone();
-                info.controls.update_when_model_known(model, &info2);
-                info.set_legend(model == Model::HALO);
-                radars.update(&info);
-            } */
-
-            // Furuno radars use a single TCP/IP connection to send commands and
-            // receive status reports, so report_addr and send_command_addr are identical.
-            // Only one of these would be enough for Furuno.
             let port: u16 = match login_to_radar(info.addr) {
                 Err(e) => {
                     log::error!("{}: Unable to connect for login: {}", info.key(), e);
                     radars.remove(&info.key());
-                    return false;
+                    return;
                 }
                 Ok(p) => p,
             };
             if port != info.send_command_addr.port() {
+                // Furuno radars use a single TCP/IP connection to send commands and
+                // receive status reports, so report_addr and send_command_addr are identical.
+                // Only one of these would be enough for Furuno.
                 info.send_command_addr.set_port(port);
                 info.report_addr.set_port(port);
             }
@@ -284,14 +274,11 @@ impl FurunoLocator {
                 log::info!(
                     "{}: Radar model {} assumed for replay mode",
                     info.key(),
-                    model.to_str(),
+                    model,
                 );
                 settings::update_when_model_known(&mut info, model, version);
             }
-
-            return true;
         }
-        return false;
     }
 
     fn process_locator_report(
@@ -320,9 +307,9 @@ impl FurunoLocator {
             && report[16] == b'R'
             && report[0..11] == FURUNO_RADAR_REPORT_HEADER
         {
-            self.process_beacon_report(report, from, via, radars, subsys)
+            self.process_beacon_report(report, from, via)
         } else if report.len() == 170 {
-            self.process_beacon_model_report(report, from, via, radars)
+            self.process_beacon_model_report(report, from, via, radars, subsys)
         } else {
             Ok(())
         }
@@ -333,8 +320,6 @@ impl FurunoLocator {
         report: &[u8],
         from: &SocketAddrV4,
         nic_addr: &Ipv4Addr,
-        radars: &SharedRadars,
-        subsys: &SubsystemHandle,
     ) -> Result<(), io::Error> {
         match deserialize::<FurunoRadarReport>(report) {
             Ok(data) => {
@@ -345,6 +330,10 @@ impl FurunoLocator {
                         data.length,
                         report.len() - 8
                     );
+                    return Ok(());
+                }
+                if self.half_found.contains_key(from) {
+                    log::trace!("{}: Found radar address already", from);
                     return Ok(());
                 }
                 if let Some(name) = c_string(&data.name) {
@@ -372,10 +361,7 @@ impl FurunoLocator {
                         settings::new(&self.args),
                         true,
                     );
-                    let key = location_info.key();
-                    if self.found(location_info, radars, subsys) {
-                        self.radar_keys.insert(from.clone(), key);
-                    }
+                    self.half_found.insert(*from, location_info);
                 }
             }
             Err(e) => {
@@ -397,13 +383,9 @@ impl FurunoLocator {
         from: &SocketAddrV4,
         nic_addr: &Ipv4Addr,
         radars: &SharedRadars,
+        subsys: &SubsystemHandle,
     ) -> Result<(), io::Error> {
-        if self.model_found {
-            return Ok(());
-        }
-        let radar_addr: SocketAddrV4 = from.clone();
-        // Is this known as a Furuno radar?
-        if let Some(key) = self.radar_keys.get(&radar_addr) {
+        if let Some(mut radar_info) = self.half_found.remove(from) {
             match deserialize::<FurunoRadarModelReport>(report) {
                 Ok(data) => {
                     let model = c_string(&data.model);
@@ -416,13 +398,15 @@ impl FurunoLocator {
                     log::debug!("{}: model: {:?}", from, model);
                     log::debug!("{}: serial_no: {:?}", from, serial_no);
 
-                    if let Some(serial_no) = serial_no {
-                        radars.update_serial_no(key, serial_no.to_string());
+                    if radar_info.serial_no.is_none() {
+                        radar_info.serial_no = serial_no.map(|s| s.to_string());
                     }
 
-                    if let Some(_model) = model {
-                        self.model_found = true;
+                    if let Some(model) = model {
+                        radar_info.controls.set_model_name(model.to_string());
+                        log::debug!("Furuno model '{}' at {}", model, from);
                     }
+                    self.found(radar_info, radars, subsys);
                 }
                 Err(e) => {
                     log::error!(
@@ -450,7 +434,7 @@ pub(super) fn new(args: &Cli, addresses: &mut Vec<LocatorAddress>) {
                 &FURUNO_REQUEST_MODEL_PACKET,
                 &FURUNO_ANNOUNCE_MAYARA_PACKET,
             ],
-            Box::new(FurunoLocator::new(args.clone(), HashMap::new(), false)),
+            Box::new(FurunoLocator::new(args.clone())),
         ));
     }
 }

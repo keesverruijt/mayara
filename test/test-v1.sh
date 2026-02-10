@@ -11,13 +11,15 @@ radars="$(curl -s "${V1}/radars")"
 echo "${radars}"
 echo ""
 echo "---------"
-radars=$(echo "${radars}" | jq -r 'keys[]')
-echo "Radars: ${radars}"
+radarnames=$(echo "${radars}" | jq -r 'keys[]')
+echo "Radars: ${radarnames}"
 
-for radar in ${radars}
+for radar in ${radarnames}
 do
   echo "Radar ${radar}:"
 
+  echo "${radars}" | jq -r '."'${radar}'"'
+  echo "${radars}" | jq -r ".\"${radar}\".controls"
   controlIds=$(echo "${radars}" | jq -r ".\"${radar}\".controls"' | keys[]')
   for i in ${controlIds}
   do

@@ -168,10 +168,6 @@ impl Persistence {
             radar.model_name = model_name;
             modified = true;
         }
-        if radar.id != radar_info.id {
-            radar.id = radar_info.id;
-            modified = true;
-        }
 
         if modified {
             self.save();
@@ -190,7 +186,6 @@ impl Persistence {
                 }
             }
             info.controls.set_user_name(p.user_name.clone());
-            info.id = p.id;
         }
     }
 }

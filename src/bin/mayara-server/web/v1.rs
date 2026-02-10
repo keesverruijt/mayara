@@ -38,7 +38,6 @@ pub(super) fn routes(axum: axum::Router<Web>) -> axum::Router<Web> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RadarApi {
-    id: String,
     name: String,
     spokes_per_revolution: u16,
     max_spoke_len: u16,
@@ -50,7 +49,6 @@ struct RadarApi {
 
 impl RadarApi {
     fn new(
-        id: String,
         name: String,
         spokes_per_revolution: u16,
         max_spoke_len: u16,
@@ -60,7 +58,6 @@ impl RadarApi {
         controls: HashMap<u8, Control>,
     ) -> Self {
         RadarApi {
-            id: id,
             name: name,
             spokes_per_revolution,
             max_spoke_len,
@@ -73,8 +70,6 @@ impl RadarApi {
 }
 
 //
-// Signal K radar API says this returns something like:
-//    {"radar-0":{"id":"radar-0","name":"Navico","streamUrl":"http://localhost:3001/v1/api/stream/radar-0"}}
 //
 #[debug_handler]
 async fn get_radars(
@@ -103,7 +98,7 @@ async fn get_radars(
     let mut api: HashMap<String, RadarApi> = HashMap::new();
     for info in state.radars.get_active().clone() {
         let legend = info.get_legend();
-        let id = format!("{}", info.id);
+        let id = info.key();
         let stream_url = format!("ws://{}{}{}", host, SPOKES_URI, id);
         let control_url = format!("ws://{}{}{}", host, CONTROL_URI, id);
         let name = info.controls.user_name();
@@ -116,7 +111,6 @@ async fn get_radars(
             }
 
             let v = RadarApi::new(
-                id.to_owned(),
                 name,
                 info.spokes_per_revolution,
                 info.max_spoke_len,
@@ -164,7 +158,7 @@ async fn control_handler(
 
     let ws = ws.accept_compression(true);
 
-    match state.radars.get_by_id(params.key) {
+    match state.radars.get_by_key(&params.key) {
         Some(radar) => {
             let shutdown_rx = state.shutdown_tx.subscribe();
 

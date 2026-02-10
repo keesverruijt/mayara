@@ -60,12 +60,10 @@ pub(crate) fn get_radar_position() -> Option<GeoPosition> {
     return None;
 }
 
-pub(crate) fn get_position_i64() -> (Option<i64>, Option<i64>) {
+pub(crate) fn get_position() -> (Option<f64>, Option<f64>) {
     if POSITION_VALID.load(Ordering::Acquire) {
         let lat = POSITION_LAT.load(Ordering::Acquire);
         let lon = POSITION_LON.load(Ordering::Acquire);
-        let lat = (lat * 1e16) as i64;
-        let lon = (lon * 1e16) as i64;
         return (Some(lat), Some(lon));
     }
     return (None, None);

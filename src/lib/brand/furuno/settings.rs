@@ -60,7 +60,7 @@ pub fn new(args: &Cli) -> SharedControls {
 }
 
 pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version: &str) {
-    let model_name = model.to_str();
+    let model_name = model.to_string();
     log::debug!("update_when_model_known: {}", model_name);
     info.controls.set_model_name(model_name.to_string());
 
@@ -71,14 +71,12 @@ pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version:
     info.controls.insert(ControlId::SerialNumber, control);
 
     // Update the UserName; it had to be present at start so it could be loaded from
-    // config. Override it if it is still the 'Furuno ... ' name.
+    // config. Override it if it is still the original 'key' internal name.
     if info.controls.user_name() == info.key() {
         let mut user_name = model_name.to_string();
-        if info.serial_no.is_some() {
-            let serial = info.serial_no.clone().unwrap();
-
+        if let Some(serial_no) = info.serial_no.as_deref() {
             user_name.push(' ');
-            user_name.push_str(&serial);
+            user_name.push_str(&serial_no[serial_no.len().saturating_sub(4)..]);
         }
         info.controls.set_user_name(user_name);
     }
@@ -287,7 +285,7 @@ fn get_ranges_by_model(model: &RadarModel) -> Vec<i32> {
     let ranges: Vec<i32> = range_table.to_vec();
     log::debug!(
         "Model {} supports {} ranges: {:?}",
-        model.to_str(),
+        model,
         ranges.len(),
         ranges
     );

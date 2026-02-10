@@ -17,7 +17,6 @@ use strum::{EnumCount, EnumIter, EnumString, IntoStaticStr};
 use thiserror::Error;
 
 use crate::Cli;
-use crate::config::Radar;
 use crate::{
     TargetMode,
     radar::{Power, RadarError, range::Ranges},
@@ -70,9 +69,7 @@ pub struct Controls {
     controls: HashMap<ControlId, Control>,
 
     #[serde(skip)]
-    radar_label: Option<String>,
-    #[serde(skip)]
-    radar_id: Option<usize>,
+    key: Option<String>, // A copy of the radar's key() value
     #[serde(skip)]
     all_clients_tx: tokio::sync::broadcast::Sender<ControlValue>,
     #[serde(skip)]
@@ -160,8 +157,7 @@ impl Controls {
         Controls {
             replay: args.replay,
             controls,
-            radar_label: None,
-            radar_id: None,
+            key: None,
             all_clients_tx,
             sk_client_tx: None,
             control_update_tx,
@@ -218,15 +214,14 @@ impl SharedControls {
         }
     }
 
+    #[deprecated]
     pub(crate) fn set_radar_info(
         &mut self,
         sk_client_tx: tokio::sync::broadcast::Sender<RadarControlValue>,
         radar_label: String,
-        radar_id: usize,
     ) {
         let mut locked = self.controls.write().unwrap();
-        locked.radar_label = Some(radar_label);
-        locked.radar_id = Some(radar_id);
+        locked.key = Some(radar_label);
         locked.sk_client_tx = Some(sk_client_tx);
     }
 
@@ -308,7 +303,7 @@ impl SharedControls {
         locked
             .controls
             .iter()
-            .map(|(_, c)| RadarControlValue::new(locked.radar_label.as_ref().unwrap(), c, None))
+            .map(|(_, c)| RadarControlValue::new(locked.key.as_ref().unwrap(), c, None))
             .collect()
     }
 
@@ -357,7 +352,7 @@ impl SharedControls {
                 );
             }
         }
-        if let (Some(label), Some(sk_client_tx)) = (&locked.radar_label, &locked.sk_client_tx) {
+        if let (Some(label), Some(sk_client_tx)) = (&locked.key, &locked.sk_client_tx) {
             let radar_control_value = RadarControlValue::new(label, control, None);
 
             match sk_client_tx.send(radar_control_value) {

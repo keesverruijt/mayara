@@ -127,7 +127,7 @@ async fn openapi(State(_state): State<Web>) -> impl IntoResponse {
 }
 #[derive(Deserialize)]
 struct WebSocketHandlerParameters {
-    key: usize,
+    key: String,
 }
 
 #[debug_handler]
@@ -141,7 +141,7 @@ async fn spokes_handler(
 
     let ws = ws.accept_compression(true);
 
-    match state.radars.get_by_id(params.key) {
+    match state.radars.get_by_key(&params.key) {
         Some(radar) => {
             let shutdown_rx = state.shutdown_tx.subscribe();
             let radar_message_rx = radar.message_tx.subscribe();

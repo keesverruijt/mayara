@@ -102,6 +102,17 @@ pub enum Brand {
     Raymarine,
 }
 
+impl Brand {
+    pub fn to_prefix(&self) -> &'static str {
+        match self {
+            Self::Furuno => "fur",
+            Self::Garmin => "gar",
+            Self::Navico => "nav",
+            Self::Raymarine => "ray",
+        }
+    }
+}
+
 impl Into<Brand> for &str {
     fn into(self) -> Brand {
         match self.to_ascii_lowercase().as_str() {

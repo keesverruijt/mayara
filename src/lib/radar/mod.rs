@@ -69,7 +69,7 @@ pub enum RadarError {
     #[error("Missing value for control '{0}'")]
     MissingValue(ControlId),
     #[error("No such radar with id '{0}'")]
-    NoSuchRadar(usize),
+    NoSuchRadar(String),
     #[error("Cannot parse JSON '{0}'")]
     ParseJson(String),
     #[error("Cannot parse NMEA0183 '{0}'")]
@@ -195,10 +195,9 @@ pub struct RadarInfo {
     replay: bool,
     output: bool,
 
-    pub id: usize,
     pub brand: Brand,
     pub serial_no: Option<String>,       // Serial # for this radar
-    pub which: Option<String>,           // "A", "B" or None
+    pub dual: Option<String>,            // "A", "B" or None
     pub pixel_values: u8,                // How many values per pixel, 0..220 or so
     pub spokes_per_revolution: u16,      // How many spokes per rotation
     pub max_spoke_len: u16,              // Fixed for some radars, variable for others
@@ -224,7 +223,7 @@ impl RadarInfo {
         args: &Cli,
         brand: Brand,
         serial_no: Option<&str>,
-        which: Option<&str>,
+        dual: Option<&str>,
         pixel_values: u8, // How many values per pixel, 0..220 or so
         spokes_per_revolution: usize,
         max_spoke_len: usize,
@@ -252,25 +251,22 @@ impl RadarInfo {
             replay,
             output,
             key: {
-                let mut key = brand.to_string();
+                let mut key = brand.to_prefix().to_string();
 
                 if let Some(serial_no) = serial_no {
-                    key.push_str("-");
-                    key.push_str(serial_no);
+                    key.push_str(&serial_no[serial_no.len().saturating_sub(4)..]);
                 } else {
-                    write!(key, "-{}", &addr).unwrap();
+                    write!(key, "{:04x}", addr.ip().to_bits() & 0xffff).unwrap();
                 }
 
-                if let Some(which) = which {
-                    key.push_str("-");
-                    key.push_str(which);
+                if let Some(dual) = dual {
+                    key.push_str(dual);
                 }
                 key
             },
-            id: usize::MAX,
             brand,
             serial_no: serial_no.map(String::from),
-            which: which.map(String::from),
+            dual: dual.map(String::from),
             pixel_values,
             spokes_per_revolution: spokes_per_revolution as u16,
             max_spoke_len: max_spoke_len as u16,
@@ -429,8 +425,8 @@ impl RadarInfo {
 
 impl Display for RadarInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Radar {} brand {}", &self.id, &self.brand)?;
-        if let Some(which) = &self.which {
+        write!(f, "Radar {} brand {}", &self.key, &self.brand)?;
+        if let Some(which) = &self.dual {
             write!(f, " {}", which)?;
         }
         if let Some(serial_no) = &self.serial_no {
@@ -476,17 +472,6 @@ impl SharedRadars {
             return None;
         }
 
-        let max_radar_id = radars.info.iter().map(|(_, i)| i.id).max().unwrap_or(0);
-        let max_persist_id = radars
-            .persistent_data
-            .config
-            .radars
-            .iter()
-            .map(|(_, i)| i.id)
-            .max()
-            .unwrap_or(0);
-        let max_id = std::cmp::max(max_radar_id, max_persist_id);
-
         let is_new = radars.info.get(&key).is_none();
         if is_new {
             // Set any previously detected model and ranges
@@ -494,15 +479,10 @@ impl SharedRadars {
                 .persistent_data
                 .update_info_from_persistence(&mut new_info);
 
-            if new_info.id == usize::MAX {
-                new_info.id = max_id + 1;
-            }
-
             log::info!("key '{}' info {:?}", &new_info.key, new_info);
             log::info!(
-                "Found radar: key '{}' id {} name '{}'",
+                "Found radar: key '{}' name '{}'",
                 &new_info.key,
-                new_info.id,
                 new_info.controls.user_name()
             );
             radars.info.insert(key, new_info.clone());
@@ -521,7 +501,7 @@ impl SharedRadars {
         let sk_client_tx = radars.sk_client_tx.clone();
         radar_info
             .controls
-            .set_radar_info(sk_client_tx, radar_info.key(), radar_info.id);
+            .set_radar_info(sk_client_tx, radar_info.key());
         radars
             .info
             .insert(radar_info.key.clone(), radar_info.clone());
@@ -560,16 +540,6 @@ impl SharedRadars {
         radars.info.get(key).cloned()
     }
 
-    pub fn get_by_id(&self, id: usize) -> Option<RadarInfo> {
-        let radars = self.radars.read().unwrap();
-        for (_, info) in radars.info.iter() {
-            if info.id == id {
-                return Some(info.clone());
-            }
-        }
-        None
-    }
-
     pub fn remove(&self, key: &str) {
         let mut radars = self.radars.write().unwrap();
 
@@ -579,6 +549,7 @@ impl SharedRadars {
     ///
     /// Update radar info in radars container
     ///
+    #[deprecated]
     pub fn update_serial_no(&self, key: &str, serial_no: String) {
         let mut radars = self.radars.write().unwrap();
 

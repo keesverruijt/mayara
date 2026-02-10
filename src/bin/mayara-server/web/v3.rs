@@ -22,7 +22,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use std::{
     cmp::min,
     collections::HashMap,
-    net::SocketAddr,
+    net::{Ipv4Addr, SocketAddr},
     str::FromStr,
     time::{Duration, SystemTime},
 };
@@ -66,21 +66,11 @@ async fn openapi(State(_state): State<Web>) -> impl IntoResponse {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RadarApiV3 {
-    id: String,
-    key: String,
     name: String,
     brand: String,
-}
-
-impl RadarApiV3 {
-    fn new(id: String, key: String, name: String, brand: String) -> Self {
-        RadarApiV3 {
-            id,
-            key,
-            name,
-            brand,
-        }
-    }
+    model: Option<String>,
+    stream_url: String,
+    address: Ipv4Addr,
 }
 
 //
@@ -117,13 +107,15 @@ async fn get_radars(
 
     let mut api: HashMap<String, RadarApiV3> = HashMap::new();
     for info in state.radars.get_active().clone() {
-        let id = format!("{}", info.id);
-        let key = info.key();
-        let name = info.controls.user_name();
-        let brand = info.brand.to_string();
-        let v = RadarApiV3::new(id.to_owned(), key, name, brand);
+        let v = RadarApiV3 {
+            name: info.controls.user_name(),
+            brand: info.brand.to_string(),
+            model: info.controls.model_name(),
+            stream_url: format!("ws://{}{}{}", host, super::v1::SPOKES_URI, info.key()),
+            address: *info.addr.ip(),
+        };
 
-        api.insert(id.to_owned(), v);
+        api.insert(info.key(), v);
     }
     Json(api).into_response()
 }
@@ -174,7 +166,6 @@ struct Characteristics {
 struct Capabilities {
     id: String,
     name: String,
-    stream_url: String,
     characteristics: Characteristics,
     controls: HashMap<ControlId, Control>,
 }
@@ -183,7 +174,6 @@ impl Capabilities {
     fn new(
         id: String,
         name: String,
-        stream_url: String,
         info: RadarInfo,
         controls: HashMap<ControlId, Control>,
     ) -> Self {
@@ -202,7 +192,7 @@ impl Capabilities {
             legend: info.get_legend(),
             has_doppler: info.doppler,
             has_dual_range: info.dual_range,
-            has_dual_radar: info.which.is_some(),
+            has_dual_radar: info.dual.is_some(),
             no_transmit_sectors: controls
                 .iter()
                 .filter(|(ctype, _)| {
@@ -219,7 +209,6 @@ impl Capabilities {
         Capabilities {
             id,
             name,
-            stream_url,
             characteristics,
             controls,
         }
@@ -232,7 +221,7 @@ impl Capabilities {
     description = "Get all static information about a specific radar"
 )]
 async fn get_radar(
-    Path(radar_id): Path<usize>,
+    Path(radar_id): Path<String>,
     State(state): State<Web>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: hyper::header::HeaderMap,
@@ -255,13 +244,11 @@ async fn get_radar(
 
     log::debug!("target host = '{}'", host);
 
-    if let Some(info) = state.radars.get_by_id(radar_id) {
-        let id = info.id.to_string();
-        let stream_url = format!("ws://{}{}{}", host, super::v1::SPOKES_URI, id);
+    if let Some(info) = state.radars.get_by_key(&radar_id) {
         let name = info.controls.user_name();
 
         if let Some(controls) = info.controls.get_controls() {
-            let v = Capabilities::new(id.to_owned(), name, stream_url, info, controls);
+            let v = Capabilities::new(radar_id, name, info, controls);
 
             return Json(v).into_response();
         }
@@ -277,7 +264,7 @@ async fn get_radar(
 #[derive(Deserialize, ToSchema)]
 #[allow(dead_code)] // Instantiation hidden in extractor
 struct RadarControlIdParam {
-    radar_id: usize,
+    radar_id: String,
     control_id: String,
 }
 
@@ -313,7 +300,7 @@ async fn set_control_value(
     let (controls, control_value) = {
         let radars = state.radars.clone();
 
-        match radars.get_by_id(radar_id) {
+        match radars.get_by_key(&radar_id) {
             Some(radar) => {
                 // Look up the control by name
                 let control = match radar.controls.get_by_id(&control_id) {
@@ -456,7 +443,7 @@ async fn get_control_value(
     // Get the radar info and control  without holding the lock across await
     let radars = state.radars;
 
-    match radars.get_by_id(radar_id) {
+    match radars.get_by_key(&radar_id) {
         Some(radar) => {
             // Look up the control by name
             match radar.controls.get_by_id(&control_id) {
@@ -1046,9 +1033,8 @@ async fn send_all_subscribed(
     for radar in radars.get_active() {
         let mut rcvs: Vec<RadarControlValue> = radar.controls.get_radar_control_values();
         log::info!(
-            "Sending {} controls for radar {} label {}",
+            "Sending {} controls for radar '{}'",
             rcvs.len(),
-            radar.id,
             radar.key()
         );
         if subscriptions.mode == Subscribe::Some {

@@ -35,7 +35,7 @@ pub(crate) fn to_protobuf_spoke(
     spoke.angle = angle as u32;
     spoke.bearing = heading;
 
-    (spoke.lat, spoke.lon) = crate::navdata::get_position_i64();
+    (spoke.lat, spoke.lon) = crate::navdata::get_position();
     spoke.time = time;
     spoke.data = generic_spoke;
 

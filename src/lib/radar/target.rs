@@ -241,7 +241,7 @@ const SCAN_FOR_NEW_PERCENTAGE: i32 = 75;
 
 #[derive(Debug, Clone)]
 pub(self) struct TargetSetup {
-    radar_id: usize,
+    key: String,
     spokes_per_revolution: i32,
     spokes_per_revolution_f64: f64,
     spoke_len: i32,
@@ -800,7 +800,7 @@ impl TargetBuffer {
 
         TargetBuffer {
             setup: TargetSetup {
-                radar_id: info.id,
+                key: info.key.clone(),
                 spokes_per_revolution,
                 spokes_per_revolution_f64: spokes_per_revolution as f64,
                 spoke_len,
@@ -861,7 +861,7 @@ impl TargetBuffer {
             self.next_target_id = 1;
         }
 
-        self.next_target_id + MAX_TARGET_ID * self.setup.radar_id
+        self.next_target_id
     }
 
     //

@@ -673,7 +673,7 @@ impl FurunoReportReceiver {
             log::info!(
                 "{}: Radar model {} version {}",
                 self.common.key,
-                model.to_str(),
+                model,
                 version
             );
 
@@ -684,8 +684,13 @@ impl FurunoReportReceiver {
             return;
         }
         log::error!(
-            "{}: Unknown radar type, modules {:?}",
+            "{}: Model {} is unknown radar type: modules {:?}",
             self.common.key,
+            self.common
+                .info
+                .controls
+                .model_name()
+                .unwrap_or_else(|| { "unknown".to_string() }),
             values
         );
     }

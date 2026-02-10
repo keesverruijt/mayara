@@ -92,7 +92,7 @@ impl Command {
         match v {
             11 => Err(RadarError::CannotSetControlId(ControlId::Rain)),
             12 => Err(RadarError::CannotSetControlId(ControlId::Power)),
-            _ => Err(RadarError::NoSuchRadar(1)),
+            _ => Err(RadarError::NoSuchRadar("n1234a".to_string())),
         }
     }
 
