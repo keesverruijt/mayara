@@ -281,12 +281,23 @@ impl NavicoLocator {
             return Ok(());
         }
 
+        if radars.is_radar_active_by_addr(&Brand::Navico, from) {
+            log::debug!("{}: already active Navico radar", from);
+            return Ok(());
+        }
+
         if report.len() >= NAVICO_BEACON_DUAL_SIZE {
             match deserialize::<NavicoBeaconDual>(report) {
                 Ok(data) => {
                     log::debug!("{} sent NavicoBeaconDual {:?}", from, data);
                     if let Some(serial_no) = c_string(&data.header.serial_no) {
-                        let radar_addr: SocketAddrV4 = data.header.radar_addr.into();
+                        log::info!(
+                            "{} locating dual-range radar @ {}",
+                            from,
+                            data.header.radar_addr
+                        );
+
+                        let radar_addr: SocketAddrV4 = from.clone();
 
                         let radar_data: SocketAddrV4 = data.a.data.into();
                         let radar_report: SocketAddrV4 = data.a.report.into();
@@ -345,7 +356,13 @@ impl NavicoLocator {
                 Ok(data) => {
                     log::debug!("{} sent NavicoBeaconSingle {:?}", from, data);
                     if let Some(serial_no) = c_string(&data.header.serial_no) {
-                        let radar_addr: SocketAddrV4 = data.header.radar_addr.into();
+                        log::info!(
+                            "{} locating single-range radar @ {}",
+                            from,
+                            data.header.radar_addr
+                        );
+
+                        let radar_addr: SocketAddrV4 = from.clone();
 
                         let radar_data: SocketAddrV4 = data.a.data.into();
                         let radar_report: SocketAddrV4 = data.a.report.into();
@@ -384,7 +401,8 @@ impl NavicoLocator {
                     log::debug!("{} sent BR24Beacon {:?}", from, data);
 
                     if let Some(serial_no) = c_string(&data.serial_no) {
-                        let radar_addr: SocketAddrV4 = data.radar_addr.into();
+                        log::info!("{} locating BR24 @ {}", from, data.radar_addr);
+                        let radar_addr: SocketAddrV4 = from.clone();
 
                         let radar_data: SocketAddrV4 = data.data.into();
                         let radar_report: SocketAddrV4 = data.report.into();

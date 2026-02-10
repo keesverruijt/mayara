@@ -46,6 +46,8 @@ pub const BYTE_LOOKUP_LENGTH: usize = (u8::MAX as usize) + 1;
 pub enum RadarError {
     #[error("I/O operation failed")]
     Io(#[from] std::io::Error),
+    #[error("Axum operation failed")]
+    Axum(#[from] axum::Error),
     #[error("Interface '{0}' is not available")]
     InterfaceNotFound(String),
     #[error("Interface '{0}' has no valid IPv4 address")]
@@ -519,7 +521,7 @@ impl SharedRadars {
         let sk_client_tx = radars.sk_client_tx.clone();
         radar_info
             .controls
-            .set_radar_info(sk_client_tx, radar_info.key());
+            .set_radar_info(sk_client_tx, radar_info.key(), radar_info.id);
         radars
             .info
             .insert(radar_info.key.clone(), radar_info.clone());
@@ -596,7 +598,7 @@ impl SharedRadars {
         }
     }
 
-    pub fn is_active_radar(&self, brand: &Brand, ip: &Ipv4Addr) -> bool {
+    pub fn is_radar_active_on_nic(&self, brand: &Brand, ip: &Ipv4Addr) -> bool {
         let radars = self.radars.read().unwrap();
         for (_, info) in radars.info.iter() {
             log::trace!(
@@ -607,6 +609,23 @@ impl SharedRadars {
                 ip
             );
             if info.brand == *brand && info.nic_addr == *ip {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn is_radar_active_by_addr(&self, brand: &Brand, ip: &SocketAddrV4) -> bool {
+        let radars = self.radars.read().unwrap();
+        for (_, info) in radars.info.iter() {
+            log::trace!(
+                "is_active_radar: brand {}/{} ip {}/{}",
+                info.brand,
+                brand,
+                info.addr,
+                ip
+            );
+            if info.brand == *brand && info.addr == *ip {
                 return true;
             }
         }

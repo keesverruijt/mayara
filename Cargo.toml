@@ -85,6 +85,7 @@ itoa = "1.0.17"
 utoipa = "5.4.0"
 serde_string_enum = "0.2.1"
 unicase = "2.9.0"
+wildmatch = "2.6.1"
 # tungstenite = { path = "../tungstenite-rs", features = [ "handshake", "deflate" ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

@@ -1,0 +1,6 @@
+{ "context": "self", "subscribe": [ { "path": "radars.*.gain", "policy": "instant", "period": 1000 }, { "path": "radars.*.power", "policy": "ideal", "period": 1000 } ] }
+
+{ "subscribe": [ { "path": "radars.*.gain", "policy": "instant", "period": 1000 }, { "path": "radars.*.power", "policy": "ideal", "period": 1000 } ] }
+
+{ "subscribe": [ { "path": "radars.Navico-1902501034-A.gain", "policy": "instant", "period": 1000 }, { "path": "radars.*.power", "policy": "ideal", "period": 1000 } ] }
+

@@ -17,6 +17,7 @@ use strum::{EnumCount, EnumIter, EnumString, IntoStaticStr};
 use thiserror::Error;
 
 use crate::Cli;
+use crate::config::Radar;
 use crate::{
     TargetMode,
     radar::{Power, RadarError, range::Ranges},
@@ -69,7 +70,9 @@ pub struct Controls {
     controls: HashMap<ControlId, Control>,
 
     #[serde(skip)]
-    radar_id: Option<String>,
+    radar_label: Option<String>,
+    #[serde(skip)]
+    radar_id: Option<usize>,
     #[serde(skip)]
     all_clients_tx: tokio::sync::broadcast::Sender<ControlValue>,
     #[serde(skip)]
@@ -157,6 +160,7 @@ impl Controls {
         Controls {
             replay: args.replay,
             controls,
+            radar_label: None,
             radar_id: None,
             all_clients_tx,
             sk_client_tx: None,
@@ -217,9 +221,11 @@ impl SharedControls {
     pub(crate) fn set_radar_info(
         &mut self,
         sk_client_tx: tokio::sync::broadcast::Sender<RadarControlValue>,
-        radar_id: String,
+        radar_label: String,
+        radar_id: usize,
     ) {
         let mut locked = self.controls.write().unwrap();
+        locked.radar_label = Some(radar_label);
         locked.radar_id = Some(radar_id);
         locked.sk_client_tx = Some(sk_client_tx);
     }
@@ -296,6 +302,16 @@ impl SharedControls {
         locked.control_update_tx.subscribe()
     }
 
+    pub fn get_radar_control_values(&self) -> Vec<RadarControlValue> {
+        let locked = self.controls.read().unwrap();
+
+        locked
+            .controls
+            .iter()
+            .map(|(_, c)| RadarControlValue::new(locked.radar_label.as_ref().unwrap(), c, None))
+            .collect()
+    }
+
     pub async fn send_all_controls(
         &self,
         reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
@@ -341,8 +357,8 @@ impl SharedControls {
                 );
             }
         }
-        if let (Some(radar_id), Some(sk_client_tx)) = (&locked.radar_id, &locked.sk_client_tx) {
-            let radar_control_value = RadarControlValue::new(radar_id.to_string(), control_value);
+        if let (Some(label), Some(sk_client_tx)) = (&locked.radar_label, &locked.sk_client_tx) {
+            let radar_control_value = RadarControlValue::new(label, control, None);
 
             match sk_client_tx.send(radar_control_value) {
                 Err(_e) => {}
@@ -879,19 +895,71 @@ impl ControlValue {
 }
 
 // This is the represenation of a control value used by the Signal K (web) services
+// It is the same as the V1 ControlValue but it contains a path instead of just a
+// control Id.
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct RadarControlValue {
-    pub radar_id: String,
-    #[serde(flatten)]
-    pub control_value: ControlValue,
+    #[serde(skip)]
+    pub radar_id: Option<String>,
+    #[serde(skip)]
+    pub control_id: Option<ControlId>,
+    pub path: String, // "radars.{id}.{control_id}"
+    pub value: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub units: Option<Units>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub dynamic_read_only: Option<bool>,
+    #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 impl RadarControlValue {
-    pub fn new(radar_id: String, control_value: ControlValue) -> Self {
+    pub fn new(radar: &str, control: &Control, error: Option<String>) -> Self {
         RadarControlValue {
-            radar_id,
-            control_value,
+            path: format!("radars.{}.{}", radar, control.item().control_id),
+            radar_id: Some(radar.to_string()),
+            control_id: Some(control.item().control_id),
+            value: control.value(),
+            units: control.item().unit.clone(),
+            auto: control.auto,
+            enabled: control.enabled,
+            dynamic_read_only: control.dynamic_read_only,
+            error,
+        }
+    }
+
+    pub fn parse_path(&mut self) -> Option<&str> {
+        let mut path = self.path.as_str();
+        if path.starts_with("radars.") {
+            path = &path["radars.".len()..];
+        }
+        if let Some(r) = path.split_once('.') {
+            self.control_id = ControlId::try_from(r.1).ok();
+            if self.control_id.is_some() {
+                self.radar_id = Some(r.0.to_string());
+                return Some(r.0);
+            }
+        }
+
+        None
+    }
+}
+
+impl From<RadarControlValue> for ControlValue {
+    fn from(value: RadarControlValue) -> Self {
+        ControlValue {
+            id: value.control_id.unwrap(),
+            value: value.value,
+            units: value.units,
+            auto: value.auto,
+            enabled: value.enabled,
+            dynamic_read_only: value.dynamic_read_only,
+            error: value.error,
         }
     }
 }
@@ -999,7 +1067,7 @@ impl Control {
             min_value,
             max_value,
             None,
-            max_value,
+            None,
             None,
             None,
             None,
@@ -1027,7 +1095,7 @@ impl Control {
             min_value,
             max_value,
             None,
-            max_value,
+            None,
             None,
             None,
             None,
@@ -1048,7 +1116,7 @@ impl Control {
             Some(0.),
             Some(description_count),
             None,
-            Some(description_count),
+            None,
             None,
             None,
             Some(
@@ -1074,7 +1142,7 @@ impl Control {
             Some(0.),
             Some(((descriptions.len() as i32) - 1) as f64),
             None,
-            Some(((descriptions.len() as i32) - 1) as f64),
+            None,
             None,
             None,
             Some(descriptions),
@@ -1237,7 +1305,6 @@ impl Control {
             log::trace!("{} map value {}", self.item.control_id, value);
             value = value / wire_scale_factor;
 
-            // TODO! Not sure about the following line
             auto_value = auto_value.map(|v| v / wire_scale_factor);
             log::trace!("{} map value to scaled {}", self.item.control_id, value);
         }
@@ -1869,9 +1936,9 @@ pub enum ControlError {
     #[error("Control {0} not supported on this radar")]
     NotSupported(ControlId),
     #[error("Control {0} value {1} is lower than minimum value {2}")]
-    TooLow(ControlId, f64, f32),
+    TooLow(ControlId, f64, f64),
     #[error("Control {0} value {1} is higher than maximum value {2}")]
-    TooHigh(ControlId, f32, f32),
+    TooHigh(ControlId, f64, f64),
     #[error("Control {0} value {1} is not a legal value")]
     Invalid(ControlId, String),
     #[error("Control {0} does not support Auto")]

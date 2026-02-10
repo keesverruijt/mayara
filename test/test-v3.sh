@@ -14,6 +14,9 @@ do
   echo ""
 done
 
+radars=$(curl -s "${V3}/radars" | jq -r 'keys[]')
+echo "Radars: ${radars}"
+
 controlIds=$(curl -s "${V3}/radars/1/capabilities" | jq -r '.controls | keys[]')
 for i in ${controlIds}
 do

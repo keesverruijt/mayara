@@ -252,7 +252,7 @@ impl Locator {
                 (&mut radar_interface_api.listeners, &radar_interface_api.ip)
             {
                 for (brand, status) in listeners.iter_mut() {
-                    if self.radars.is_active_radar(brand, ip) {
+                    if self.radars.is_radar_active_on_nic(brand, ip) {
                         *status = "Active".to_owned();
                     }
                 }
