@@ -275,7 +275,7 @@ impl SharedControls {
                     ControlDestination::Command
                     | ControlDestination::Target
                     | ControlDestination::Trail => {
-                        self.send_to_command_handler(control_value.clone(), reply_tx)
+                        self.send_to_command_handler(&c, control_value.clone(), reply_tx)
                     }
                     ControlDestination::ReadOnly => {
                         Err(RadarError::CannotSetControlId(control_value.id))
@@ -321,9 +321,36 @@ impl SharedControls {
 
     fn send_to_command_handler(
         &self,
-        control_value: ControlValue,
+        control: &Control,
+        mut control_value: ControlValue,
         reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
     ) -> Result<(), RadarError> {
+        if let Some(units) = control_value.units {
+            let value = control_value.value.as_f64();
+            if value.is_none() {
+                return Err(RadarError::NotNumeric(
+                    control_value.id,
+                    control_value.value,
+                    units,
+                ));
+            }
+
+            let (mut units, mut value) = units.to_si(value.unwrap());
+            if let Some(wire_unit) = control.item.wire_unit {
+                value = wire_unit.from_si(units, value);
+                units = wire_unit;
+            }
+            let value = serde_json::Number::from_f64(value);
+            if value.is_none() {
+                return Err(RadarError::NotNumeric(
+                    control_value.id,
+                    control_value.value,
+                    units,
+                ));
+            }
+            control_value.units = Some(units);
+            control_value.value = Value::Number(value.unwrap());
+        }
         let control_update = ControlUpdate {
             control_value,
             reply_tx,
@@ -755,6 +782,8 @@ pub struct ControlUpdate {
     ToSchema,
 )]
 pub enum Units {
+    #[string = ""]
+    None,
     #[string = "m"]
     Meters,
     #[string = "km"]
@@ -803,6 +832,14 @@ impl Units {
             }
         }
         (*self, value)
+    }
+    pub(crate) fn from_si(&self, origin: Units, value: f64) -> f64 {
+        for (from, to, factor) in TO_SI_CONVERSIONS {
+            if *self == from && origin == to {
+                return value / factor;
+            }
+        }
+        value
     }
 }
 
@@ -1093,8 +1130,9 @@ impl Control {
         self
     }
 
-    pub(crate) fn unit(mut self, unit: Units) -> Control {
-        self.item.unit = Some(unit);
+    pub(crate) fn wire_unit(mut self, unit: Units) -> Control {
+        self.item.wire_unit = Some(unit);
+        self.item.unit = Some(unit.to_si(0.).0);
 
         self
     }
@@ -1349,6 +1387,7 @@ impl Control {
             enabled,
             self.item
         );
+
         if let Some(wire_offset) = self.item.wire_offset {
             if wire_offset > 0.0 {
                 value -= wire_offset;
@@ -1404,6 +1443,35 @@ impl Control {
             }
         }
         log::trace!("{} map value to rounded {}", self.item.control_id, value);
+
+        let wire_value = value;
+        let value = self
+            .item
+            .wire_unit
+            .map(|u| u.to_si(value).1)
+            .unwrap_or(value);
+        log::info!(
+            "value {} {} -> {} {}",
+            wire_value,
+            self.item.wire_unit.unwrap_or(Units::None),
+            value,
+            self.item.unit.unwrap_or(Units::None)
+        );
+        if let Some(av) = auto_value {
+            let si = self
+                .item
+                .wire_unit
+                .map(|u| u.to_si(value).1)
+                .unwrap_or(value);
+            log::info!(
+                "auto value {} {} -> {} {}",
+                av,
+                self.item.wire_unit.unwrap_or(Units::None),
+                si,
+                self.item.unit.unwrap_or(Units::None)
+            );
+            auto_value = Some(si);
+        }
 
         if auto.is_some() && self.item.automatic.is_none() {
             Err(ControlError::NoAuto(self.item.control_id))
@@ -1470,6 +1538,7 @@ impl Control {
 
     /// Look up the wire value (index) for an enum value by its string value or label
     /// Returns None if no match found or if not an enum control
+    #[allow(dead_code)]
     pub(crate) fn enum_value_to_index(&self, value_str: &str) -> Option<usize> {
         if let Some(descriptions) = &self.item.descriptions {
             for (idx, label) in descriptions.iter() {
@@ -1483,6 +1552,7 @@ impl Control {
 
     /// Look up the string value for an enum by its index
     /// Returns the core definition's value if available, otherwise the label
+    #[allow(dead_code)]
     pub(crate) fn index_to_enum_value(&self, index: usize) -> Option<String> {
         if let Some(descriptions) = &self.item.descriptions {
             return descriptions.get(&(index as i32)).cloned();
@@ -1557,6 +1627,8 @@ pub struct ControlDefinition {
     wire_scale_factor: Option<f64>,
     #[serde(skip)]
     wire_offset: Option<f64>,
+    #[serde(skip)]
+    pub(crate) wire_unit: Option<Units>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) unit: Option<Units>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1585,7 +1657,7 @@ impl ControlDefinition {
         step_value: Option<f64>,
         wire_scale_factor: Option<f64>,
         wire_offset: Option<f64>,
-        unit: Option<Units>,
+        wire_unit: Option<Units>,
         descriptions: Option<HashMap<i32, String>>,
         valid_values: Option<Vec<i32>>,
         is_read_only: bool,
@@ -1596,6 +1668,8 @@ impl ControlDefinition {
         } else {
             step_value
         };
+
+        let unit = wire_unit.map(|u| u.to_si(0.0).0);
 
         ControlDefinition {
             id: control_id as u8,
@@ -1613,6 +1687,7 @@ impl ControlDefinition {
             wire_scale_factor,
             wire_offset,
             unit,
+            wire_unit,
             descriptions,
             valid_values,
             is_read_only,

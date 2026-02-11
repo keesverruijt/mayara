@@ -23,7 +23,7 @@ pub fn new(args: &Cli, model: BaseModel) -> SharedControls {
     controls.insert(
         ControlId::BearingAlignment,
         Control::new_numeric(ControlId::BearingAlignment, -180., 180.)
-            .unit(Units::Degrees)
+            .wire_unit(Units::Degrees)
             .wire_scale_factor(10., true)
             .wire_offset(-1.),
     );
@@ -49,7 +49,7 @@ pub fn new(args: &Cli, model: BaseModel) -> SharedControls {
         Control::new_numeric(ControlId::RotationSpeed, 0., 99.)
             .wire_scale_step(0.1) // 0.1 RPM
             .read_only(true)
-            .unit(Units::RotationsPerMinute),
+            .wire_unit(Units::RotationsPerMinute),
     );
 
     match model {
@@ -81,28 +81,28 @@ pub fn new(args: &Cli, model: BaseModel) -> SharedControls {
             controls.insert(
                 ControlId::NoTransmitStart1,
                 Control::new_numeric(ControlId::NoTransmitStart1, 0., 359.)
-                    .unit(Units::Degrees)
+                    .wire_unit(Units::Degrees)
                     .wire_scale_step(0.1)
                     .has_enabled(),
             );
             controls.insert(
                 ControlId::NoTransmitEnd1,
                 Control::new_numeric(ControlId::NoTransmitEnd1, 0., 359.)
-                    .unit(Units::Degrees)
+                    .wire_unit(Units::Degrees)
                     .wire_scale_step(0.1)
                     .has_enabled(),
             );
             controls.insert(
                 ControlId::NoTransmitStart2,
                 Control::new_numeric(ControlId::NoTransmitStart2, 0., 359.)
-                    .unit(Units::Degrees)
+                    .wire_unit(Units::Degrees)
                     .wire_scale_step(0.1)
                     .has_enabled(),
             );
             controls.insert(
                 ControlId::NoTransmitEnd2,
                 Control::new_numeric(ControlId::NoTransmitEnd2, 0., 359.)
-                    .unit(Units::Degrees)
+                    .wire_unit(Units::Degrees)
                     .wire_scale_step(0.1)
                     .has_enabled(),
             );
@@ -180,7 +180,7 @@ pub fn update_when_model_known(
 
     let max_value = 36. * NAUTICAL_MILE_F64 as f64;
     let mut range_control =
-        Control::new_numeric(ControlId::Range, 50., max_value).unit(Units::Meters);
+        Control::new_numeric(ControlId::Range, 50., max_value).wire_unit(Units::Meters);
     range_control.set_valid_ranges(&radar_info.ranges);
     controls.insert(ControlId::Range, range_control);
 

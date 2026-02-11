@@ -25,12 +25,12 @@ pub fn new(args: &Cli, model: Option<&str>) -> SharedControls {
         Control::new_numeric(ControlId::AntennaHeight, 0., 99.)
             .wire_scale_factor(1000., false)
             .wire_scale_step(100.) // Allow control in decimeters
-            .unit(Units::Meters),
+            .wire_unit(Units::Meters),
     );
     controls.insert(
         ControlId::BearingAlignment,
         Control::new_numeric(ControlId::BearingAlignment, -180., 180.)
-            .unit(Units::Degrees)
+            .wire_unit(Units::Degrees)
             .wire_scale_factor(10., true)
             .wire_offset(-1.),
     );
@@ -67,7 +67,7 @@ pub fn new(args: &Cli, model: Option<&str>) -> SharedControls {
         Control::new_numeric(ControlId::OperatingHours, 0., 999999.)
             .read_only(true)
             .wire_scale_factor(3600., false)
-            .unit(Units::Seconds),
+            .wire_unit(Units::Seconds),
     );
 
     controls.insert(
@@ -75,7 +75,7 @@ pub fn new(args: &Cli, model: Option<&str>) -> SharedControls {
         Control::new_numeric(ControlId::RotationSpeed, 0., 99.)
             .wire_scale_step(0.1)
             .read_only(true)
-            .unit(Units::RotationsPerMinute),
+            .wire_unit(Units::RotationsPerMinute),
     );
 
     controls.insert(
@@ -131,7 +131,7 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
         Model::HALO => 96.,
     }) * NAUTICAL_MILE_F64;
     let mut range_control = Control::new_numeric(ControlId::Range, 50., max_value)
-        .unit(Units::Meters)
+        .wire_unit(Units::Meters)
         .wire_scale_factor(10., false); // Radar sends and receives in decimeters
     range_control.set_valid_ranges(&radar_info.ranges);
     controls.insert(ControlId::Range, range_control);
@@ -150,7 +150,7 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
             controls.insert(
                 start,
                 Control::new_numeric(start, -180., 180.)
-                    .unit(Units::Degrees)
+                    .wire_unit(Units::Degrees)
                     .wire_scale_factor(10., true)
                     .wire_offset(-1.)
                     .has_enabled(),
@@ -158,7 +158,7 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
             controls.insert(
                 end,
                 Control::new_numeric(end, -180., 180.)
-                    .unit(Units::Degrees)
+                    .wire_unit(Units::Degrees)
                     .wire_scale_factor(10., true)
                     .wire_offset(-1.)
                     .has_enabled(),
@@ -248,7 +248,7 @@ pub fn update_when_model_known(controls: &SharedControls, model: Model, radar_in
             ControlId::DopplerSpeedThreshold,
             Control::new_numeric(ControlId::DopplerSpeedThreshold, 0., 15.94)
                 .wire_scale_step(0.01)
-                .unit(Units::MetersPerSecond),
+                .wire_unit(Units::MetersPerSecond),
         );
         controls.insert(
             ControlId::DopplerTrailsOnly,

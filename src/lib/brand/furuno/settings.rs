@@ -17,7 +17,8 @@ pub fn new(args: &Cli) -> SharedControls {
     );
 
     let max_value = 120. * NAUTICAL_MILE as f64;
-    let range_control = Control::new_numeric(ControlId::Range, 0., max_value).unit(Units::Meters);
+    let range_control =
+        Control::new_numeric(ControlId::Range, 0., max_value).wire_unit(Units::Meters);
     // Note: valid range values are set per-model in update_when_model_known()
     controls.insert(ControlId::Range, range_control);
 
@@ -38,7 +39,7 @@ pub fn new(args: &Cli) -> SharedControls {
         ControlId::OperatingHours,
         Control::new_numeric(ControlId::OperatingHours, 0., 999999.)
             .read_only(true)
-            .unit(Units::Hours),
+            .wire_unit(Units::Hours),
     );
 
     controls.insert(
@@ -46,7 +47,7 @@ pub fn new(args: &Cli) -> SharedControls {
         Control::new_numeric(ControlId::RotationSpeed, 0., 99.)
             .wire_scale_factor(10., true)
             .read_only(true)
-            .unit(Units::RotationsPerMinute),
+            .wire_unit(Units::RotationsPerMinute),
     );
 
     if log::log_enabled!(log::Level::Debug) {
@@ -105,26 +106,26 @@ pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version:
     info.controls.insert(
         ControlId::NoTransmitStart1,
         Control::new_numeric(ControlId::NoTransmitStart1, -180., 180.)
-            .unit(Units::Degrees)
+            .wire_unit(Units::Degrees)
             .wire_offset(-1.),
     );
     info.controls.insert(
         ControlId::NoTransmitEnd1,
         Control::new_numeric(ControlId::NoTransmitEnd1, -180., 180.)
-            .unit(Units::Degrees)
+            .wire_unit(Units::Degrees)
             .wire_offset(-1.),
     );
 
     info.controls.insert(
         ControlId::NoTransmitStart2,
         Control::new_numeric(ControlId::NoTransmitStart2, -180., 180.)
-            .unit(Units::Degrees)
+            .wire_unit(Units::Degrees)
             .wire_offset(-1.),
     );
     info.controls.insert(
         ControlId::NoTransmitEnd2,
         Control::new_numeric(ControlId::NoTransmitEnd2, -180., 180.)
-            .unit(Units::Degrees)
+            .wire_unit(Units::Degrees)
             .wire_offset(-1.),
     );
 

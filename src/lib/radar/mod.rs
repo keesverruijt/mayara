@@ -29,7 +29,7 @@ use crate::radar::spoke::{GenericSpoke, to_protobuf_spoke};
 use crate::radar::trail::TrailBuffer;
 use crate::settings::{
     ControlDestination, ControlError, ControlId, ControlUpdate, ControlValue, RadarControlValue,
-    SharedControls,
+    SharedControls, Units,
 };
 use crate::{Brand, Cli, TargetMode};
 use range::{RangeDetection, Ranges};
@@ -68,6 +68,8 @@ pub enum RadarError {
     CannotSetControlIdValue(ControlId, Value),
     #[error("Missing value for control '{0}'")]
     MissingValue(ControlId),
+    #[error("Control '{0}' value '{1}' must be numeric as it has a unit '{2}'")]
+    NotNumeric(ControlId, Value, Units),
     #[error("No such radar with id '{0}'")]
     NoSuchRadar(String),
     #[error("Cannot parse JSON '{0}'")]
