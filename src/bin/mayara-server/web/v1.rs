@@ -20,7 +20,7 @@ use super::{
 
 use mayara::{
     radar::{Legend, RadarError},
-    settings::{ApiVersion, Control, ControlId},
+    settings::{ApiVersion, Control, ControlId, ControlValue},
 };
 
 const RADAR_URI: &str = "/v1/api/radars";
@@ -103,25 +103,26 @@ async fn get_radars(
         let control_url = format!("ws://{}{}{}", host, CONTROL_URI, id);
         let name = info.controls.user_name();
 
-        if let Some(controls) = info.controls.get_controls() {
-            let mut control_list: HashMap<u8, Control> = HashMap::with_capacity(controls.len());
-            for (ctype, control) in controls.iter() {
-                let key = ctype.to_u8().unwrap();
-                control_list.insert(key, control.clone());
-            }
+        let controls = info.controls.get_controls();
+        let mut control_list: HashMap<u8, Control> = HashMap::with_capacity(controls.len());
 
-            let v = RadarApi::new(
-                name,
-                info.spokes_per_revolution,
-                info.max_spoke_len,
-                stream_url,
-                control_url,
-                legend,
-                control_list,
-            );
-
-            api.insert(id.to_owned(), v);
+        // Convert to V1 format
+        for (ctype, control) in controls.iter() {
+            let key = ctype.to_u8().unwrap();
+            control_list.insert(key, control.clone());
         }
+
+        let v = RadarApi::new(
+            name,
+            info.spokes_per_revolution,
+            info.max_spoke_len,
+            stream_url,
+            control_url,
+            legend,
+            control_list,
+        );
+
+        api.insert(id.to_owned(), v);
     }
     Json(api).into_response()
 }
@@ -264,12 +265,21 @@ async fn control_stream(
                     Some(Ok(message)) => {
                         match message {
                             Message::Text(message) => {
-                                if let Ok(control_value) = serde_json::from_str(&message) {
+                                if let Ok(mut control_value) = serde_json::from_str::<ControlValue>(&message) {
                                     log::debug!("Received ControlValue {:?}", control_value);
-                                    match radar.controls.process_client_request(control_value, reply_tx.clone()).await
+                                    match radar.controls.process_client_request(control_value.clone(), reply_tx.clone())
                                     {
                                         Ok(()) => { log::debug!("ControlValue {} handled", message); }
-                                        Err(e) => { log::warn!("ControlValue {} error: {}", message, e); }
+                                        Err(e) => {
+                                            log::warn!("ControlValue {} error: {}", message, e);
+                                            control_value.error = Some(e.to_string());
+                                            let str_message = serde_json::to_string(&control_value).unwrap();
+                                            let ws_message = Message::Text(str_message.into());
+                                            if let Err(e) = socket.send(ws_message).await {
+                                                log::error!("send to websocket client: {e}");
+                                                break;
+                                            }
+                                        }
                                     }
                                 } else {
                                     log::error!("Unknown JSON string '{}'", message);

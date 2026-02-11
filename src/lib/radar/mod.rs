@@ -870,6 +870,9 @@ impl CommonRadar {
         self.radars.update(&mut self.info);
     }
 
+    ///
+    /// Received a control update from the (web) client over the receiver channel
+    ///
     pub async fn process_control_update<T: CommandSender>(
         &mut self,
         control_update: ControlUpdate,

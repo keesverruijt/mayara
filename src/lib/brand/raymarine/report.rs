@@ -96,7 +96,7 @@ impl RaymarineReportReceiver {
         );
         let command_sender = None; // Only known after we receive the model info
 
-        let control_update_rx = info.controls.control_update_subscribe();
+        let control_update_rx = info.control_update_subscribe();
 
         let pixel_to_blob = pixel_to_blob(&info.get_legend());
 

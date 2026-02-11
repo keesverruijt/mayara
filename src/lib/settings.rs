@@ -15,6 +15,7 @@ use std::{
 };
 use strum::{EnumCount, EnumIter, EnumString, IntoStaticStr};
 use thiserror::Error;
+use utoipa::ToSchema;
 
 use crate::Cli;
 use crate::{
@@ -231,11 +232,10 @@ impl SharedControls {
         locked.control_update_tx.clone()
     }
 
-    pub fn get_controls(&self) -> Option<HashMap<ControlId, Control>> {
-        match self.controls.read() {
-            Ok(locked) => Some(locked.controls.clone()),
-            Err(_) => None,
-        }
+    pub fn get_controls(&self) -> HashMap<ControlId, Control> {
+        let locked = self.controls.read().unwrap();
+
+        locked.controls.clone()
     }
 
     pub(crate) fn new_client_subscription(&self) -> tokio::sync::broadcast::Receiver<ControlValue> {
@@ -253,14 +253,14 @@ impl SharedControls {
     // Some controls are handled internally, some in the data handler for a radar and the
     // rest are settings that need to be sent to the radar.
     //
-    pub async fn process_client_request(
+    pub fn process_client_request(
         &self,
         control_value: ControlValue,
         reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
     ) -> Result<(), RadarError> {
         let control = self.get(&control_value.id);
 
-        if let Err(e) = match control {
+        match control {
             Some(c) => {
                 log::debug!(
                     "Client request to update {:?} to {:?}",
@@ -275,7 +275,7 @@ impl SharedControls {
                     ControlDestination::Command
                     | ControlDestination::Target
                     | ControlDestination::Trail => {
-                        self.send_to_command_handler(control_value.clone(), reply_tx.clone())
+                        self.send_to_command_handler(control_value.clone(), reply_tx)
                     }
                     ControlDestination::ReadOnly => {
                         Err(RadarError::CannotSetControlId(control_value.id))
@@ -283,11 +283,6 @@ impl SharedControls {
                 }
             }
             None => Err(RadarError::CannotSetControlId(control_value.id)),
-        } {
-            self.send_error_to_client(reply_tx, &control_value, &e)
-                .await
-        } else {
-            Ok(())
         }
     }
 
@@ -751,7 +746,13 @@ pub struct ControlUpdate {
 }
 
 #[derive(
-    Copy, PartialEq, SerializeLabeledStringEnum, DeserializeLabeledStringEnum, Clone, Debug,
+    Copy,
+    PartialEq,
+    SerializeLabeledStringEnum,
+    DeserializeLabeledStringEnum,
+    Clone,
+    Debug,
+    ToSchema,
 )]
 pub enum Units {
     #[string = "m"]
@@ -824,12 +825,29 @@ pub struct ControlValue {
 }
 
 impl ControlValue {
-    pub fn new(id: ControlId, value: Value) -> Self {
+    pub(crate) fn new(id: ControlId, value: Value) -> Self {
         ControlValue {
             id,
             value,
             units: None,
             auto: None,
+            enabled: None,
+            dynamic_read_only: None,
+            error: None,
+        }
+    }
+
+    pub fn from_request(
+        id: ControlId,
+        value: Value,
+        auto: Option<bool>,
+        units: Option<Units>,
+    ) -> Self {
+        ControlValue {
+            id,
+            value,
+            units,
+            auto,
             enabled: None,
             dynamic_read_only: None,
             error: None,

@@ -61,7 +61,7 @@ impl Command {
         }
     }
 
-    pub async fn send(&mut self, message: &[u8]) -> Result<(), RadarError> {
+    async fn send(&mut self, message: &[u8]) -> Result<(), RadarError> {
         if self.sock.is_none() {
             self.start_socket().await?;
         }

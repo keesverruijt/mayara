@@ -68,7 +68,7 @@ impl FurunoReportReceiver {
             None
         };
 
-        let control_update_rx = info.controls.control_update_subscribe();
+        let control_update_rx = info.control_update_subscribe();
 
         // let pixel_to_blob = Self::pixel_to_blob(&info.legend);
 
@@ -108,7 +108,6 @@ impl FurunoReportReceiver {
     //
     async fn data_loop(&mut self, subsys: &SubsystemHandle) -> Result<(), RadarError> {
         log::debug!("{}: listening for reports", self.common.key);
-        let mut command_rx = self.common.info.control_update_subscribe();
 
         let stream = self.stream.take().unwrap();
         let (reader, writer) = tokio::io::split(stream);
@@ -164,7 +163,7 @@ impl FurunoReportReceiver {
                     }
                 },
 
-                r = command_rx.recv() => {
+                r = self.common.control_update_rx.recv() => {
                     match r {
                         Err(_) => {},
                         Ok(cv) => {

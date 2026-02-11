@@ -36,7 +36,7 @@ use wildmatch::WildMatch;
 use super::{Message, Web, WebSocket, WebSocketUpgrade};
 use mayara::{
     radar::{Legend, RadarError, RadarInfo, SharedRadars},
-    settings::{Control, ControlId, ControlValue, RadarControlValue},
+    settings::{Control, ControlId, ControlValue, RadarControlValue, Units},
 };
 
 pub(super) fn routes(axum: axum::Router<Web>) -> axum::Router<Web> {
@@ -245,13 +245,11 @@ async fn get_radar(
     log::debug!("target host = '{}'", host);
 
     if let Some(info) = state.radars.get_by_key(&radar_id) {
+        let controls = info.controls.get_controls();
         let name = info.controls.user_name();
+        let v = Capabilities::new(radar_id, name, info, controls);
 
-        if let Some(controls) = info.controls.get_controls() {
-            let v = Capabilities::new(radar_id, name, info, controls);
-
-            return Json(v).into_response();
-        }
+        return Json(v).into_response();
     }
     Json(()).into_response()
 }
@@ -272,8 +270,9 @@ struct RadarControlIdParam {
 #[derive(Deserialize, Clone, Debug, ToSchema)]
 #[allow(dead_code)] // Instantiation hidden in extractor
 struct SetControlRequest {
-    auto: Option<bool>,
     value: serde_json::Value,
+    auto: Option<bool>,
+    units: Option<Units>,
 }
 
 /// PUT /v2/api/radars/{radar_id}/controls/{control_id}
@@ -296,93 +295,31 @@ async fn set_control_value(
         radar_id
     );
 
-    // Get the radar info and control  without holding the lock across await
+    // Get the radar info and control without holding the lock across await
     let (controls, control_value) = {
-        let radars = state.radars.clone();
-
-        match radars.get_by_key(&radar_id) {
+        match state.radars.get_by_key(&radar_id) {
             Some(radar) => {
                 // Look up the control by name
                 let control = match radar.controls.get_by_id(&control_id) {
                     Some(c) => c,
                     None => {
-                        // Debug: list all available controls
-                        let available = radar.controls.get_control_keys();
-                        log::warn!(
-                            "Control '{}' not found. Available controls: {:?}",
-                            control_id,
-                            available
-                        );
+                        // Debug: list all possible controls
+                        let all = radar.controls.get_control_keys();
                         return (
                             StatusCode::BAD_REQUEST,
-                            format!(
-                                "Unknown control '{}' -- use {:?} instead",
-                                control_id, available
-                            ),
+                            format!("Unknown control '{}' -- use {:?} instead", control_id, all),
                         )
                             .into_response();
                     }
                 };
 
-                // Parse the value - handle compound controls {mode, value} and simple values
-                let (value, auto) = (request.value.clone(), None);
-
-                /* TODO!     match &request.value {                serde_json::Value::String(s) => {
-                    // Try to normalize enum values using core definition
-                    let normalized = if let Some(index) = control.enum_value_to_index(s) {
-                        control
-                            .index_to_enum_value(index)
-                            .unwrap_or_else(|| s.clone())
-                    } else {
-                        s.clone()
-                    };
-                    log::debug!("Map request {:?} to string '{}'", request, normalized);
-                    (normalized, None)
-                }
-                serde_json::Value::Number(n) => (n.to_string(), None),
-                serde_json::Value::Bool(b) => (if *b { "1" } else { "0" }.to_string(), None),
-                serde_json::Value::Object(obj) => {
-                    // Check if this is a dopplerMode compound control {"enabled": bool, "mode": "target"|"rain"}
-                    if control_id == "dopplerMode" {
-                        let enabled = obj
-                            .get("enabled")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false);
-                        let mode_str =
-                            obj.get("mode").and_then(|v| v.as_str()).unwrap_or("target");
-                        // Convert mode string to numeric: "target" = 0, "rain" = 1
-                        let mode_val = match mode_str {
-                            "target" | "targets" => 0,
-                            "rain" => 1,
-                            _ => 0,
-                        };
-                        // Pass enabled state via 'auto' field (repurposed), mode as value
-                        (mode_val.to_string(), Some(enabled))
-                    } else {
-                        // Standard compound control: {"mode": "auto"|"manual", "value": N}
-                        let mode = obj.get("mode").and_then(|v| v.as_str()).unwrap_or("manual");
-                        let auto = Some(mode == "auto");
-                        let value = obj
-                            .get("value")
-                            .map(|v| match v {
-                                serde_json::Value::Number(n) => n.to_string(),
-                                serde_json::Value::String(s) => s.clone(),
-                                _ => v.to_string(),
-                            })
-                            .unwrap_or_default();
-                        (value, auto)
-                    }
-                }
-                _ => (request.value.to_string(), None),
-                */
-
-                let mut control_value = ControlValue::new(control.item().control_id, value);
-                control_value.auto = auto;
-                log::debug!(
-                    "Map request {:?} to controlValue {:?}",
-                    request,
-                    control_value
+                let control_value = ControlValue::from_request(
+                    control.item().control_id,
+                    request.value,
+                    request.auto,
+                    request.units,
                 );
+                log::debug!("Map request to controlValue {:?}", control_value);
                 (radar.controls.clone(), control_value)
             }
             None => {
@@ -396,15 +333,8 @@ async fn set_control_value(
     let (reply_tx, mut reply_rx) = tokio::sync::mpsc::channel(1);
 
     // Send the control request
-    if let Err(e) = controls
-        .process_client_request(control_value, reply_tx)
-        .await
-    {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to send control: {:?}", e),
-        )
-            .into_response();
+    if let Err(e) = controls.process_client_request(control_value, reply_tx) {
+        return (StatusCode::BAD_REQUEST, e.to_string()).into_response();
     }
 
     // Wait briefly for a reply (error response)
@@ -426,8 +356,6 @@ async fn set_control_value(
     StatusCode::OK.into_response()
 }
 
-/// PUT /v2/api/radars/{radar_id}/controls/{control_id}
-/// Sets a control value on the radar
 #[endpoint(
     method = "GET",
     path = "/v3/api/radars/{radar_id}/controls/{control_id}",
@@ -664,7 +592,7 @@ async fn ws_signalk_delta(
                     Some(Ok(message)) => {
                         match message {
                             Message::Text(message) => {
-                                handle_client_request(message.as_str(), &mut subscriptions, &radars, reply_tx.clone()).await;
+                                handle_client_request(&mut socket, message.as_str(), &mut subscriptions, &radars, reply_tx.clone()).await;
 
                             },
                             _ => {
@@ -803,6 +731,7 @@ impl ActiveSubscriptions {
 }
 
 async fn handle_client_request(
+    socket: &mut WebSocket,
     message: &str,
     subscriptions: &mut ActiveSubscriptions,
     radars: &SharedRadars,
@@ -823,13 +752,14 @@ async fn handle_client_request(
                 handle_desubscription(subscriptions, desubscription);
             }
             StreamRequest::RadarControlValue(rcv) => {
-                handle_control_request(message, radars, reply_tx, rcv).await;
+                handle_control_request(socket, message, radars, reply_tx, rcv).await;
             }
         }
     }
 }
 
 async fn handle_control_request(
+    socket: &mut WebSocket,
     message: &str,
     radars: &SharedRadars,
     reply_tx: mpsc::Sender<ControlValue>,
@@ -837,17 +767,22 @@ async fn handle_control_request(
 ) {
     if let Some(radar_id) = rcv.parse_path() {
         if let Some(radar) = radars.get_by_key(&radar_id) {
-            let control_value = rcv.into();
+            let mut control_value: ControlValue = rcv.into();
             match radar
                 .controls
-                .process_client_request(control_value, reply_tx)
-                .await
+                .process_client_request(control_value.clone(), reply_tx)
             {
                 Ok(()) => {
                     log::debug!("ControlValue {} handled", message);
                 }
                 Err(e) => {
                     log::warn!("ControlValue {} error: {}", message, e);
+                    control_value.error = Some(e.to_string());
+                    let str_message = serde_json::to_string(&control_value).unwrap();
+                    let ws_message = Message::Text(str_message.into());
+                    if let Err(e) = socket.send(ws_message).await {
+                        log::error!("send to websocket client: {e}");
+                    }
                 }
             }
         } else {
@@ -859,7 +794,6 @@ async fn handle_control_request(
         }
     } else {
         log::warn!("Cannot determine control from path '{}'; ignored", rcv.path);
-        return;
     }
 }
 
