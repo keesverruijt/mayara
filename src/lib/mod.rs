@@ -27,6 +27,7 @@ pub mod settings;
 pub mod util;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const PACKAGE: &str = env!("CARGO_PKG_NAME");
 
 #[derive(clap::ValueEnum, Clone, Default, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]

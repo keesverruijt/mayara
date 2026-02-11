@@ -20,6 +20,9 @@ echo "Radars: ${radars}"
 for radar in ${radars}
 do
   controlIds=$(curl -s "${V3}/radars/${radar}/capabilities" | jq -r '.controls | keys[]')
+  echo "------------- radar ${radar} all controls"
+  curl -s "${V3}/radars/${radar}/controls"
+  echo ""
   for i in ${controlIds}
   do
     echo "------------ radar ${radar} control ${i}"

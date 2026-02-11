@@ -1,7 +1,8 @@
 use axum::{
     Json, Router, debug_handler,
-    extract::{ConnectInfo, Path, State},
+    extract::{ConnectInfo, FromRequestParts, OriginalUri, Path, State},
     response::{IntoResponse, Response},
+    routing::get,
 };
 use axum_embed::ServeEmbed;
 use axum_openapi3::utoipa::openapi::{InfoBuilder, OpenApiBuilder};
@@ -11,13 +12,16 @@ use axum_openapi3::{
     endpoint,      // macro for defining endpoints
     reset_openapi, // function for cleaning the openapi cache (mostly used for testing)
 };
+use http::{Uri, uri};
 use log::{debug, trace};
 use miette::Result;
 use rust_embed::RustEmbed;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     io,
     net::{IpAddr, Ipv4Addr, SocketAddr},
+    str::FromStr,
 };
 use thiserror::Error;
 use tokio::{
@@ -25,6 +29,7 @@ use tokio::{
     sync::{broadcast, mpsc},
 };
 use tokio_graceful_shutdown::SubsystemHandle;
+use utoipa::ToSchema;
 
 mod axum_fix;
 mod v1;
@@ -32,7 +37,7 @@ mod v3;
 
 use axum_fix::{Message, WebSocket, WebSocketUpgrade};
 use mayara::{
-    Cli, InterfaceApi,
+    Cli, InterfaceApi, PACKAGE, VERSION,
     radar::{RadarError, RadarInfo, SharedRadars},
     settings::set_api_version,
     start_session,
@@ -84,7 +89,7 @@ impl Web {
         let mut shutdown_rx = self.shutdown_tx.subscribe();
         let shutdown_tx = self.shutdown_tx.clone(); // Clone as self used in with_state() and with_graceful_shutdown() below
 
-        let router = Router::new();
+        let router = Router::new().route("/", get(endpoints));
         let router = v1::routes(router); //.route_service("/v1", generated_assets_v1);
         let router = v3::routes(router); //.route_service("/v3", generated_assets_v3);
 
@@ -112,15 +117,97 @@ impl Web {
     }
 }
 
+// {
+//   "endpoints": {
+//     "v1": {
+//       "version": "1.0.0-alpha1",
+//       "signalk-http": "http://localhost:3000/signalk/v1/api/",
+//       "signalk-ws": "ws://localhost:3000/signalk/v1/stream"
+//     },
+//     "v3": {
+//       "version": "3.0.0",
+//       "signalk-http": "http://localhost/signalk/v3/api/",
+//       "signalk-ws": "ws://localhost/signalk/v3/stream",
+//       "signalk-tcp": "tcp://localhost:8367"
+//     }
+//   },
+//   "server": {
+//     "id": "signalk-server-node",
+//     "version": "0.1.33"
+//   }
+// }
+
+#[derive(Serialize, ToSchema)]
+struct Endpoints {
+    endpoints: HashMap<String, Endpoint>,
+    server: Server,
+}
+
+#[derive(Serialize, ToSchema)]
+struct Endpoint {
+    version: String,
+    #[serde(rename = "signalk-http")]
+    http: String,
+    #[serde(rename = "signalk-ws")]
+    ws: String,
+}
+#[derive(Serialize, ToSchema)]
+struct Server {
+    version: &'static str,
+    id: &'static str,
+}
+
+async fn endpoints(State(state): State<Web>, headers: hyper::header::HeaderMap) -> Json<Endpoints> {
+    log::debug!("endpoints: headers: {:?}", headers);
+    let host: String = match headers.get(axum::http::header::HOST) {
+        Some(host) => host.to_str().unwrap_or("localhost").to_string(),
+        None => "localhost".to_string(),
+    };
+    let host = format!(
+        "{}:{}",
+        match Uri::from_str(&host) {
+            Ok(uri) => uri.host().unwrap_or("localhost").to_string(),
+            Err(_) => "localhost".to_string(),
+        },
+        state.args.port
+    );
+
+    let mut endpoints = Endpoints {
+        endpoints: HashMap::new(),
+        server: Server {
+            version: VERSION,
+            id: PACKAGE,
+        },
+    };
+    endpoints.endpoints.insert(
+        "v1".to_string(),
+        Endpoint {
+            version: "1.0.0".to_string(),
+            http: format!("http://{}/v1/api/", host),
+            ws: format!("ws://{}/v1/api/stream", host),
+        },
+    );
+    endpoints.endpoints.insert(
+        "v3".to_string(),
+        Endpoint {
+            version: "3.0.0".to_string(),
+            http: format!("http://{}/v3/api/", host),
+            ws: format!("ws://{}/v3/api/stream", host),
+        },
+    );
+
+    Json(endpoints)
+}
+
 #[endpoint(
     method = "GET",
-    path = "/v3/api/openapi.json",
+    path = "/v3/api/resource/openapi.json",
     description = "OpenAPI spec"
 )]
 async fn openapi(State(_state): State<Web>) -> impl IntoResponse {
     // `build_openapi` caches the openapi spec, so it's not necessary to call it every time
     let openapi = build_openapi(|| {
-        OpenApiBuilder::new().info(InfoBuilder::new().title("Mayara").version("0.1.0"))
+        OpenApiBuilder::new().info(InfoBuilder::new().title("mayara").version(VERSION))
     });
 
     Json(openapi)

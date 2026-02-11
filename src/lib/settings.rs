@@ -977,6 +977,49 @@ impl From<RadarControlValue> for ControlValue {
     }
 }
 
+// This is the represenation of a control value used by the Signal K REST API
+#[derive(Deserialize, Serialize, Clone, Debug, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FullRadarControlValue {
+    pub value: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub units: Option<Units>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub dynamic_read_only: Option<bool>,
+    #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl From<RadarControlValue> for FullRadarControlValue {
+    fn from(value: RadarControlValue) -> Self {
+        FullRadarControlValue {
+            value: value.value,
+            units: value.units,
+            auto: value.auto,
+            enabled: value.enabled,
+            dynamic_read_only: value.dynamic_read_only,
+            error: value.error,
+        }
+    }
+}
+
+impl From<ControlValue> for FullRadarControlValue {
+    fn from(value: ControlValue) -> Self {
+        FullRadarControlValue {
+            value: value.value,
+            units: value.units,
+            auto: value.auto,
+            enabled: value.enabled,
+            dynamic_read_only: value.dynamic_read_only,
+            error: value.error,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Control {

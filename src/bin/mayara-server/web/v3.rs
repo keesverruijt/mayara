@@ -19,6 +19,7 @@ use futures::SinkExt;
 use http::StatusCode;
 use hyper;
 use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value;
 use std::{
     cmp::min,
     collections::HashMap,
@@ -35,14 +36,16 @@ use wildmatch::WildMatch;
 
 use super::{Message, Web, WebSocket, WebSocketUpgrade};
 use mayara::{
+    VERSION,
     radar::{Legend, RadarError, RadarInfo, SharedRadars},
-    settings::{Control, ControlId, ControlValue, RadarControlValue, Units},
+    settings::{Control, ControlId, ControlValue, FullRadarControlValue, RadarControlValue, Units},
 };
 
 pub(super) fn routes(axum: axum::Router<Web>) -> axum::Router<Web> {
     axum.add(get_radars())
         .add(get_interfaces())
         .add(get_radar())
+        .add(get_control_values())
         .add(get_control_value())
         .add(set_control_value())
         .route("/v3/api/stream", get(stream_handler))
@@ -73,10 +76,6 @@ struct RadarApiV3 {
     address: Ipv4Addr,
 }
 
-//
-// Signal K radar API says this returns something like:
-//    {"0":{"id":"0","name":"HALO","brand":"Navico","streamUrl":"http://localhost:3001/v1/api/stream/radar-0"}}
-//
 #[endpoint(
     method = "GET",
     path = "/v3/api/radars",
@@ -147,7 +146,7 @@ async fn get_interfaces(
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Characteristics {
+struct Capabilities {
     max_range: u32,
     min_range: u32,
     supported_ranges: Vec<u32>,
@@ -159,25 +158,12 @@ struct Characteristics {
     has_dual_range: bool,
     has_dual_radar: bool,
     no_transmit_sectors: u8,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Capabilities {
-    id: String,
-    name: String,
-    characteristics: Characteristics,
     controls: HashMap<ControlId, Control>,
 }
 
 impl Capabilities {
-    fn new(
-        id: String,
-        name: String,
-        info: RadarInfo,
-        controls: HashMap<ControlId, Control>,
-    ) -> Self {
-        let characteristics = Characteristics {
+    fn new(info: RadarInfo, controls: HashMap<ControlId, Control>) -> Self {
+        Capabilities {
             max_range: info.ranges.all.last().map_or(0, |r| r.distance() as u32),
             min_range: info.ranges.all.first().map_or(0, |r| r.distance() as u32),
             supported_ranges: info
@@ -205,11 +191,6 @@ impl Capabilities {
                     )
                 })
                 .count() as u8,
-        };
-        Capabilities {
-            id,
-            name,
-            characteristics,
             controls,
         }
     }
@@ -246,12 +227,16 @@ async fn get_radar(
 
     if let Some(info) = state.radars.get_by_key(&radar_id) {
         let controls = info.controls.get_controls();
-        let name = info.controls.user_name();
-        let v = Capabilities::new(radar_id, name, info, controls);
+        let v = Capabilities::new(info, controls);
 
-        return Json(v).into_response();
+        wrap_response(wrap(
+            &radar_id,
+            wrap("capabilities", serde_json::to_value(v).unwrap()),
+        ))
+        .into_response()
+    } else {
+        Json(()).into_response()
     }
-    Json(()).into_response()
 }
 
 // =============================================================================
@@ -377,7 +362,16 @@ async fn get_control_value(
             match radar.controls.get_by_id(&control_id) {
                 Some(c) => {
                     let control_value = ControlValue::from(&c, None);
-                    Json(control_value).into_response()
+                    let response = wrap_response(wrap(
+                        &radar_id,
+                        wrap(
+                            "controls",
+                            serde_json::to_value(FullRadarControlValue::from(control_value))
+                                .unwrap(),
+                        ),
+                    ));
+
+                    response.into_response()
                 }
                 None => {
                     // Debug: list all available controls
@@ -402,6 +396,67 @@ async fn get_control_value(
     }
 }
 
+//
+// "version": "1.0.0",
+//   "self": "urn:mrn:signalk:uuid:705f5f1a-efaf-44aa-9cb8-a0fd6305567c",
+//   "vessels": {
+//     "urn:mrn:signalk:uuid:705f5f1a-efaf-44aa-9cb8-a0fd6305567c": {
+//       "navigation": {
+//         "speedOverGround": {
+//           "value": 4.32693662,
+//
+
+#[derive(Serialize, ToSchema)]
+struct FullSignalKResponse {
+    version: &'static str,
+    radars: Value,
+}
+
+#[endpoint(
+    method = "GET",
+    path = "/v3/api/radars/{radar_id}/controls",
+    description = "Get the value of a radar control"
+)]
+#[axum::debug_handler]
+async fn get_control_values(
+    Path(radar_id): Path<String>,
+    State(state): State<Web>,
+) -> Result<Json<FullSignalKResponse>, RadarError> {
+    log::debug!("GET radar {} controls", radar_id);
+
+    match state.radars.get_by_key(&radar_id) {
+        Some(radar) => Ok(wrap_response(get_controls(&radar))),
+        None => Err(RadarError::NoSuchRadar(radar_id)),
+    }
+}
+
+fn get_controls(info: &RadarInfo) -> Value {
+    let rcvs = info.controls.get_radar_control_values();
+    let full: serde_json::Map<String, Value> = rcvs
+        .iter()
+        .map(|rcv| {
+            (
+                rcv.control_id.unwrap().to_string(),
+                serde_json::to_value(FullRadarControlValue::from(rcv.clone())).unwrap(),
+            )
+        })
+        .collect();
+
+    wrap(&info.key(), wrap("controls", Value::Object(full)))
+}
+
+fn wrap(outer: &str, value: Value) -> Value {
+    let mut map = serde_json::Map::new();
+    map.insert(outer.to_string(), value);
+    Value::Object(map)
+}
+
+fn wrap_response(radars: Value) -> Json<FullSignalKResponse> {
+    Json(FullSignalKResponse {
+        version: VERSION,
+        radars,
+    })
+}
 ///
 /// Stream handler implementing the Signal K Stream procotol
 ///

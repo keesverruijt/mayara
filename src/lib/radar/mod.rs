@@ -285,7 +285,7 @@ impl RadarInfo {
             rotation_timestamp: Instant::now() - Duration::from_secs(2),
         };
 
-        log::info!("Created RadarInfo {:?}", info);
+        log::trace!("Created RadarInfo {:?}", info);
         info
     }
 
@@ -304,7 +304,7 @@ impl RadarInfo {
     pub fn set_doppler(&mut self, doppler: bool) {
         if doppler != self.doppler {
             self.legend = default_legend(&self.targets, doppler, self.pixel_values);
-            log::info!("Doppler changed to {}", doppler);
+            log::debug!("Doppler changed to {}", doppler);
             self.doppler = doppler;
         }
     }
@@ -312,7 +312,7 @@ impl RadarInfo {
     pub fn set_pixel_values(&mut self, pixel_values: u8) {
         if pixel_values != self.pixel_values {
             self.legend = default_legend(&self.targets, self.doppler, pixel_values);
-            log::info!("Pixel_values changed to {}", pixel_values);
+            log::debug!("Pixel_values changed to {}", pixel_values);
         }
         self.pixel_values = pixel_values;
     }
@@ -479,7 +479,7 @@ impl SharedRadars {
                 .persistent_data
                 .update_info_from_persistence(&mut new_info);
 
-            log::info!("key '{}' info {:?}", &new_info.key, new_info);
+            log::debug!("key '{}' info {:?}", &new_info.key, new_info);
             log::info!(
                 "Found radar: key '{}' name '{}'",
                 &new_info.key,
@@ -806,7 +806,7 @@ fn default_legend(targets: &TargetMode, doppler: bool, pixel_values: u8) -> Lege
         }
     }
 
-    log::info!("Created legend {:?}", legend);
+    log::debug!("Created legend {:?}", legend);
     legend
 }
 
