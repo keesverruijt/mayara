@@ -18,8 +18,8 @@ jobs:
       uses: jirutka/setup-alpine@v1.2.0
     - name: Prepare Alpine chroot
       run: |
-        apk add git curl bash g++ musl-dev make perl &&
-        curl -sSf https://sh.rustup.rs | bash -s -- -y
+        apk add git curl bash g++ musl-dev make perl nodejs &&
+        curl -sSf https://sh.rustup.rs | bash -s -- -
       shell: alpine.sh --root {0}
     - name: Build in Alpine chroot
       run: cargo build --release
