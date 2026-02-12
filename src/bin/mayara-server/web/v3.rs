@@ -71,7 +71,7 @@ async fn openapi(State(_state): State<Web>) -> impl IntoResponse {
 struct RadarApiV3 {
     name: String,
     brand: String,
-    #[serde(skip_serializing_if(Option::is_none))]
+    #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
     spoke_data_url: String,
     radar_ip_address: Ipv4Addr,
