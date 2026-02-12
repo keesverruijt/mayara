@@ -10,65 +10,35 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  linux_x86_64:
+  build:
+    name: Build ${{ matrix.target }}
     runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - name: Setup latest Alpine linux
-      uses: jirutka/setup-alpine@v1.2.0
-    - name: Prepare Alpine chroot
-      run: |
-        apk add --update git curl bash g++ musl-dev make perl nodejs &&
-        curl -sSf https://sh.rustup.rs | bash -s -- -
-      shell: alpine.sh --root {0}
-    - name: Build in Alpine chroot
-      run: cargo build --release
-      shell: alpine.sh --root {0}
-    - name: Run tests
-      run: cargo test --release --verbose
-      shell: alpine.sh --root {0}
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: Mayara Linux x86_64
-        path: target/release/mayara-server
+    strategy:
+      matrix:
+        target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl, x86_64-pc-windows-gnu]
 
-  linux_arm64:
-    runs-on: ubuntu-24.04-arm
     steps:
-    - name: Checkout code
+
+    - name: Checkout
       uses: actions/checkout@v4
-    - name: Prepare build
-      run: 
-        sudo apt-get -q -y update &&
-        sudo apt-get -q -y install git curl bash g++ musl-dev make perl &&
-        curl https://sh.rustup.rs | bash -s -- -y &&
-        rustup target add aarch64-unknown-linux-musl
-    - name: cargo build
-      run: |
-        cargo version
-        rustc --version
-        cargo build --release --target aarch64-unknown-linux-musl
-        ls -lR target
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
       with:
-        name: Mayara Linux aarch64
-        path: target/aarch64-unknown-linux-musl/release/mayara-server
+        toolchain: stable
+        target: ${{ matrix.target }}
+        override: true
 
-  macos_arm64:
-    runs-on: macos-14
-    steps:
-    - uses: actions/checkout@v4
+    - name: Install Cross
+      run: cargo install cross
+
     - name: Build
-      run: cargo build --release
-    - name: Run tests
-      run: cargo test --release --verbose
+      run: cross build --release --target ${{ matrix.target }}
+
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: Mayara macOS Apple Silicon
-        path: target/release/mayara-server
+        name: mayara-server for ${{ matrix.target }}
+        path: target/${{ matrix.target }}/release/mayara-server*
 
   windows:
     runs-on: windows-latest
