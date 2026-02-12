@@ -35,9 +35,8 @@ jobs:
       run: npm install @marineyachtradar/mayara-gui
 
     - name: copy gui
-      run: pwd
-      run: ls -l
-      run: cp -r node_modules/@marineyachtradar/mayara-gui web/v3/gui
+      run: pwd && ls -l && cp -r node_modules/@marineyachtradar/mayara-gui web/v3/gui
+
     - name: Build
       run: cross build --release --target ${{ matrix.target }}
 
