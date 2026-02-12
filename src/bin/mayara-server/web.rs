@@ -1,6 +1,6 @@
 use axum::{
     Json, Router, debug_handler,
-    extract::{ConnectInfo, FromRequestParts, OriginalUri, Path, State},
+    extract::{ConnectInfo, Path, State},
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -12,7 +12,7 @@ use axum_openapi3::{
     endpoint,      // macro for defining endpoints
     reset_openapi, // function for cleaning the openapi cache (mostly used for testing)
 };
-use http::{Uri, uri};
+use http::Uri;
 use log::{debug, trace};
 use miette::Result;
 use rust_embed::RustEmbed;

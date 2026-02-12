@@ -6,7 +6,7 @@ use crate::{
     settings::{Control, ControlId, HAS_AUTO_NOT_ADJUSTABLE, SharedControls, Units},
 };
 
-use super::{FURUNO_SPOKES, RadarModel};
+use super::RadarModel;
 
 pub fn new(args: &Cli) -> SharedControls {
     let mut controls = HashMap::new();
@@ -34,12 +34,17 @@ pub fn new(args: &Cli) -> SharedControls {
         ControlId::Rain,
         Control::new_auto(ControlId::Rain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE),
     );
-
     controls.insert(
-        ControlId::OperatingHours,
-        Control::new_numeric(ControlId::OperatingHours, 0., 999999.)
+        ControlId::OperatingTime,
+        Control::new_numeric(ControlId::OperatingTime, 0., 999999999.)
             .read_only(true)
-            .wire_unit(Units::Hours),
+            .wire_unit(Units::Seconds),
+    );
+    controls.insert(
+        ControlId::TransmitTime,
+        Control::new_numeric(ControlId::TransmitTime, 0., 999999999.)
+            .read_only(true)
+            .wire_unit(Units::Seconds),
     );
 
     controls.insert(
@@ -49,13 +54,6 @@ pub fn new(args: &Cli) -> SharedControls {
             .read_only(true)
             .wire_unit(Units::RotationsPerMinute),
     );
-
-    if log::log_enabled!(log::Level::Debug) {
-        controls.insert(
-            ControlId::Spokes,
-            Control::new_numeric(ControlId::Spokes, 0., FURUNO_SPOKES as f64).read_only(true),
-        );
-    }
 
     SharedControls::new(args, controls)
 }

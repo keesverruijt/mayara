@@ -513,7 +513,7 @@ pub(super) fn process_fixed_report(receiver: &mut RaymarineReportReceiver, data:
     }
 
     if receiver.model.is_some() {
-        receiver.set_value(&ControlId::OperatingHours, report.magnetron_time);
+        receiver.set_value(&ControlId::TransmitTime, report.magnetron_time);
         receiver.set_value(&ControlId::MagnetronCurrent, report.magnetron_current);
         receiver.set_value(&ControlId::SignalStrength, report.signal_strength_value);
         receiver.set_value(&ControlId::DisplayTiming, report.display_timing);

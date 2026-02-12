@@ -303,10 +303,11 @@ impl Locator {
                                 if avoid_wifi && network::is_wireless_interface(&itf.name) {
                                     log::trace!("Ignoring wireless interface '{}'", itf.name);
                                     if_api.insert(
-                                        InterfaceId::new(&itf.name, Some(&nic_addr.ip())),
+                                        InterfaceId::new(&itf.name),
                                         RadarInterfaceApi::new(
                                             Some("Wireless ignored".to_owned()),
-                                            None,
+                                            Some(nic_ip),
+                                            Some(nic_netmask),
                                             None,
                                         ),
                                     );
@@ -399,8 +400,13 @@ impl Locator {
                                 }
 
                                 if_api.insert(
-                                    InterfaceId::new(&itf.name, Some(&nic_addr.ip())),
-                                    RadarInterfaceApi::new(None, Some(nic_ip), Some(listeners)),
+                                    InterfaceId::new(&itf.name),
+                                    RadarInterfaceApi::new(
+                                        None,
+                                        Some(nic_ip),
+                                        Some(nic_netmask),
+                                        Some(listeners),
+                                    ),
                                 );
                             }
                         }
@@ -431,8 +437,13 @@ impl Locator {
                             }
                         }
                         if_api.insert(
-                            InterfaceId::new(&itf.name, None),
-                            RadarInterfaceApi::new(Some("No IPv4 address".to_owned()), None, None),
+                            InterfaceId::new(&itf.name),
+                            RadarInterfaceApi::new(
+                                Some("No IPv4 address".to_owned()),
+                                None,
+                                None,
+                                None,
+                            ),
                         );
                     }
                 }

@@ -113,6 +113,12 @@ pub fn new(args: &Cli, model: BaseModel) -> SharedControls {
         }
         BaseModel::RD => {
             controls.insert(
+                ControlId::TransmitTime,
+                Control::new_numeric(ControlId::TransmitTime, 0., 65535.)
+                    .read_only(true)
+                    .wire_unit(Units::Hours),
+            );
+            controls.insert(
                 ControlId::MagnetronCurrent,
                 Control::new_numeric(ControlId::MagnetronCurrent, 0., 65535.).read_only(true),
             );

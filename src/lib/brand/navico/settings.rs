@@ -63,11 +63,10 @@ pub fn new(args: &Cli, model: Option<&str>) -> SharedControls {
     );
 
     controls.insert(
-        ControlId::OperatingHours,
-        Control::new_numeric(ControlId::OperatingHours, 0., 999999.)
+        ControlId::TransmitTime,
+        Control::new_numeric(ControlId::TransmitTime, 0., 999999.)
             .read_only(true)
-            .wire_scale_factor(3600., false)
-            .wire_unit(Units::Seconds),
+            .wire_unit(Units::Hours),
     );
 
     controls.insert(

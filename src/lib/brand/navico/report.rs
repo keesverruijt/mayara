@@ -1240,7 +1240,7 @@ impl NavicoReportReceiver {
         }
 
         let firmware = format!("{} {}", firmware_date, firmware_time);
-        self.set_value(&ControlId::OperatingHours, hours as f64);
+        self.set_value(&ControlId::TransmitTime, hours as f64);
         self.set_string(&ControlId::FirmwareVersion, firmware);
 
         Ok(())

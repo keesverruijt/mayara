@@ -541,12 +541,12 @@ impl FurunoReportReceiver {
                 self.set_value(&ControlId::Range, range_meters as f64);
             }
             CommandId::OnTime => {
-                let hours = numbers[0] / 3600.0;
-                self.set_value(&ControlId::OperatingHours, hours);
+                let seconds = numbers[0];
+                self.set_value(&ControlId::OperatingTime, seconds);
             }
             CommandId::TxTime => {
-                let hours = numbers[0] / 3600.0;
-                self.set_value(&ControlId::TransmitHours, hours);
+                let seconds = numbers[0];
+                self.set_value(&ControlId::TransmitTime, seconds);
             }
             CommandId::MainBangSize => {
                 // Response format: $N83,{value},0

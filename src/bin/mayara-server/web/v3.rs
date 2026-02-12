@@ -71,9 +71,10 @@ async fn openapi(State(_state): State<Web>) -> impl IntoResponse {
 struct RadarApiV3 {
     name: String,
     brand: String,
+    #[serde(skip_serializing_if(Option::is_none))]
     model: Option<String>,
-    stream_url: String,
-    address: Ipv4Addr,
+    spoke_data_url: String,
+    radar_ip_address: Ipv4Addr,
 }
 
 #[endpoint(
@@ -110,13 +111,13 @@ async fn get_radars(
             name: info.controls.user_name(),
             brand: info.brand.to_string(),
             model: info.controls.model_name(),
-            stream_url: format!("ws://{}{}{}", host, super::v1::SPOKES_URI, info.key()),
-            address: *info.addr.ip(),
+            spoke_data_url: format!("ws://{}{}{}", host, super::v1::SPOKES_URI, info.key()),
+            radar_ip_address: *info.addr.ip(),
         };
 
         api.insert(info.key(), v);
     }
-    Json(api).into_response()
+    wrap_response(api).into_response()
 }
 
 #[endpoint(
@@ -139,7 +140,7 @@ async fn get_interfaces(
     let (tx, mut rx) = mpsc::channel(1);
     state.tx_interface_request.send(Some(tx)).unwrap();
     match rx.recv().await {
-        Some(api) => Json(api).into_response(),
+        Some(api) => wrap_response(wrap("interfaces", api)).into_response(),
         _ => Json(Vec::<String>::new()).into_response(),
     }
 }
@@ -229,11 +230,7 @@ async fn get_radar(
         let controls = info.controls.get_controls();
         let v = Capabilities::new(info, controls);
 
-        wrap_response(wrap(
-            &radar_id,
-            wrap("capabilities", serde_json::to_value(v).unwrap()),
-        ))
-        .into_response()
+        wrap_response(wrap(&radar_id, wrap("capabilities", v))).into_response()
     } else {
         Json(()).into_response()
     }
@@ -364,11 +361,7 @@ async fn get_control_value(
                     let control_value = ControlValue::from(&c, None);
                     let response = wrap_response(wrap(
                         &radar_id,
-                        wrap(
-                            "controls",
-                            serde_json::to_value(FullRadarControlValue::from(control_value))
-                                .unwrap(),
-                        ),
+                        wrap("controls", FullRadarControlValue::from(control_value)),
                     ));
 
                     response.into_response()
@@ -445,16 +438,23 @@ fn get_controls(info: &RadarInfo) -> Value {
     wrap(&info.key(), wrap("controls", Value::Object(full)))
 }
 
-fn wrap(outer: &str, value: Value) -> Value {
+pub fn wrap<T>(outer: &str, value: T) -> Value
+where
+    T: Serialize,
+{
+    let value = serde_json::to_value(value).unwrap();
     let mut map = serde_json::Map::new();
     map.insert(outer.to_string(), value);
     Value::Object(map)
 }
 
-fn wrap_response(radars: Value) -> Json<FullSignalKResponse> {
+fn wrap_response<T>(value: T) -> Json<FullSignalKResponse>
+where
+    T: Serialize,
+{
     Json(FullSignalKResponse {
         version: VERSION,
-        radars,
+        radars: serde_json::to_value(value).unwrap(),
     })
 }
 ///

@@ -100,6 +100,10 @@ impl Controls {
                 Control::new_string(ControlId::ModelName).read_only(true),
             );
         }
+        controls.insert(
+            ControlId::Spokes,
+            Control::new_numeric(ControlId::Spokes, 0., 9999.).read_only(true),
+        );
 
         if args.replay {
             controls.iter_mut().for_each(|(_k, v)| {
@@ -1781,8 +1785,8 @@ pub enum ControlId {
     RotationSpeed,
     MagnetronCurrent,
     SignalStrength,
-    OperatingHours,
-    TransmitHours,
+    OperatingTime,
+    TransmitTime,
     ModelName,
     FirmwareVersion,
     SerialNumber,
@@ -1849,8 +1853,8 @@ impl ControlId {
             ControlId::ModelName
             | ControlId::WarmupTime
             | ControlId::FirmwareVersion
-            | ControlId::OperatingHours
-            | ControlId::TransmitHours
+            | ControlId::OperatingTime
+            | ControlId::TransmitTime
             | ControlId::MagnetronCurrent
             | ControlId::RotationSpeed
             | ControlId::SerialNumber
@@ -1917,10 +1921,10 @@ impl ControlId {
             ControlId::SeaClutterCurve => "Sea clutter curve",
             ControlId::RotationSpeed => "How quickly the radar antenna rotates",
             ControlId::SignalStrength => "Signal strength of the radar",
-            ControlId::OperatingHours => "How many hours the radar has been operating",
-            ControlId::TransmitHours => "How many hours the radar has been transmitting",
+            ControlId::OperatingTime => "How long the radar has been operating over its lifetime",
+            ControlId::TransmitTime => "How long the radar has been transmitting over its lifetime",
             ControlId::SerialNumber => "Manufacturer serial number of the radar",
-            ControlId::Spokes => "How many spokes the radar transmits per rotation",
+            ControlId::Spokes => "How many spokes the radar transmitted last rotation",
             ControlId::UserName => "User defined name for the radar",
         }
     }
@@ -1963,8 +1967,8 @@ impl ControlId {
             ControlId::NoTransmitStart3 => "No Transmit start (3)",
             ControlId::NoTransmitStart4 => "No Transmit start (4)",
             ControlId::NoiseRejection => "Noise rejection",
-            ControlId::OperatingHours => "Operating hours",
-            ControlId::TransmitHours => "Transmit hours",
+            ControlId::OperatingTime => "Operating time",
+            ControlId::TransmitTime => "Transmit time",
             // ControlId::Orientation => "Orientation",
             ControlId::Rain => "Rain clutter",
             ControlId::Range => "Range",
@@ -2043,8 +2047,8 @@ impl ControlId {
             ControlId::RotationSpeed => ControlDestination::Command,
             ControlId::MagnetronCurrent => ControlDestination::Command,
             ControlId::SignalStrength => ControlDestination::Command,
-            ControlId::OperatingHours => ControlDestination::ReadOnly,
-            ControlId::TransmitHours => ControlDestination::ReadOnly,
+            ControlId::OperatingTime => ControlDestination::ReadOnly,
+            ControlId::TransmitTime => ControlDestination::ReadOnly,
             ControlId::ModelName => ControlDestination::ReadOnly,
             ControlId::FirmwareVersion => ControlDestination::ReadOnly,
             ControlId::SerialNumber => ControlDestination::ReadOnly,

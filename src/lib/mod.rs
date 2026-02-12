@@ -10,7 +10,7 @@ use radar::SharedRadars;
 use serde::{Serialize, Serializer};
 use std::{
     collections::{HashMap, HashSet},
-    net::{IpAddr, Ipv4Addr},
+    net::Ipv4Addr,
     //    time::Duration,
 };
 use tokio::sync::{broadcast, mpsc};
@@ -156,8 +156,10 @@ impl std::fmt::Display for Brand {
 struct RadarInterfaceApi {
     #[serde(skip_serializing_if = "Option::is_none")]
     status: Option<String>,
-    #[serde(skip)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     ip: Option<Ipv4Addr>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    netmask: Option<Ipv4Addr>,
     #[serde(skip_serializing_if = "Option::is_none")]
     listeners: Option<HashMap<Brand, String>>,
 }
@@ -167,7 +169,6 @@ struct InterfaceId {
     name: String,
 }
 #[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
 pub struct InterfaceApi {
     brands: HashSet<Brand>,
     interfaces: HashMap<InterfaceId, RadarInterfaceApi>,
@@ -177,23 +178,22 @@ impl RadarInterfaceApi {
     fn new(
         status: Option<String>,
         ip: Option<Ipv4Addr>,
+        netmask: Option<Ipv4Addr>,
         listeners: Option<HashMap<Brand, String>>,
     ) -> Self {
         Self {
             status,
             ip,
+            netmask,
             listeners,
         }
     }
 }
 
 impl InterfaceId {
-    fn new(name: &str, address: Option<&IpAddr>) -> Self {
+    fn new(name: &str) -> Self {
         Self {
-            name: match address {
-                Some(addr) => format!("{} ({})", name, addr),
-                None => name.to_owned(),
-            },
+            name: name.to_owned(),
         }
     }
 }
