@@ -31,6 +31,11 @@ jobs:
     - name: Install Cross
       run: cargo install cross
 
+    - name: Install gui npm package
+      run: npm install @marineyachtradar/mayara-gui
+
+    - name: copy gui
+      run: cp -r node_modules/@marineyachtradar/mayara-gui web/v3/gui
     - name: Build
       run: cross build --release --target ${{ matrix.target }}
 
