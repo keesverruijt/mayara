@@ -1,6 +1,7 @@
 export { loadRadar, registerRadarCallback, registerControlCallback };
 
 import van from "/imports/van-1.5.2.min.js";
+import { toUser } from "./units.js";
 
 const { div, label, input, button, select, option } = van.tags;
 
@@ -235,39 +236,46 @@ function kn_to_ms(v) {
   return ((v * 1852) / 3600).toFixed(2);
 }
 
-function setControl(v) {
-  let i = get_element_by_server_id(v.id);
-  let control = myr_controls[v.id];
+function setControl(cv) {
+  let i = get_element_by_server_id(cv.id);
+  let control = myr_controls[cv.id];
+  let unit = undefined;
   if (i && control) {
-    if (control.unit == "m/s") {
-      i.value = ms_to_kn(v.value); // Convert to m/s -> KN
+    if (control.unit) {
+      [unit, i.value] = toUser(control.unit, cv.value);
+      console.log(
+        "<- " +
+          control.name +
+          " = si " +
+          cv.value +
+          control.unit +
+          " to user " +
+          i.value +
+          unit
+      );
     } else {
-      i.value = v.value;
+      i.value = cv.value;
+      console.log("<- " + control.name + " = " + i.value);
     }
-    console.log("<- " + control.name + " = " + v.value);
     let n = i.parentNode.querySelector(".myr_numeric");
     if (n) {
-      if (control.unit) {
-        if (control.unit == "m/s") {
-          n.innerHTML = ms_to_kn(v.value) + " kn";
-        } else {
-          n.innerHTML = v.value + " " + control.unit;
-        }
+      if (unit) {
+        n.innerHTML = i.value + " " + unit;
       } else {
-        n.innerHTML = v.value;
+        n.innerHTML = i.value;
       }
     }
     let d = i.parentNode.querySelector(".myr_description");
     if (d) {
       let description = control.descriptions
-        ? control.descriptions[v.value]
+        ? control.descriptions[i.value]
         : undefined;
       if (!description && control.hasAutoAdjustable) {
-        if (v["auto"]) {
+        if (cv["auto"]) {
           description =
             "A" +
-            (v.value > 0 ? "+" + v.value : "") +
-            (v.value < 0 ? v.value : "");
+            (i.value > 0 ? "+" + i.value : "") +
+            (i.value < 0 ? i.value : "");
           i.min = control.autoAdjustMinValue;
           i.max = control.autoAdjustMaxValue;
         } else {
@@ -275,16 +283,16 @@ function setControl(v) {
           i.max = control.maxValue;
         }
       }
-      if (!description) description = v.value;
+      if (!description) description = i.value;
       d.innerHTML = description;
     }
 
-    if (control.hasAuto && "auto" in v) {
+    if (control.hasAuto && "auto" in cv) {
       let checkbox = i.parentNode.querySelector(".myr_auto");
       if (checkbox) {
-        checkbox.checked = v.auto;
+        checkbox.checked = cv.auto;
       }
-      let display = v.auto && !control.hasAutoAdjustable ? "none" : "block";
+      let display = cv.auto && !control.hasAutoAdjustable ? "none" : "block";
       if (n) {
         n.style.display = display;
       }
@@ -294,12 +302,12 @@ function setControl(v) {
       i.style.display = display;
     }
 
-    if ("enabled" in v) {
+    if ("enabled" in cv) {
       let checkbox = i.parentNode.querySelector(".myr_enabled");
       if (checkbox) {
-        checkbox.checked = v.enabled;
+        checkbox.checked = cv.enabled;
       }
-      let display = v.enabled ? "block" : "none";
+      let display = cv.enabled ? "block" : "none";
       if (n) {
         n.style.display = display;
       }
@@ -310,9 +318,9 @@ function setControl(v) {
     }
 
     if (control.name == "Range") {
-      myr_range_control_id = v.id;
+      myr_range_control_id = cv.id;
 
-      let r = parseFloat(v.value);
+      let r = parseFloat(cv.value);
       if (control.descriptions && control.descriptions[r]) {
         let unit = control.descriptions[r].split(/(\s+)/);
         // Filter either on 'nm' or 'm'
@@ -324,16 +332,16 @@ function setControl(v) {
               // Only change if different
               units.value = new_value;
               handle_range_unit_change(new_value);
-              i.value = v.value;
+              i.value = cv.value;
             }
           }
         }
       }
     }
 
-    if (v.hasOwnProperty("dynamicReadOnly")) {
+    if (cv.hasOwnProperty("allowed")) {
       let p = i.parentNode;
-      if (v.dynamicReadOnly) {
+      if (!cv.allowed) {
         p.classList.add("myr_readonly");
         i.disabled = true;
       } else {
@@ -343,11 +351,11 @@ function setControl(v) {
     }
 
     myr_control_callbacks.forEach((cb) => {
-      cb(control, v);
+      cb(control, cv);
     });
 
-    if (v.error) {
-      myr_error_message.raise(v.error);
+    if (cv.error) {
+      myr_error_message.raise(cv.error);
     }
   }
 }

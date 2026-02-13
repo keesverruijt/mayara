@@ -1,6 +1,7 @@
 export { render_webgl };
 
-import { RANGE_SCALE, formatRangeValue, is_metric } from "./viewer.js";
+import { RANGE_SCALE } from "./viewer.js";
+import { formatRangeValue, isMetric } from "./units.js";
 
 class render_webgl {
   // The constructor gets two canvases, the real drawing one and one for background data
@@ -219,7 +220,7 @@ class render_webgl {
     this.background_ctx.fillStyle = "lightgreen";
     this.background_ctx.fillText("Beamlength " + this.beam_length, 5, 40);
     this.background_ctx.fillText(
-      "Range " + formatRangeValue(is_metric(this.range), this.range),
+      "Range " + formatRangeValue(isMetric(this.range), this.range),
       5,
       60
     );

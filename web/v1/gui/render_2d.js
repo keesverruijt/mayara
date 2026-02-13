@@ -111,5 +111,7 @@ class render_2d {
 
   // A number of spokes has been received and now is a good time to render
   // them to the screen. Usually every 14-32 spokes.
-  render() {}
+  render() {
+    // in 2d mode we already drew the spoke, nothing to do here...
+  }
 }
