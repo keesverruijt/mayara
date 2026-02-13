@@ -15,7 +15,7 @@ use tokio_graceful_shutdown::SubsystemHandle;
 use super::Model;
 use super::command::Command;
 use super::{
-    DYNAMIC_READ_ONLY_CONTROLS, NAVICO_SPOKES_RAW, RADAR_LINE_DATA_LENGTH, SPOKES_PER_FRAME,
+    DYNAMIC_ALLOWED_CONTROLS, NAVICO_SPOKES_RAW, RADAR_LINE_DATA_LENGTH, SPOKES_PER_FRAME,
 };
 
 use crate::Cli;
@@ -1160,10 +1160,10 @@ impl NavicoReportReceiver {
         if self.model == Model::HALO {
             if let Some(halo_mode) = HaloMode::from_i32(mode) {
                 self.set_value(&ControlId::Mode, mode as f64);
-                let dynamic_read_only = halo_mode != HaloMode::Custom;
+                let allowed = halo_mode == HaloMode::Custom;
                 let controls = &self.common.info.controls;
-                for ct in &DYNAMIC_READ_ONLY_CONTROLS {
-                    controls.set_dynamic_read_only(ct, dynamic_read_only);
+                for ct in &DYNAMIC_ALLOWED_CONTROLS {
+                    controls.set_allowed(ct, allowed);
                 }
             } else {
                 log::error!("{}: Unsupported HALO mode {}", self.common.key, mode);

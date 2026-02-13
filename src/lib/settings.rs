@@ -469,10 +469,10 @@ impl SharedControls {
         }
     }
 
-    pub fn set_dynamic_read_only(&self, control_id: &ControlId, read_only: bool) {
+    pub fn set_allowed(&self, control_id: &ControlId, read_only: bool) {
         let mut locked = self.controls.write().unwrap();
         if let Some(control) = locked.controls.get_mut(control_id) {
-            control.set_dynamic_read_only(read_only);
+            control.set_allowed(read_only);
         }
     }
 
@@ -860,7 +860,7 @@ pub struct ControlValue {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
-    pub dynamic_read_only: Option<bool>,
+    pub allowed: Option<bool>,
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -873,7 +873,7 @@ impl ControlValue {
             units: None,
             auto: None,
             enabled: None,
-            dynamic_read_only: None,
+            allowed: None,
             error: None,
         }
     }
@@ -890,7 +890,7 @@ impl ControlValue {
             units,
             auto,
             enabled: None,
-            dynamic_read_only: None,
+            allowed: None,
             error: None,
         }
     }
@@ -902,7 +902,7 @@ impl ControlValue {
             units: control.item().unit.clone(),
             auto: control.auto,
             enabled: control.enabled,
-            dynamic_read_only: control.dynamic_read_only,
+            allowed: control.allowed,
             error,
         }
     }
@@ -967,7 +967,7 @@ pub struct RadarControlValue {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
-    pub dynamic_read_only: Option<bool>,
+    pub allowed: Option<bool>,
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -982,7 +982,7 @@ impl RadarControlValue {
             units: control.item().unit.clone(),
             auto: control.auto,
             enabled: control.enabled,
-            dynamic_read_only: control.dynamic_read_only,
+            allowed: control.allowed,
             error,
         }
     }
@@ -1012,7 +1012,7 @@ impl From<RadarControlValue> for ControlValue {
             units: value.units,
             auto: value.auto,
             enabled: value.enabled,
-            dynamic_read_only: value.dynamic_read_only,
+            allowed: value.allowed,
             error: value.error,
         }
     }
@@ -1030,7 +1030,7 @@ pub struct FullRadarControlValue {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
-    pub dynamic_read_only: Option<bool>,
+    pub allowed: Option<bool>,
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -1042,7 +1042,7 @@ impl From<RadarControlValue> for FullRadarControlValue {
             units: value.units,
             auto: value.auto,
             enabled: value.enabled,
-            dynamic_read_only: value.dynamic_read_only,
+            allowed: value.allowed,
             error: value.error,
         }
     }
@@ -1055,7 +1055,7 @@ impl From<ControlValue> for FullRadarControlValue {
             units: value.units,
             auto: value.auto,
             enabled: value.enabled,
-            dynamic_read_only: value.dynamic_read_only,
+            allowed: value.allowed,
             error: value.error,
         }
     }
@@ -1077,7 +1077,7 @@ pub struct Control {
     #[serde(skip)]
     pub enabled: Option<bool>,
     #[serde(skip)]
-    pub dynamic_read_only: Option<bool>,
+    pub allowed: Option<bool>,
     #[serde(skip)]
     pub needs_refresh: bool, // True when it has been changed and client needs to know value (again)
 }
@@ -1092,7 +1092,7 @@ impl Control {
             auto: None,
             enabled: None,
             description: None,
-            dynamic_read_only: None,
+            allowed: None,
             needs_refresh: false,
         }
     }
@@ -1103,9 +1103,9 @@ impl Control {
         self
     }
 
-    pub fn set_dynamic_read_only(&mut self, dynamic_read_only: bool) {
-        if self.dynamic_read_only != Some(dynamic_read_only) {
-            self.dynamic_read_only = Some(dynamic_read_only);
+    pub fn set_allowed(&mut self, allowed: bool) {
+        if self.allowed != Some(allowed) {
+            self.allowed = Some(allowed);
             self.needs_refresh = true;
         }
     }

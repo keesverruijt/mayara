@@ -213,7 +213,7 @@ enum HaloMode {
 }
 
 /// There are some controls that turn read-only when the HaloMode is not Custom
-const DYNAMIC_READ_ONLY_CONTROLS: [ControlId; 5] = [
+const DYNAMIC_ALLOWED_CONTROLS: [ControlId; 5] = [
     ControlId::NoiseRejection,
     ControlId::TargetExpansion,
     ControlId::TargetSeparation,
