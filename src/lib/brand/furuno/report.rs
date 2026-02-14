@@ -270,10 +270,10 @@ impl FurunoReportReceiver {
                 if log::log_enabled!(log::Level::Debug) {
                     let control = self.common.info.controls.get(control_id).unwrap();
                     log::trace!(
-                        "{}: Control '{}' new value {} enabled {:?}",
+                        "{}: Control '{}' new value {:?} enabled {:?}",
                         self.common.key,
                         control_id,
-                        control.value(),
+                        control.value,
                         control.enabled
                     );
                 }
@@ -300,11 +300,12 @@ impl FurunoReportReceiver {
                 if log::log_enabled!(log::Level::Debug) {
                     let control = self.common.info.controls.get(control_id).unwrap();
                     log::debug!(
-                        "{}: Control '{}' new value {} auto {}",
+                        "{}: Control '{}' new value {:?} auto {} auto_value {:?}",
                         self.common.key,
                         control_id,
-                        control.value(),
-                        auto
+                        control.value,
+                        auto,
+                        control.auto_value,
                     );
                 }
             }
@@ -327,10 +328,10 @@ impl FurunoReportReceiver {
                 if log::log_enabled!(log::Level::Debug) {
                     let control = self.common.info.controls.get(control_id).unwrap();
                     log::debug!(
-                        "{}: Control '{}' new value {} auto_value {:?} auto {:?}",
+                        "{}: Control '{}' new value {:?} auto_value {:?} auto {:?}",
                         self.common.key,
                         control_id,
-                        control.value(),
+                        control.value,
                         control.auto_value,
                         control.auto
                     );

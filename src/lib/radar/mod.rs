@@ -641,7 +641,13 @@ impl Power {
                 Some(1) => Ok(Power::Standby),
                 Some(2) => Ok(Power::Transmit),
                 Some(3) => Ok(Power::Preparing),
-                _ => Err(RadarError::ParseJson(format!("Unknown status: {}", s))),
+                _ => match n.as_f64() {
+                    Some(0.) => Ok(Power::Off),
+                    Some(1.) => Ok(Power::Standby),
+                    Some(2.) => Ok(Power::Transmit),
+                    Some(3.) => Ok(Power::Preparing),
+                    _ => Err(RadarError::ParseJson(format!("Unknown status: {}", s))),
+                },
             },
             Value::String(s) => match s.to_ascii_lowercase().as_str() {
                 "0" | "off" => Ok(Power::Off),
@@ -952,10 +958,10 @@ impl CommonRadar {
                 self.trails.set_rotation_speed(ms);
 
                 log::debug!("spoke_count = {}", self.spoke_count);
-                let _ = self
-                    .info
+                self.info
                     .controls
-                    .set_value(&ControlId::Spokes, Value::Number(self.spoke_count.into()));
+                    .set_value(&ControlId::Spokes, Value::Number(self.spoke_count.into()))
+                    .unwrap();
 
                 self.spoke_count = 0;
             }

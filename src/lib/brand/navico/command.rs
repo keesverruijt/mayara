@@ -1,12 +1,11 @@
-use std::cmp::{max, min};
-
 use async_trait::async_trait;
+use std::cmp::{max, min};
 use tokio::net::UdpSocket;
 
 use crate::brand::CommandSender;
 use crate::network::create_multicast_send;
 use crate::radar::{Power, RadarError, RadarInfo};
-use crate::settings::{ControlId, ControlValue, SharedControls};
+use crate::settings::{ControlId, ControlValue, SharedControls, Units};
 
 use super::Model;
 
@@ -67,7 +66,7 @@ impl Command {
         }
         if let Some(sock) = &self.sock {
             sock.send(message).await.map_err(RadarError::Io)?;
-            log::trace!("{}: sent {:02X?}", self.key, message);
+            log::debug!("{}: sent command {:02X?}", self.key, message);
         }
 
         Ok(())
@@ -99,8 +98,14 @@ impl Command {
     fn get_angle_value(ct: &ControlId, controls: &SharedControls) -> i16 {
         if let Some(control) = controls.get(ct) {
             if let Some(value) = control.value {
-                let value = (value * 10.0) as i32;
-                return Self::mod_deci_degrees(value) as i16;
+                let deg = Units::Degrees.from_si(Units::Radians, value);
+                let deg = (deg * 10.) as i32;
+                log::info!(
+                    "Convert other angle from {} rad to {} decidegrees",
+                    value,
+                    deg
+                );
+                return Self::mod_deci_degrees(deg) as i16;
             }
         }
         return 0;
@@ -140,19 +145,32 @@ impl CommandSender for Command {
         cv: &ControlValue,
         controls: &SharedControls,
     ) -> Result<(), RadarError> {
-        log::debug!("set_control({:?},...)", cv);
+        let mut cmd = Vec::with_capacity(12);
 
-        let value = cv.as_f32()?;
+        log::info!("Command handling request {:?}", cv);
 
-        let deci_value = (value * 10.0) as i32;
+        let control = controls.get(&cv.id).unwrap();
         let auto: u8 = if cv.auto.unwrap_or(false) { 1 } else { 0 };
         let enabled: u8 = if cv.enabled.unwrap_or(false) { 1 } else { 0 };
 
-        let mut cmd = Vec::with_capacity(6);
+        let auto_value = cv
+            .auto_as_f64()
+            .unwrap_or(control.auto_as_f64().unwrap_or(0.));
+        let value = cv.as_f64().unwrap_or(control.as_f64().unwrap_or(0.));
+        let deci_value = f64::round(value * 10.0) as i32;
+        log::debug!(
+            "set_control({:?},...) = {} / {},auto={},auto_value={},enabled={}",
+            cv,
+            value,
+            deci_value,
+            auto,
+            auto_value,
+            enabled
+        );
 
         match cv.id {
             ControlId::Power => {
-                let value = match Power::from_value(&cv.value).unwrap_or(Power::Standby) {
+                let value = match Power::from_value(&cv.as_value()?).unwrap_or(Power::Standby) {
                     Power::Transmit => 1,
                     _ => 0,
                 };
@@ -196,17 +214,23 @@ impl CommandSender for Command {
                     // Data: 11c100000001 = Mode manual
                     // Data: 11c101000001 = Mode auto
 
-                    cmd.extend_from_slice(&[0x11, 0xc1]);
-                    if auto == 0 {
-                        cmd.extend_from_slice(&0x00000001u32.to_le_bytes());
-                        self.send(&cmd).await?;
-                        cmd.clear();
-                        cmd.extend_from_slice(&[0x11, 0xc1, 0x00, value as u8, value as u8, 0x02]);
+                    cmd.extend_from_slice(&[0x11, 0xc1, auto]);
+                    if cv.value.is_none() && cv.auto_value.is_none() {
+                        // Capture data:
+                        // Data: 11c101000004 = Auto
+                        // Data: 11c10100ff04 = Auto-1
+                        // Data: 11c10100ce04 = Auto-50
+                        // Data: 11c101323204 = Auto+50
+                        // Data: 11c100646402 = 100
+                        // Data: 11c100000002 = 0
+                        // Data: 11c100000001 = Mode manual
+                        // Data: 11c101000001 = Mode auto
+
+                        cmd.extend_from_slice(&[0x00, 0x00, 0x01]);
+                    } else if auto == 0 {
+                        cmd.extend_from_slice(&[value as u8, auto_value as i8 as u8, 0x02]);
                     } else {
-                        cmd.extend_from_slice(&0x01000001u32.to_le_bytes());
-                        self.send(&cmd).await?;
-                        cmd.clear();
-                        cmd.extend_from_slice(&[0x11, 0xc1, 0x01, 0x00, value as i8 as u8, 0x04]);
+                        cmd.extend_from_slice(&[value as u8, auto_value as i8 as u8, 0x04]);
                     }
                 } else {
                     let v: u32 = Self::scale_100_to_byte(value) as u32;
@@ -321,7 +345,7 @@ impl CommandSender for Command {
                 cmd.extend_from_slice(&[0x23, 0xc1, value as u8]);
             }
             ControlId::DopplerSpeedThreshold => {
-                let value = (value * 100.0) as u16;
+                let value = f64::round(value * 100.0) as u16;
                 let value = max(0, min(1594, value));
                 cmd.extend_from_slice(&[0x24, 0xc1]);
                 cmd.extend_from_slice(&value.to_le_bytes());

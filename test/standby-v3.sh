@@ -12,7 +12,7 @@ radars=$(curl -s "${V3}/radars" | jq -r '.radars | keys[]')
 for radar in ${radars}
 do
   echo "Standby radar ${radar}"
-  curl -s --json '{"value":"1"}' "${V3}/radars/${radar}/controls/power"
+  curl -s --json '{"value":"standby"}' "${V3}/radars/${radar}/controls/power"
   echo ""
 done
 

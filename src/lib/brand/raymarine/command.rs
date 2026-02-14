@@ -89,7 +89,7 @@ impl CommandSender for Command {
         cv: &ControlValue,
         controls: &SharedControls,
     ) -> Result<(), RadarError> {
-        let value = cv.as_f32()?;
+        let value = cv.as_f64()?;
 
         match self.model {
             BaseModel::RD => rd::set_control(self, cv, value, controls).await,

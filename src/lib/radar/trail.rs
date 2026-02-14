@@ -106,7 +106,8 @@ impl TrailBuffer {
                 return Ok(());
             }
             ControlId::DopplerTrailsOnly => {
-                let r = controls.set_value(&cv.id, cv.value.clone());
+                let v = cv.as_value()?;
+                let r = controls.set_value(&cv.id, v.clone());
                 if r.is_ok() {
                     let value = controls.get(&cv.id).unwrap().as_u16().unwrap_or(0) > 0;
                     self.set_doppler_trail_only(value);
@@ -114,44 +115,44 @@ impl TrailBuffer {
                 return r.map(|_| ()).map_err(|e| RadarError::ControlError(e));
             }
             ControlId::TargetTrails => {
-                let r = controls.set_value(&cv.id, cv.value.clone());
+                let v = cv.as_value()?;
+                let r = controls.set_value(&cv.id, v.clone());
                 if r.is_ok() {
                     let value = controls.get(&cv.id).unwrap().as_u16().unwrap_or(0);
                     self.set_relative_trails_length(value);
                 }
                 return r.map(|_| ()).map_err(|e| RadarError::ControlError(e));
             }
-            ControlId::TrailsMotion => match cv.as_bool() {
-                Ok(true_motion) => self
+            ControlId::TrailsMotion => {
+                let true_motion = cv.as_bool()?;
+                return self
                     .set_trails_mode(true_motion)
-                    .map_err(|e| RadarError::ControlError(e)),
-                Err(e) => Err(e),
-            },
+                    .map_err(|e| RadarError::ControlError(e));
+            }
             ControlId::ClearTargets => {
                 self.targets.as_mut().map(|t| t.delete_all_targets());
                 return Ok(());
             }
-            ControlId::DopplerAutoTrack => match cv.as_bool() {
-                Ok(arpa) => {
-                    if let Some(ref mut targets) = self.targets {
-                        if let Err(e) = targets.set_arpa_via_doppler(arpa) {
-                            return Err(RadarError::ControlError(e));
-                        } else {
-                            Ok(())
-                        }
+            ControlId::DopplerAutoTrack => {
+                let arpa = cv.as_bool()?;
+                if let Some(ref mut targets) = self.targets {
+                    if let Err(e) = targets.set_arpa_via_doppler(arpa) {
+                        return Err(RadarError::ControlError(e));
                     } else {
-                        Err(RadarError::CannotSetControlId(cv.id))
+                        Ok(())
                     }
+                } else {
+                    Err(RadarError::CannotSetControlId(cv.id))
                 }
-                Err(e) => Err(e),
-            },
+            }
             _ => Err(RadarError::CannotSetControlId(cv.id)),
         };
 
         // If we are still here, we still need to set the control value
         if reply.is_ok() {
+            let value = cv.as_value()?;
             reply = controls
-                .set_value(&cv.id, cv.value.clone())
+                .set_value(&cv.id, value)
                 .map(|_| ())
                 .map_err(|e| RadarError::ControlError(e));
         }

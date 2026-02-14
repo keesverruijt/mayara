@@ -1,6 +1,6 @@
 ### Power control
 
-| Control | Unit  |
+| Control | Type  |
 |---------|-------|
 | power   | enum  |
 

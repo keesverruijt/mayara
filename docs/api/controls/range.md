@@ -1,8 +1,8 @@
 ### Range control
 
-| Control | Unit  |
-|---------|-------|
-| range   | meter |
+| Control | Type   | Units |
+|---------|--------|-------|
+| range   | number | m     |
 
 The range of a radar describes the maximum distance from the radar antenna that the beam is picking up targets from. At API level it is always in meters.
 

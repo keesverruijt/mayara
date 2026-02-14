@@ -19,6 +19,7 @@ var myr_error_message;
 var myr_no_response_timeout;
 var myr_callbacks = Array();
 var myr_control_callbacks = Array();
+var myr_control_values = Array();
 
 function registerRadarCallback(callback) {
   myr_callbacks.push(callback);
@@ -50,11 +51,12 @@ const NumericValue = (id, name) =>
     input({
       type: "number",
       id: prefix + id,
-      onchange: (e) => do_change(e),
+      onchange: (e) => do_change(e.target),
       oninput: (e) => do_input(e),
     })
   );
 
+// this is the HTML range control, not a radar range!
 const RangeValue = (id, name, min, max, def, descriptions) =>
   div(
     { class: "myr_control" },
@@ -66,7 +68,7 @@ const RangeValue = (id, name, min, max, def, descriptions) =>
       min,
       max,
       value: def,
-      onchange: (e) => do_change(e),
+      onchange: (e) => do_change(e.target),
     })
   );
 
@@ -74,7 +76,7 @@ const ButtonValue = (id, name) =>
   div(
     { class: "myr_button" },
     button(
-      { type: "button", id: prefix + id, onclick: (e) => do_change(e) },
+      { type: "button", id: prefix + id, onclick: (e) => do_change(e.target) },
       name
     )
   );
@@ -87,7 +89,7 @@ const AutoButton = (id) =>
       type: "checkbox",
       class: "myr_auto",
       id: prefix + id + auto_postfix,
-      onchange: (e) => do_change_auto(e),
+      onchange: (e) => do_change_auto(e.target),
     })
   );
 
@@ -102,7 +104,7 @@ const EnabledButton = (id) =>
       type: "checkbox",
       class: "myr_enabled",
       id: prefix + id + enabled_postfix,
-      onchange: (e) => do_change_enabled(e),
+      onchange: (e) => do_change_enabled(e.target),
     })
   );
 
@@ -112,7 +114,7 @@ const SelectValue = (id, name, validValues, descriptions) => {
     label({ for: prefix + id }, name),
     div({ class: "myr_description" }),
     select(
-      { id: prefix + id, onchange: (e) => do_change(e) },
+      { id: prefix + id, onchange: (e) => do_change(e.target) },
       validValues.map((v) => option({ value: v }, descriptions[v]))
     )
   );
@@ -192,6 +194,30 @@ function restart(id) {
   setTimeout(loadRadar, 15000, id);
 }
 
+function convertControlsToUserUnits(controls) {
+  const result = {};
+
+  Object.entries(controls).forEach(([id, ctrl]) => {
+    // shallow clone – keep everything else intact
+    let cloned = { ...ctrl };
+
+    if (cloned.units) {
+      let units = cloned.units;
+      // Convert only numeric properties that exist
+      ["minValue", "maxValue", "stepValue"].forEach((prop) => {
+        if (prop in cloned) {
+          [units, cloned[prop]] = toUser(cloned.units, cloned[prop]);
+        }
+      });
+      cloned.user_units = units;
+    }
+
+    result[id] = cloned;
+  });
+
+  return result;
+}
+
 function radarsLoaded(id, d) {
   myr_radar = d[id];
 
@@ -199,7 +225,8 @@ function radarsLoaded(id, d) {
     restart(id);
     return;
   }
-  myr_controls = myr_radar.controls;
+
+  myr_controls = convertControlsToUserUnits(myr_radar.controls);
   myr_error_message = new TemporaryMessage("error");
 
   buildControls();
@@ -228,54 +255,110 @@ function radarsLoaded(id, d) {
   });
 }
 
-function ms_to_kn(v) {
-  return ((v * 3600) / 1852).toFixed(1);
+/**
+ * Rounds a number to a limited number of decimals, for user pleasure.
+ *
+ * @param {number} value      The value you want to round.
+ * @param {number} stepValue  Step size – any positive float.
+ * @returns {number}          Rounded result
+ */
+function roundToStep(value, stepValue) {
+  value = Number(value);
+  if (!Number.isFinite(value) || !Number.isFinite(stepValue)) return NaN;
+
+  if (Math.abs(stepValue - 0.1) < Number.EPSILON) {
+    return Number((value + stepValue / 2).toFixed(1));
+  }
+  if (stepValue < 0.02) {
+    return Number((value + stepValue / 2).toFixed(2));
+  }
+  if (stepValue <= 1) {
+    return Number((value + stepValue / 2).toFixed(1));
+  }
+
+  const scale = 1 / stepValue; // e.g. 100 for 0.01
+
+  const scaledVal = Math.round(value * scale);
+  const scaledStep = Math.round(stepValue * scale);
+
+  const roundedInt = Math.round(scaledVal / scaledStep) * scaledStep;
+
+  const rounded = roundedInt / scale;
+
+  return rounded; // plain number otherwise
 }
 
-function kn_to_ms(v) {
-  return ((v * 1852) / 3600).toFixed(2);
-}
+//
+// When the websocket returns data from the server, it is assumed alwas to
+// be a ControlValue. In V1 that is correct.
+//
 
 function setControl(cv) {
+  myr_control_values[cv.id] = cv; // Save it for later when auto changes
+
   let i = get_element_by_server_id(cv.id);
   let control = myr_controls[cv.id];
-  let unit = undefined;
+  let units = undefined;
+  var value;
+
   if (i && control) {
-    if (control.unit) {
-      [unit, i.value] = toUser(control.unit, cv.value);
+    var value;
+    if (control.hasAutoAdjustable && cv.auto) {
+      value = cv.autoValue;
+      console.log("Using autoValue " + value);
+    } else {
+      value = cv.value;
+    }
+
+    if (cv.units && control.name != "Range") {
+      [units, value] = toUser(cv.units, value);
       console.log(
         "<- " +
           control.name +
           " = si " +
           cv.value +
-          control.unit +
+          control.units +
           " to user " +
-          i.value +
-          unit
+          value +
+          units
       );
+      if (control.stepValue) {
+        value = roundToStep(value, control.stepValue);
+
+        console.log(
+          "<- " +
+            control.name +
+            " = si " +
+            cv.value +
+            control.units +
+            " to user " +
+            value +
+            units +
+            " after step value " +
+            control.stepValue
+        );
+      }
     } else {
-      i.value = cv.value;
-      console.log("<- " + control.name + " = " + i.value);
+      console.log("<- " + control.name + " = " + value);
     }
+
     let n = i.parentNode.querySelector(".myr_numeric");
     if (n) {
-      if (unit) {
-        n.innerHTML = i.value + " " + unit;
+      if (units) {
+        n.innerHTML = value + " " + units;
       } else {
-        n.innerHTML = i.value;
+        n.innerHTML = value;
       }
     }
     let d = i.parentNode.querySelector(".myr_description");
     if (d) {
       let description = control.descriptions
-        ? control.descriptions[i.value]
+        ? control.descriptions[value]
         : undefined;
       if (!description && control.hasAutoAdjustable) {
         if (cv["auto"]) {
           description =
-            "A" +
-            (i.value > 0 ? "+" + i.value : "") +
-            (i.value < 0 ? i.value : "");
+            "A" + (value > 0 ? "+" + value : "") + (value < 0 ? value : "");
           i.min = control.autoAdjustMinValue;
           i.max = control.autoAdjustMaxValue;
         } else {
@@ -283,9 +366,15 @@ function setControl(cv) {
           i.max = control.maxValue;
         }
       }
-      if (!description) description = i.value;
+      if (!description) description = value;
       d.innerHTML = description;
     }
+    // Set this after setting min, max
+    i.value = value;
+    console.log(
+      "Control " + cv.id + " set to " + value + " min " + i.min,
+      " max " + i.max
+    );
 
     if (control.hasAuto && "auto" in cv) {
       let checkbox = i.parentNode.querySelector(".myr_auto");
@@ -322,15 +411,15 @@ function setControl(cv) {
 
       let r = parseFloat(cv.value);
       if (control.descriptions && control.descriptions[r]) {
-        let unit = control.descriptions[r].split(/(\s+)/);
+        let units = control.descriptions[r].split(/(\s+)/);
         // Filter either on 'nm' or 'm'
-        if (unit.length == 3) {
-          let units = get_element_by_server_id(RANGE_UNIT_SELECT_ID);
-          if (units) {
-            let new_value = unit[2] == "nm" ? 1 : 0;
-            if (units.value != new_value) {
+        if (units.length == 3) {
+          let units_el = get_element_by_server_id(RANGE_UNIT_SELECT_ID);
+          if (units_el) {
+            let new_value = units[2] == "nm" ? 1 : 0;
+            if (units_el.value != new_value) {
               // Only change if different
-              units.value = new_value;
+              units_el.value = new_value;
               handle_range_unit_change(new_value);
               i.value = cv.value;
             }
@@ -368,6 +457,7 @@ function buildControls() {
   c = get_element_by_server_id("controls");
   c.innerHTML = "";
   for (const [k, v] of Object.entries(myr_controls)) {
+    console.log("build control " + v);
     if (v["isReadOnly"]) {
       if (k == 0) {
         van.add(c, div({ class: "myr_control myr_error" }, "REPLAY MODE"));
@@ -386,7 +476,7 @@ function buildControls() {
     } else if (
       "maxValue" in v &&
       v.maxValue <= 100 &&
-      (!v.unit || v.unit !== "m/s")
+      (!v.units || v.units !== "m/s") // "m/s" check makes DopplerSpeedThreshold show as normal number
     ) {
       van.add(
         c,
@@ -425,73 +515,67 @@ function add_range_unit_select(c, descriptions) {
   }
 }
 
-function do_change(e) {
-  let v = e.target;
+function do_change(v) {
   let id = html_to_server_id(v.id);
-  console.log("change " + e + " " + id + "=" + v.value);
   if (id == RANGE_UNIT_SELECT_ID) {
     handle_range_unit_change(v.value);
     return;
   }
-  let value = v.value;
   let control = myr_controls[id];
-  if (control && control.unit == "m/s") {
-    value = kn_to_ms(value);
+  let update = myr_control_values[id];
+  let message = { id: id };
+  let value = v.value;
+  if ("user_units" in control && control.name != "Range") {
+    message.units = control.user_units;
+    value = Number(value);
   }
-  let message = { id: id, value: value };
   let checkbox = document.getElementById(v.id + auto_postfix);
   if (checkbox) {
+    update.auto = checkbox.checked;
     message.auto = checkbox.checked;
+  }
+  if (checkbox && checkbox.checked && control.hasAutoAdjustable) {
+    update.autoValue = value;
+    message.autoValue = value;
+  } else {
+    update.value = value;
+    message.value = value;
   }
   checkbox = document.getElementById(v.id + enabled_postfix);
   if (checkbox) {
+    update.enabled = checkbox.checked;
     message.enabled = checkbox.checked;
   }
+  setControl(update); // Update the GUI state so the proper Auto/NotAuto value is shown
   let cv = JSON.stringify(message);
   myr_webSocket.send(cv);
   console.log(myr_controls[id].name + "-> " + cv);
 }
 
-function do_change_auto(e) {
-  let checkbox = e.target;
+function do_change_auto(checkbox) {
   let id = html_to_server_id(checkbox.id);
   let v = document.getElementById(html_to_value_id(checkbox.id));
-  console.log(
-    "change auto " + e + " " + id + "=" + v.value + " auto=" + checkbox.checked
-  );
-  let cv = JSON.stringify({ id: id, value: v.value, auto: checkbox.checked });
+
+  let update = myr_control_values[id];
+  update.auto = checkbox.checked;
+  setControl(update); // Update the GUI state so the proper Auto/NotAuto value is shown
+
+  let cv = JSON.stringify({ id: id, auto: checkbox.checked });
   myr_webSocket.send(cv);
   console.log(myr_controls[id].name + "-> " + cv);
 }
 
-function do_change_enabled(e) {
-  let checkbox = e.target;
+function do_change_enabled(checkbox) {
   let id = html_to_server_id(checkbox.id);
   let v = document.getElementById(html_to_value_id(checkbox.id));
-  console.log(
-    "change enabled " +
-      e +
-      " " +
-      id +
-      "=" +
-      v.value +
-      " enabled=" +
-      checkbox.checked
-  );
-  let cv = JSON.stringify({
-    id: id,
-    value: v.value,
-    enabled: checkbox.checked,
-  });
-  myr_webSocket.send(cv);
-  console.log(myr_controls[id].name + "-> " + cv);
+  do_change(v);
 }
 
 function do_button(e) {
   let v = e.target.previousElementSibling;
   let id = html_to_server_id(v.id);
-  console.log("set_button " + e + " " + id + "=" + v.value);
-  let cv = JSON.stringify({ id: id, value: v.value });
+  console.log("do_button " + e + " " + id);
+  let cv = JSON.stringify({ id: id });
   myr_webSocket.send(cv);
   console.log(myr_controls[id].name + "-> " + cv);
 }
@@ -527,7 +611,7 @@ function html_to_value_id(id) {
 }
 
 function handle_range_unit_change(value) {
-  let unit = value == 0 ? / (k?)m$/ : / nm$/;
+  let units = value == 0 ? / (k?)m$/ : / nm$/;
 
   if (myr_range_control_id) {
     let e = get_element_by_server_id(myr_range_control_id);
@@ -538,7 +622,7 @@ function handle_range_unit_change(value) {
     let descriptions = {};
 
     for (const r of c.validValues) {
-      if (c.descriptions[r].match(unit)) {
+      if (c.descriptions[r].match(units)) {
         validValues.push(r);
         descriptions[r] = c.descriptions[r];
       }

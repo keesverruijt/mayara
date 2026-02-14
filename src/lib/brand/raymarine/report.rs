@@ -239,11 +239,12 @@ impl RaymarineReportReceiver {
                 if log::log_enabled!(log::Level::Debug) {
                     let control = self.common.info.controls.get(control_id).unwrap();
                     log::trace!(
-                        "{}: Control '{}' new value {} auto {:?} enabled {:?}",
+                        "{}: Control '{}' new value {:?} auto {:?} auto_value {:?} enabled {:?}",
                         self.common.key,
                         control_id,
-                        control.value(),
+                        control.value,
                         control.auto,
+                        control.auto_value,
                         control.enabled
                     );
                 }
@@ -304,13 +305,14 @@ impl RaymarineReportReceiver {
                 if log::log_enabled!(log::Level::Debug) {
                     let control = self.common.info.controls.get(control_id).unwrap();
                     log::trace!(
-                        "{}: Control '{}' new wire min {} max {} value {} auto {:?} enabled {:?} ",
+                        "{}: Control '{}' new wire min {} max {} value {:?} auto {:?} auto_value {:?} enabled {:?} ",
                         self.common.key,
                         control_id,
                         min,
                         max,
-                        control.value(),
+                        control.value,
                         control.auto,
+                        control.auto_value,
                         control.enabled,
                     );
                 }

@@ -5,14 +5,14 @@
 export { toSI, unitLabel, toUser, isMetric, toRangeValue, formatRangeValue };
 
 function formatRangeValue(metric, range) {
-  let [unit, text] = toRangeValue(metric, range);
-  return text + " " + unitLabel(unit);
+  let [units, text] = toRangeValue(metric, range);
+  return text + " " + unitLabel(units);
 }
 
 function dividesNear(a, b) {
   let remainder = a % b;
   let r = remainder <= 1.0 || remainder >= b - 1;
-  console.log("dividesNear: " + a + " % " + b + " = " + remainder + " -> " + r);
+  // console.log("dividesNear: " + a + " % " + b + " = " + remainder + " -> " + r);
   return r;
 }
 
@@ -101,8 +101,8 @@ const Units = Object.freeze({
 });
 
 // Helper: get the short label for a unit
-function unitLabel(unit) {
-  return Units[unit] ?? "";
+function unitLabel(units) {
+  return Units[units] ?? "";
 }
 
 // -----------------------------------------------------------
@@ -125,27 +125,27 @@ const TO_USER_CONVERSIONS = [
   [Units.Hours, Units.Seconds, 1 / 3600.0],
 ];
 
-function toSI(unit, value) {
+function toSI(units, value) {
   for (const [from, to, factor] of TO_SI_CONVERSIONS) {
-    if (unit === from) return [to, value * factor];
+    if (units === from) return [to, value * factor];
   }
   // No conversion needed – already SI or unknown unit
-  return [unit, value];
+  return [units, value];
 }
 
-function toUser(unit, value) {
+function toUser(units, value) {
   // Special case to prefer nm only if it matches a particular list
-  if (unit === Units.Meters) {
+  if (units === Units.Meters) {
     let [probeUnit, probeValue] = toRangeValue(false, value);
     if (probeUnit === Units.NauticalMiles) {
       return [Units.NauticalMiles, value];
     }
   }
   for (const [to, from, factor] of TO_USER_CONVERSIONS) {
-    if (unit === from) return [to, value * factor];
+    if (units === from) return [to, value * factor];
   }
   // No conversion needed
-  return [unit, value];
+  return [units, value];
 }
 
 function fromSI(targetUnit, originSI, value) {
@@ -156,23 +156,16 @@ function fromSI(targetUnit, originSI, value) {
   return value;
 }
 
-// -----------------------------------------------------------
-//  7) Reverse map: short label → Units enum value
-// -----------------------------------------------------------
 const LabelToUnit = Object.freeze(
-  // Convert UnitLabels into an object where key=label, value=unit
-  Object.entries(Units).reduce((acc, [unit, label]) => {
+  Object.entries(Units).reduce((acc, [units, label]) => {
     if (label !== "") {
       // skip the empty string for None
-      acc[label] = unit;
+      acc[label] = units;
     }
     return acc;
   }, {})
 );
 
-// -----------------------------------------------------------
-//  8) Public helper: parse a string into a Units value
-// -----------------------------------------------------------
 /**
  * @param {string} label   e.g. "km", "deg", "m/s"
  * @returns {string | null}  Returns the matching Units enum value or null if unknown

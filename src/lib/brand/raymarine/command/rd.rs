@@ -34,7 +34,7 @@ pub async fn set_control(
 
     match cv.id {
         ControlId::Power => {
-            let value = match Power::from_value(&cv.value).unwrap_or(Power::Standby) {
+            let value = match Power::from_value(&cv.as_value()?).unwrap_or(Power::Standby) {
                 Power::Transmit => 1,
                 _ => 0,
             };

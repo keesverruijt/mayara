@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use crate::{
     Cli,
     radar::{NAUTICAL_MILE, RadarInfo, range::Ranges},
-    settings::{Control, ControlId, HAS_AUTO_NOT_ADJUSTABLE, SharedControls, Units},
+    settings::{
+        ControlId, HAS_AUTO_NOT_ADJUSTABLE, SharedControls, Units, new_auto, new_list, new_numeric,
+        new_string,
+    },
 };
 
 use super::RadarModel;
@@ -11,49 +14,35 @@ use super::RadarModel;
 pub fn new(args: &Cli) -> SharedControls {
     let mut controls = HashMap::new();
 
-    controls.insert(
-        ControlId::UserName,
-        Control::new_string(ControlId::UserName).read_only(false),
-    );
+    new_string(ControlId::UserName)
+        .read_only(false)
+        .build(&mut controls);
 
-    let max_value = 120. * NAUTICAL_MILE as f64;
-    let range_control =
-        Control::new_numeric(ControlId::Range, 0., max_value).wire_unit(Units::Meters);
     // Note: valid range values are set per-model in update_when_model_known()
-    controls.insert(ControlId::Range, range_control);
+    let max_value = 120. * NAUTICAL_MILE as f64;
+    new_numeric(ControlId::Range, 0., max_value)
+        .wire_units(Units::Meters)
+        .build(&mut controls);
 
-    controls.insert(
-        ControlId::Gain,
-        Control::new_auto(ControlId::Gain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE),
-    );
-    controls.insert(
-        ControlId::Sea,
-        Control::new_auto(ControlId::Sea, 0., 100., HAS_AUTO_NOT_ADJUSTABLE),
-    );
-    controls.insert(
-        ControlId::Rain,
-        Control::new_auto(ControlId::Rain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE),
-    );
-    controls.insert(
-        ControlId::OperatingTime,
-        Control::new_numeric(ControlId::OperatingTime, 0., 999999999.)
-            .read_only(true)
-            .wire_unit(Units::Seconds),
-    );
-    controls.insert(
-        ControlId::TransmitTime,
-        Control::new_numeric(ControlId::TransmitTime, 0., 999999999.)
-            .read_only(true)
-            .wire_unit(Units::Seconds),
-    );
+    new_auto(ControlId::Gain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE).build(&mut controls);
+    new_auto(ControlId::Sea, 0., 100., HAS_AUTO_NOT_ADJUSTABLE).build(&mut controls);
+    new_auto(ControlId::Rain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE).build(&mut controls);
+    new_numeric(ControlId::OperatingTime, 0., 999999999.)
+        .read_only(true)
+        .wire_units(Units::Seconds)
+        .build(&mut controls);
+    new_numeric(ControlId::TransmitTime, 0., 999999999.)
+        .read_only(true)
+        .wire_units(Units::Seconds)
+        .build(&mut controls);
 
-    controls.insert(
-        ControlId::RotationSpeed,
-        Control::new_numeric(ControlId::RotationSpeed, 0., 99.)
-            .wire_scale_factor(10., true)
-            .read_only(true)
-            .wire_unit(Units::RotationsPerMinute),
-    );
+    new_numeric(ControlId::RotationSpeed, 0., 99.)
+        .wire_scale_factor(10., true)
+        .read_only(true)
+        .wire_units(Units::RotationsPerMinute)
+        .build(&mut controls);
+
+    new_string(ControlId::SerialNumber).build(&mut controls);
 
     SharedControls::new(args, controls)
 }
@@ -62,12 +51,6 @@ pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version:
     let model_name = model.to_string();
     log::debug!("update_when_model_known: {}", model_name);
     info.controls.set_model_name(model_name.to_string());
-
-    let mut control = Control::new_string(ControlId::SerialNumber);
-    if let Some(serial_number) = info.serial_no.as_ref() {
-        control.set_string(serial_number.to_string());
-    }
-    info.controls.insert(ControlId::SerialNumber, control);
 
     // Update the UserName; it had to be present at start so it could be loaded from
     // config. Override it if it is still the original 'key' internal name.
@@ -93,38 +76,31 @@ pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version:
 
     // TODO: Add controls based on reverse engineered capability table
 
-    info.controls.insert(
-        ControlId::FirmwareVersion,
-        Control::new_string(ControlId::FirmwareVersion),
-    );
+    info.controls.add(new_string(ControlId::FirmwareVersion));
     info.controls
         .set_string(&ControlId::FirmwareVersion, version.to_string())
         .expect("FirmwareVersion");
 
-    info.controls.insert(
-        ControlId::NoTransmitStart1,
-        Control::new_numeric(ControlId::NoTransmitStart1, -180., 180.)
-            .wire_unit(Units::Degrees)
-            .wire_offset(-1.),
+    info.controls.add(
+        new_numeric(ControlId::NoTransmitStart1, -180., 180.)
+            .wire_offset(-1.)
+            .wire_units(Units::Degrees),
     );
-    info.controls.insert(
-        ControlId::NoTransmitEnd1,
-        Control::new_numeric(ControlId::NoTransmitEnd1, -180., 180.)
-            .wire_unit(Units::Degrees)
-            .wire_offset(-1.),
+    info.controls.add(
+        new_numeric(ControlId::NoTransmitEnd1, -180., 180.)
+            .wire_offset(-1.)
+            .wire_units(Units::Degrees),
     );
 
-    info.controls.insert(
-        ControlId::NoTransmitStart2,
-        Control::new_numeric(ControlId::NoTransmitStart2, -180., 180.)
-            .wire_unit(Units::Degrees)
-            .wire_offset(-1.),
+    info.controls.add(
+        new_numeric(ControlId::NoTransmitStart2, -180., 180.)
+            .wire_offset(-1.)
+            .wire_units(Units::Degrees),
     );
-    info.controls.insert(
-        ControlId::NoTransmitEnd2,
-        Control::new_numeric(ControlId::NoTransmitEnd2, -180., 180.)
-            .wire_unit(Units::Degrees)
-            .wire_offset(-1.),
+    info.controls.add(
+        new_numeric(ControlId::NoTransmitEnd2, -180., 180.)
+            .wire_offset(-1.)
+            .wire_units(Units::Degrees),
     );
 
     // Add NXT-specific controls for NXT models
@@ -135,37 +111,28 @@ pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version:
         info.dual_range = true;
 
         // Noise Reduction (Signal Processing feature 3)
-        info.controls.insert(
-            ControlId::NoiseRejection,
-            Control::new_list(ControlId::NoiseRejection, &["Off", "On"]),
-        );
+        info.controls
+            .add(new_list(ControlId::NoiseRejection, &["Off", "On"]));
 
         // Interference Rejection (Signal Processing feature 0)
-        info.controls.insert(
-            ControlId::InterferenceRejection,
-            Control::new_list(ControlId::InterferenceRejection, &["Off", "On"]),
-        );
+        info.controls
+            .add(new_list(ControlId::InterferenceRejection, &["Off", "On"]));
 
         // Target Separation (RezBoost / Beam Sharpening)
-        info.controls.insert(
+        info.controls.add(new_list(
             ControlId::TargetSeparation,
-            Control::new_list(
-                ControlId::TargetSeparation,
-                &["Off", "Low", "Medium", "High"],
-            ),
-        );
+            &["Off", "Low", "Medium", "High"],
+        ));
 
         // Bird Mode
-        info.controls.insert(
+        info.controls.add(new_list(
             ControlId::BirdMode,
-            Control::new_list(ControlId::BirdMode, &["Off", "Low", "Medium", "High"]),
-        );
+            &["Off", "Low", "Medium", "High"],
+        ));
 
         // Doppler (Target Analyzer): Off, Target, Rain
-        info.controls.insert(
-            ControlId::Doppler,
-            Control::new_list(ControlId::Doppler, &["Off", "Target", "Rain"]),
-        );
+        info.controls
+            .add(new_list(ControlId::Doppler, &["Off", "Target", "Rain"]));
     }
 }
 

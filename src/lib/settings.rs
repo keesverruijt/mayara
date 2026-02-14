@@ -80,7 +80,7 @@ pub struct Controls {
 }
 
 impl Controls {
-    pub(self) fn insert(&mut self, control_id: ControlId, value: Control) {
+    fn insert(&mut self, control_id: ControlId, value: Control) {
         let v = Control {
             item: ControlDefinition {
                 is_read_only: self.replay || value.item.is_read_only,
@@ -95,15 +95,14 @@ impl Controls {
     pub(self) fn new_base(args: &Cli, mut controls: HashMap<ControlId, Control>) -> Self {
         // Add _mandatory_ controls
         if !controls.contains_key(&ControlId::ModelName) {
-            controls.insert(
-                ControlId::ModelName,
-                Control::new_string(ControlId::ModelName).read_only(true),
-            );
+            new_string(ControlId::ModelName)
+                .read_only(true)
+                .build(&mut controls);
         }
-        controls.insert(
-            ControlId::Spokes,
-            Control::new_numeric(ControlId::Spokes, 0., 9999.).read_only(true),
-        );
+
+        new_numeric(ControlId::Spokes, 0., 9999.)
+            .read_only(true)
+            .build(&mut controls);
 
         if args.replay {
             controls.iter_mut().for_each(|(_k, v)| {
@@ -113,47 +112,37 @@ impl Controls {
 
         // Add controls that are not radar dependent
 
-        controls.insert(
-            ControlId::UserName,
-            Control::new_string(ControlId::UserName).read_only(false),
-        );
+        new_string(ControlId::UserName)
+            .read_only(false)
+            .build(&mut controls);
 
         if args.targets != TargetMode::None {
-            controls.insert(
+            new_map(
                 ControlId::TargetTrails,
-                Control::new_map(
-                    ControlId::TargetTrails,
-                    HashMap::from([
-                        (0, "Off".to_string()),
-                        (1, "15s".to_string()),
-                        (2, "30s".to_string()),
-                        (3, "1 min".to_string()),
-                        (4, "3 min".to_string()),
-                        (5, "5 min".to_string()),
-                        (6, "10 min".to_string()),
-                    ]),
-                ),
-            );
+                HashMap::from([
+                    (0, "Off".to_string()),
+                    (1, "15s".to_string()),
+                    (2, "30s".to_string()),
+                    (3, "1 min".to_string()),
+                    (4, "3 min".to_string()),
+                    (5, "5 min".to_string()),
+                    (6, "10 min".to_string()),
+                ]),
+            )
+            .build(&mut controls);
 
-            controls.insert(
+            new_map(
                 ControlId::TrailsMotion,
-                Control::new_map(
-                    ControlId::TrailsMotion,
-                    HashMap::from([(0, "Relative".to_string()), (1, "True".to_string())]),
-                ),
-            );
+                HashMap::from([(0, "Relative".to_string()), (1, "True".to_string())]),
+            )
+            .build(&mut controls);
 
-            controls.insert(
-                ControlId::ClearTrails,
-                Control::new_button(ControlId::ClearTrails),
-            );
+            new_button(ControlId::ClearTrails).build(&mut controls);
 
-            if args.targets == TargetMode::Arpa {
-                controls.insert(
-                    ControlId::ClearTargets,
-                    Control::new_button(ControlId::ClearTargets),
-                );
-            }
+            //TODO: Target tracking
+            //if args.targets == TargetMode::Arpa {
+            //    new_button(ControlId::ClearTargets).build(&mut controls);
+            //}
         }
 
         let (all_clients_tx, _) = tokio::sync::broadcast::channel(32);
@@ -204,19 +193,24 @@ impl SharedControls {
     // Create a new set of controls, for a radar.
     // There is only one set that is shared amongst the various threads and
     // structs, hence the word Shared.
-    pub fn new(args: &Cli, mut controls: HashMap<ControlId, Control>) -> SharedControls {
+    pub(crate) fn new(args: &Cli, mut controls: HashMap<ControlId, Control>) -> SharedControls {
         // All radars must have the same Status control
-        let mut control = Control::new_list(
+        new_list(
             ControlId::Power,
             &["Off", "Standby", "Transmit", "Preparing"],
         )
-        .send_always();
-        control.set_valid_values([1, 2].to_vec()); // Only allow setting to Standby (index 1) and Transmit (index 2)
-        controls.insert(ControlId::Power, control);
+        //.send_always()
+        .set_valid_values([1, 2].to_vec())
+        .build(&mut controls); // Only allow setting to Standby (index 1) and Transmit (index 2)
 
         SharedControls {
             controls: Arc::new(RwLock::new(Controls::new_base(args, controls))),
         }
+    }
+
+    pub(crate) fn add(&mut self, control_builder: ControlBuilder) {
+        let (id, control) = control_builder.take();
+        self.controls.write().unwrap().controls.insert(id, control);
     }
 
     #[deprecated]
@@ -248,6 +242,91 @@ impl SharedControls {
         locked.all_clients_tx.subscribe()
     }
 
+    fn normalize_value(value: &Value, control: &Control) -> Result<Value, RadarError> {
+        match value {
+            // Primitive types are returned unchanged
+            Value::Null | Value::Bool(_) | Value::Number(_) => Ok(value.clone()),
+
+            Value::String(s) => {
+                if let Ok(num) = s.parse::<f64>() {
+                    // `serde_json::Number` can hold both ints and floats.
+                    // We create a Number from the parsed f64.
+                    let n = match Number::from_f64(num) {
+                        Some(n) => n,
+                        None => {
+                            return Err(RadarError::CannotSetControlIdValue(
+                                control.item.control_id,
+                                value.clone(),
+                            ));
+                        }
+                    };
+                    return Ok(Value::Number(n));
+                }
+
+                if let Some(descriptions) = &control.item.descriptions {
+                    if let Some(idx) = descriptions
+                        .iter()
+                        .position(|(_, d)| d.eq_ignore_ascii_case(&s))
+                    {
+                        return Ok(Value::Number(Number::from(idx)));
+                    }
+                }
+
+                // 3. If no match, keep the string as it is.
+                Ok(value.clone())
+            }
+
+            // For arrays we recurse into each element
+            Value::Array(_) | Value::Object(_) => {
+                return Err(RadarError::CannotSetControlIdValue(
+                    control.item.control_id,
+                    value.clone(),
+                ));
+            }
+        }
+    }
+
+    //
+    // Convert to number, possibly to SI if the control_value contains a user unit.
+    // If the control is an Enum style, also convert to number.
+    // If it is a string or button, leave it alone.
+    //
+    fn convert_to_si_number(
+        control_value: &ControlValue,
+        control: &Control,
+    ) -> Result<ControlValue, RadarError> {
+        let mut control_value = control_value.clone();
+        if control.item.data_type == ControlDataType::Button
+            || control.item.data_type == ControlDataType::String
+        {
+            return Ok(control_value);
+        }
+
+        if let Some(value) = control_value.value {
+            control_value.value = Some(Self::normalize_value(&value, control)?);
+
+            if let Some(units) = control_value.units {
+                let value_float = value.as_f64();
+                if value_float.is_none() {
+                    return Err(RadarError::NotNumeric(control_value.id, value, units));
+                }
+                let (mut units, mut value_float) = units.to_si(value_float.unwrap());
+                if let Some(wire_unit) = control.item.wire_units {
+                    value_float = wire_unit.from_si(units, value_float);
+                    units = wire_unit;
+                }
+                let value_number = serde_json::Number::from_f64(value_float);
+                if value_number.is_none() {
+                    return Err(RadarError::NotNumeric(control_value.id, value, units));
+                }
+                control_value.units = Some(units);
+                control_value.value = Some(Value::Number(value_number.unwrap()));
+            }
+        }
+
+        Ok(control_value)
+    }
+
     // process_client_request()
     //
     // In theory this could be from anywhere that somebody holds a SharedControls reference,
@@ -262,28 +341,30 @@ impl SharedControls {
         control_value: ControlValue,
         reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
     ) -> Result<(), RadarError> {
-        let control = self.get(&control_value.id);
-
-        match control {
+        match self.get(&control_value.id) {
             Some(c) => {
+                let cv = Self::convert_to_si_number(&control_value, &c)?;
+
                 log::debug!(
-                    "Client request to update {:?} to {:?}",
+                    "Client request to update {:?} to {:?} si {:?}",
                     ControlValue::from(&c, None),
-                    control_value
+                    control_value,
+                    cv
                 );
-                match control_value.id.get_destination() {
-                    ControlDestination::Internal => self
-                        .set_value(&control_value.id, control_value.value.clone())
-                        .map(|_| ())
-                        .map_err(|e| RadarError::ControlError(e)),
+                match cv.id.get_destination() {
+                    ControlDestination::Internal => {
+                        if let Some(value) = cv.value {
+                            self.set_value(&cv.id, value)
+                                .map(|_| ())
+                                .map_err(|e| RadarError::ControlError(e))
+                        } else {
+                            Err(RadarError::CannotSetControlId(cv.id))
+                        }
+                    }
                     ControlDestination::Command
                     | ControlDestination::Target
-                    | ControlDestination::Trail => {
-                        self.send_to_command_handler(&c, control_value.clone(), reply_tx)
-                    }
-                    ControlDestination::ReadOnly => {
-                        Err(RadarError::CannotSetControlId(control_value.id))
-                    }
+                    | ControlDestination::Trail => self.send_to_command_handler(cv, reply_tx),
+                    ControlDestination::ReadOnly => Err(RadarError::CannotSetControlId(cv.id)),
                 }
             }
             None => Err(RadarError::CannotSetControlId(control_value.id)),
@@ -325,36 +406,9 @@ impl SharedControls {
 
     fn send_to_command_handler(
         &self,
-        control: &Control,
-        mut control_value: ControlValue,
+        control_value: ControlValue,
         reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
     ) -> Result<(), RadarError> {
-        if let Some(units) = control_value.units {
-            let value = control_value.value.as_f64();
-            if value.is_none() {
-                return Err(RadarError::NotNumeric(
-                    control_value.id,
-                    control_value.value,
-                    units,
-                ));
-            }
-
-            let (mut units, mut value) = units.to_si(value.unwrap());
-            if let Some(wire_unit) = control.item.wire_unit {
-                value = wire_unit.from_si(units, value);
-                units = wire_unit;
-            }
-            let value = serde_json::Number::from_f64(value);
-            if value.is_none() {
-                return Err(RadarError::NotNumeric(
-                    control_value.id,
-                    control_value.value,
-                    units,
-                ));
-            }
-            control_value.units = Some(units);
-            control_value.value = Value::Number(value.unwrap());
-        }
         let control_update = ControlUpdate {
             control_value,
             reply_tx,
@@ -763,7 +817,10 @@ impl SharedControls {
     pub(crate) fn get_status(&self) -> Option<Power> {
         let locked = self.controls.read().unwrap();
         if let Some(control) = locked.controls.get(&ControlId::Power) {
-            return Power::from_value(&control.value()).ok();
+            return control
+                .value()
+                .map(|v| Power::from_value(&v).ok())
+                .flatten();
         }
 
         None
@@ -852,11 +909,14 @@ impl Units {
 #[serde(rename_all = "camelCase")]
 pub struct ControlValue {
     pub id: ControlId,
-    pub value: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub units: Option<Units>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_value: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
@@ -869,29 +929,26 @@ impl ControlValue {
     pub(crate) fn new(id: ControlId, value: Value) -> Self {
         ControlValue {
             id,
-            value,
+            value: Some(value),
             units: None,
             auto: None,
+            auto_value: None,
             enabled: None,
             allowed: None,
             error: None,
         }
     }
 
-    pub fn from_request(
-        id: ControlId,
-        value: Value,
-        auto: Option<bool>,
-        units: Option<Units>,
-    ) -> Self {
+    pub fn from_request(id: ControlId, b: BareControlValue) -> Self {
         ControlValue {
             id,
-            value,
-            units,
-            auto,
-            enabled: None,
-            allowed: None,
-            error: None,
+            value: b.value,
+            units: b.units,
+            auto: b.auto,
+            auto_value: b.auto_value,
+            enabled: b.enabled,
+            allowed: b.allowed,
+            error: b.error,
         }
     }
 
@@ -899,11 +956,19 @@ impl ControlValue {
         ControlValue {
             id: control.item().control_id,
             value: control.value(),
-            units: control.item().unit.clone(),
+            units: control.item().units.clone(),
             auto: control.auto,
+            auto_value: control.auto_value(),
             enabled: control.enabled,
             allowed: control.allowed,
             error,
+        }
+    }
+
+    pub fn as_value(&self) -> Result<Value, RadarError> {
+        match &self.value {
+            None => Err(RadarError::CannotSetControlId(self.id)),
+            Some(v) => Ok(v.clone()),
         }
     }
 
@@ -914,11 +979,12 @@ impl ControlValue {
     pub fn as_i32(&self) -> Result<i32, RadarError> {
         self.as_i64()?
             .try_into()
-            .map_err(|_| RadarError::CannotSetControlIdValue(self.id, self.value.clone()))
+            .map_err(|_| RadarError::CannotSetControlId(self.id))
     }
 
     pub fn as_i64(&self) -> Result<i64, RadarError> {
-        match self.value.clone() {
+        let value = self.as_value()?;
+        match value {
             Value::String(s) => {
                 // TODO enum style
                 s.parse::<i64>().map_err(|_| RadarError::EnumerationFailed)
@@ -927,24 +993,41 @@ impl ControlValue {
             Value::Number(n) => n.as_i64().ok_or(RadarError::EnumerationFailed),
             _ => Err(RadarError::EnumerationFailed),
         }
-        .map_err(|_| RadarError::CannotSetControlIdValue(self.id, self.value.clone()))
-    }
-
-    pub fn as_f32(&self) -> Result<f64, RadarError> {
-        self.as_f64().map(|n| n as f64)
+        .map_err(|_| RadarError::CannotSetControlId(self.id))
     }
 
     pub fn as_f64(&self) -> Result<f64, RadarError> {
-        match self.value.clone() {
-            Value::String(s) => {
-                // TODO enum style
-                s.parse::<f64>().map_err(|_| RadarError::EnumerationFailed)
+        if let Some(value) = &self.value {
+            match value {
+                Value::String(s) => {
+                    // TODO enum style
+                    s.parse::<f64>().map_err(|_| RadarError::EnumerationFailed)
+                }
+                Value::Bool(b) => Ok(if *b { 1. } else { 0. }),
+                Value::Number(n) => n.as_f64().ok_or(RadarError::EnumerationFailed),
+                _ => Err(RadarError::EnumerationFailed),
             }
-            Value::Bool(b) => Ok(if b { 1. } else { 0. }),
-            Value::Number(n) => n.as_f64().ok_or(RadarError::EnumerationFailed),
-            _ => Err(RadarError::EnumerationFailed),
+            .map_err(|_| RadarError::CannotSetControlId(self.id))
+        } else {
+            Err(RadarError::CannotSetControlId(self.id))
         }
-        .map_err(|_| RadarError::CannotSetControlIdValue(self.id, self.value.clone()))
+    }
+
+    pub fn auto_as_f64(&self) -> Result<f64, RadarError> {
+        if let Some(value) = &self.auto_value {
+            match value {
+                Value::String(s) => {
+                    // TODO enum style
+                    s.parse::<f64>().map_err(|_| RadarError::EnumerationFailed)
+                }
+                Value::Bool(b) => Ok(if *b { 1. } else { 0. }),
+                Value::Number(n) => n.as_f64().ok_or(RadarError::EnumerationFailed),
+                _ => Err(RadarError::EnumerationFailed),
+            }
+            .map_err(|_| RadarError::CannotSetControlId(self.id))
+        } else {
+            Err(RadarError::CannotSetControlId(self.id))
+        }
     }
 }
 
@@ -958,12 +1041,15 @@ pub struct RadarControlValue {
     pub radar_id: Option<String>,
     #[serde(skip)]
     pub control_id: Option<ControlId>,
-    pub path: String, // "radars.{id}.{control_id}"
-    pub value: serde_json::Value,
+    pub path: String, // "radars.{id}.controls.{control_id}"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub units: Option<Units>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_value: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
@@ -975,12 +1061,13 @@ pub struct RadarControlValue {
 impl RadarControlValue {
     pub fn new(radar: &str, control: &Control, error: Option<String>) -> Self {
         RadarControlValue {
-            path: format!("radars.{}.{}", radar, control.item().control_id),
+            path: format!("radars.{}.controls.{}", radar, control.item().control_id),
             radar_id: Some(radar.to_string()),
             control_id: Some(control.item().control_id),
             value: control.value(),
-            units: control.item().unit.clone(),
+            units: control.item().units.clone(),
             auto: control.auto,
+            auto_value: control.auto_value(),
             enabled: control.enabled,
             allowed: control.allowed,
             error,
@@ -992,11 +1079,11 @@ impl RadarControlValue {
         if path.starts_with("radars.") {
             path = &path["radars.".len()..];
         }
-        if let Some(r) = path.split_once('.') {
-            self.control_id = ControlId::try_from(r.1).ok();
+        if let Some(r) = path.split('.').last() {
+            self.control_id = ControlId::try_from(r).ok();
             if self.control_id.is_some() {
-                self.radar_id = Some(r.0.to_string());
-                return Some(r.0);
+                self.radar_id = Some(r.to_string());
+                return Some(r);
             }
         }
 
@@ -1005,15 +1092,16 @@ impl RadarControlValue {
 }
 
 impl From<RadarControlValue> for ControlValue {
-    fn from(value: RadarControlValue) -> Self {
+    fn from(rcv: RadarControlValue) -> Self {
         ControlValue {
-            id: value.control_id.unwrap(),
-            value: value.value,
-            units: value.units,
-            auto: value.auto,
-            enabled: value.enabled,
-            allowed: value.allowed,
-            error: value.error,
+            id: rcv.control_id.unwrap(),
+            value: rcv.value,
+            units: rcv.units,
+            auto: rcv.auto,
+            auto_value: rcv.auto_value,
+            enabled: rcv.enabled,
+            allowed: rcv.allowed,
+            error: rcv.error,
         }
     }
 }
@@ -1021,12 +1109,15 @@ impl From<RadarControlValue> for ControlValue {
 // This is the represenation of a control value used by the Signal K REST API
 #[derive(Deserialize, Serialize, Clone, Debug, ToSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct FullRadarControlValue {
-    pub value: serde_json::Value,
+pub struct BareControlValue {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub units: Option<Units>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_value: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
@@ -1035,32 +1126,292 @@ pub struct FullRadarControlValue {
     pub error: Option<String>,
 }
 
-impl From<RadarControlValue> for FullRadarControlValue {
-    fn from(value: RadarControlValue) -> Self {
-        FullRadarControlValue {
-            value: value.value,
-            units: value.units,
-            auto: value.auto,
-            enabled: value.enabled,
-            allowed: value.allowed,
-            error: value.error,
+impl From<RadarControlValue> for BareControlValue {
+    fn from(rcv: RadarControlValue) -> Self {
+        BareControlValue {
+            value: rcv.value,
+            units: rcv.units,
+            auto: rcv.auto,
+            auto_value: rcv.auto_value,
+            enabled: rcv.enabled,
+            allowed: rcv.allowed,
+            error: rcv.error,
         }
     }
 }
 
-impl From<ControlValue> for FullRadarControlValue {
-    fn from(value: ControlValue) -> Self {
-        FullRadarControlValue {
-            value: value.value,
-            units: value.units,
-            auto: value.auto,
-            enabled: value.enabled,
-            allowed: value.allowed,
-            error: value.error,
+impl From<ControlValue> for BareControlValue {
+    fn from(cv: ControlValue) -> Self {
+        BareControlValue {
+            value: cv.value,
+            units: cv.units,
+            auto: cv.auto,
+            auto_value: cv.auto_value,
+            enabled: cv.enabled,
+            allowed: cv.allowed,
+            error: cv.error,
         }
     }
 }
 
+pub(crate) struct ControlBuilder {
+    control: Control,
+    frozen: bool,
+}
+
+impl ControlBuilder {
+    pub(crate) fn read_only(mut self, is_read_only: bool) -> Self {
+        self.control.item.is_read_only = is_read_only;
+
+        self
+    }
+
+    pub(crate) fn wire_scale_step(mut self, step: f64) -> Self {
+        if self.frozen {
+            panic!("{} already frozen", self.control.item.control_id);
+        }
+        self.control.item.step_value = Some(step);
+        if self.control.item.wire_scale_factor.is_none() {
+            self.control.item.wire_scale_factor = self.control.item.step_value.map(|s| 1. / s);
+        }
+
+        self
+    }
+
+    pub(crate) fn wire_scale_factor(mut self, wire_scale_factor: f64, with_step: bool) -> Self {
+        if self.frozen {
+            panic!("{} already frozen", self.control.item.control_id);
+        }
+        self.control.item.wire_scale_factor = Some(wire_scale_factor);
+        if with_step {
+            self.control.item.step_value = self.control.item.wire_scale_factor.map(|f| 1. / f);
+        }
+
+        self
+    }
+
+    pub(crate) fn wire_offset(mut self, wire_offset: f64) -> Self {
+        if self.frozen {
+            panic!("{} already frozen", self.control.item.control_id);
+        }
+        self.control.item.wire_offset = Some(wire_offset);
+
+        self
+    }
+
+    pub(crate) fn wire_units(mut self, units: Units) -> Self {
+        if self.frozen {
+            panic!("{} already frozen", self.control.item.control_id);
+        }
+        self.control.item.wire_units = Some(units);
+        self.control.item.units = Some(units.to_si(0.).0);
+        if let Some(value) = self.control.item.min_value {
+            self.control.item.min_value = Some(units.to_si(value).1);
+        }
+        if let Some(value) = self.control.item.max_value {
+            self.control.item.max_value = Some(units.to_si(value).1);
+        }
+        if let Some(value) = self.control.item.step_value {
+            self.control.item.step_value = Some(units.to_si(value).1);
+        }
+        if let Some(value) = self.control.item.default_value {
+            self.control.item.default_value = Some(units.to_si(value).1);
+        }
+        self.frozen = true;
+
+        self
+    }
+
+    pub(crate) fn send_always(mut self) -> Self {
+        self.control.item.is_send_always = true;
+
+        self
+    }
+
+    pub(crate) fn has_enabled(mut self) -> Self {
+        self.control.item.has_enabled = true;
+
+        self
+    }
+
+    pub(crate) fn set_valid_values(mut self, valid_values: Vec<i32>) -> Self {
+        if self.frozen {
+            panic!("{} already frozen", self.control.item.control_id);
+        }
+        self.control.set_valid_values(valid_values);
+
+        self
+    }
+
+    pub(crate) fn build(self, controls: &mut HashMap<ControlId, Control>) {
+        controls.insert(self.control.item.control_id, self.control);
+    }
+
+    pub(crate) fn take(self) -> (ControlId, Control) {
+        (self.control.item.control_id, self.control)
+    }
+}
+
+pub(crate) fn new_numeric(control_id: ControlId, min_value: f64, max_value: f64) -> ControlBuilder {
+    let min_value = Some(min_value);
+    let max_value = Some(max_value);
+    let control = Control::new(ControlDefinition::new(
+        control_id,
+        ControlDataType::Number,
+        min_value,
+        None,
+        false,
+        min_value,
+        max_value,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        false,
+    ));
+    ControlBuilder {
+        control,
+        frozen: false,
+    }
+}
+
+pub(crate) fn new_auto(
+    control_id: ControlId,
+    min_value: f64,
+    max_value: f64,
+    automatic: AutomaticValue,
+) -> ControlBuilder {
+    let min_value = Some(min_value);
+    let max_value = Some(max_value);
+    let control = Control::new(ControlDefinition::new(
+        control_id,
+        ControlDataType::Number,
+        min_value,
+        Some(automatic),
+        false,
+        min_value,
+        max_value,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        false,
+    ));
+    ControlBuilder {
+        control,
+        frozen: false,
+    }
+}
+
+pub(crate) fn new_list(control_id: ControlId, descriptions: &[&str]) -> ControlBuilder {
+    let description_count = ((descriptions.len() as i32) - 1) as f64;
+    let control = Control::new(ControlDefinition::new(
+        control_id,
+        ControlDataType::Number,
+        Some(0.),
+        None,
+        false,
+        Some(0.),
+        Some(description_count),
+        None,
+        None,
+        None,
+        None,
+        Some(
+            descriptions
+                .into_iter()
+                .enumerate()
+                .map(|(i, n)| (i as i32, n.to_string()))
+                .collect(),
+        ),
+        None,
+        false,
+        false,
+    ));
+    ControlBuilder {
+        control,
+        frozen: false,
+    }
+}
+
+pub(crate) fn new_map(control_id: ControlId, descriptions: HashMap<i32, String>) -> ControlBuilder {
+    let description_count = ((descriptions.len() as i32) - 1) as f64;
+    let control = Control::new(ControlDefinition::new(
+        control_id,
+        ControlDataType::Number,
+        Some(0.),
+        None,
+        false,
+        Some(0.),
+        Some(description_count),
+        None,
+        None,
+        None,
+        None,
+        Some(descriptions),
+        None,
+        false,
+        false,
+    ));
+    ControlBuilder {
+        control,
+        frozen: false,
+    }
+}
+
+pub(crate) fn new_string(control_id: ControlId) -> ControlBuilder {
+    let control = Control::new(ControlDefinition::new(
+        control_id,
+        ControlDataType::String,
+        None,
+        None,
+        false,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        true,
+        false,
+    ));
+    ControlBuilder {
+        control,
+        frozen: false,
+    }
+}
+
+pub(crate) fn new_button(control_id: ControlId) -> ControlBuilder {
+    let control = Control::new(ControlDefinition::new(
+        control_id,
+        ControlDataType::Button,
+        None,
+        None,
+        false,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        false,
+    ));
+    ControlBuilder {
+        control,
+        frozen: false,
+    }
+}
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Control {
@@ -1097,199 +1448,6 @@ impl Control {
         }
     }
 
-    pub(crate) fn read_only(mut self, is_read_only: bool) -> Self {
-        self.item.is_read_only = is_read_only;
-
-        self
-    }
-
-    pub fn set_allowed(&mut self, allowed: bool) {
-        if self.allowed != Some(allowed) {
-            self.allowed = Some(allowed);
-            self.needs_refresh = true;
-        }
-    }
-
-    pub(crate) fn wire_scale_step(mut self, step: f64) -> Self {
-        self.item.step_value = Some(step);
-        if self.item.wire_scale_factor.is_none() {
-            self.item.wire_scale_factor = self.item.step_value.map(|s| 1. / s);
-        }
-
-        self
-    }
-
-    pub(crate) fn wire_scale_factor(mut self, wire_scale_factor: f64, with_step: bool) -> Self {
-        self.item.wire_scale_factor = Some(wire_scale_factor);
-        if with_step {
-            self.item.step_value = self.item.wire_scale_factor.map(|f| 1. / f);
-        }
-
-        self
-    }
-
-    pub(crate) fn wire_offset(mut self, wire_offset: f64) -> Self {
-        self.item.wire_offset = Some(wire_offset);
-
-        self
-    }
-
-    pub(crate) fn wire_unit(mut self, unit: Units) -> Control {
-        self.item.wire_unit = Some(unit);
-        self.item.unit = Some(unit.to_si(0.).0);
-
-        self
-    }
-
-    pub(crate) fn send_always(mut self) -> Control {
-        self.item.is_send_always = true;
-
-        self
-    }
-
-    pub(crate) fn has_enabled(mut self) -> Self {
-        self.item.has_enabled = true;
-
-        self
-    }
-
-    pub(crate) fn new_numeric(control_id: ControlId, min_value: f64, max_value: f64) -> Self {
-        let min_value = Some(min_value);
-        let max_value = Some(max_value);
-        let control = Self::new(ControlDefinition::new(
-            control_id,
-            ControlDataType::Number,
-            min_value,
-            None,
-            false,
-            min_value,
-            max_value,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            false,
-            false,
-        ));
-        control
-    }
-
-    pub(crate) fn new_auto(
-        control_id: ControlId,
-        min_value: f64,
-        max_value: f64,
-        automatic: AutomaticValue,
-    ) -> Self {
-        let min_value = Some(min_value);
-        let max_value = Some(max_value);
-        Self::new(ControlDefinition::new(
-            control_id,
-            ControlDataType::Number,
-            min_value,
-            Some(automatic),
-            false,
-            min_value,
-            max_value,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            false,
-            false,
-        ))
-    }
-
-    pub(crate) fn new_list(control_id: ControlId, descriptions: &[&str]) -> Self {
-        let description_count = ((descriptions.len() as i32) - 1) as f64;
-        Self::new(ControlDefinition::new(
-            control_id,
-            ControlDataType::Number,
-            Some(0.),
-            None,
-            false,
-            Some(0.),
-            Some(description_count),
-            None,
-            None,
-            None,
-            None,
-            Some(
-                descriptions
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, n)| (i as i32, n.to_string()))
-                    .collect(),
-            ),
-            None,
-            false,
-            false,
-        ))
-    }
-
-    pub(crate) fn new_map(control_id: ControlId, descriptions: HashMap<i32, String>) -> Self {
-        Self::new(ControlDefinition::new(
-            control_id,
-            ControlDataType::Number,
-            Some(0.),
-            None,
-            false,
-            Some(0.),
-            Some(((descriptions.len() as i32) - 1) as f64),
-            None,
-            None,
-            None,
-            None,
-            Some(descriptions),
-            None,
-            false,
-            false,
-        ))
-    }
-
-    pub(crate) fn new_string(control_id: ControlId) -> Self {
-        Self::new(ControlDefinition::new(
-            control_id,
-            ControlDataType::String,
-            None,
-            None,
-            false,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            true,
-            false,
-        ))
-    }
-
-    pub(crate) fn new_button(control_id: ControlId) -> Self {
-        Self::new(ControlDefinition::new(
-            control_id,
-            ControlDataType::Button,
-            None,
-            None,
-            false,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            false,
-            false,
-        ))
-    }
-
     /// Read-only access to the definition of the control
     pub fn item(&self) -> &ControlDefinition {
         &self.item
@@ -1311,11 +1469,14 @@ impl Control {
         self.item.descriptions = Some(descriptions);
     }
 
-    // pub fn auto(&self) -> Option<bool> {
-    //     self.auto
-    // }
+    pub fn set_allowed(&mut self, allowed: bool) {
+        if self.allowed != Some(allowed) {
+            self.allowed = Some(allowed);
+            self.needs_refresh = true;
+        }
+    }
 
-    fn to_number(&self, v: f64) -> Number {
+    fn to_number(&self, v: f64) -> Value {
         if let Some(n) = {
             if v == v as i32 as f64 {
                 Number::from_i128(v as i128)
@@ -1323,40 +1484,46 @@ impl Control {
                 Number::from_f64(v as f64)
             }
         } {
-            n
+            Value::Number(n)
         } else {
-            panic!("Cannot reprsent {:?} as number", self);
+            panic!("Cannot represent {:?} as number", self);
         }
     }
 
-    pub fn value(&self) -> Value {
+    pub fn value(&self) -> Option<Value> {
         if self.item.data_type == ControlDataType::String {
-            return Value::String(self.description.clone().unwrap_or_else(|| "".to_string()));
+            return self.description.clone().map(|v| Value::String(v));
         }
 
-        if self.auto.unwrap_or(false) && self.auto_value.is_some() {
-            return Value::Number(self.to_number(self.auto_value.unwrap()));
-        }
-
-        let v: f64 = self.value.unwrap_or(self.item.default_value.unwrap_or(0.));
-
-        Value::Number(self.to_number(v))
+        self.value.map(|v| self.to_number(v))
     }
 
-    pub fn as_f32(&self) -> Option<f64> {
+    pub fn auto_value(&self) -> Option<Value> {
+        if self.item.data_type == ControlDataType::String {
+            return None;
+        }
+
+        self.auto_value.map(|v| self.to_number(v))
+    }
+
+    pub(crate) fn auto_as_f64(&self) -> Option<f64> {
+        self.auto_value
+    }
+
+    pub(crate) fn as_f64(&self) -> Option<f64> {
         self.value
     }
 
-    pub fn as_u16(&self) -> Option<u16> {
+    pub(crate) fn as_u16(&self) -> Option<u16> {
         match self.value {
             None => None,
             Some(n) => n.to_u16(),
         }
     }
 
-    pub fn set_auto(&mut self, auto: bool) {
+    fn set_auto(&mut self, auto: bool) {
         self.needs_refresh = self.auto != Some(auto);
-        log::trace!(
+        log::debug!(
             "Setting {} auto {} changed: {}",
             self.item.control_id,
             auto,
@@ -1397,6 +1564,7 @@ impl Control {
                 value -= wire_offset;
             }
         }
+
         if let Some(wire_scale_factor) = self.item.wire_scale_factor {
             // One of the reasons we use f64 is because Navico wire format for some things is
             // tenths of degrees. To make things uniform we map these to a float with .1 precision.
@@ -1407,6 +1575,20 @@ impl Control {
             auto_value = auto_value.map(|v| v / wire_scale_factor);
             log::trace!("{} map value to scaled {}", self.item.control_id, value);
         }
+
+        let wire_value = value;
+        let mut value = self
+            .item
+            .wire_units
+            .map(|u| u.to_si(value).1)
+            .unwrap_or(value);
+        log::info!(
+            "value {} {} -> {} {}",
+            wire_value,
+            self.item.wire_units.unwrap_or(Units::None),
+            value,
+            self.item.units.unwrap_or(Units::None)
+        );
 
         // RANGE MAPPING
         if let (Some(min_value), Some(max_value)) = (self.item.min_value, self.item.max_value) {
@@ -1448,31 +1630,14 @@ impl Control {
         }
         log::trace!("{} map value to rounded {}", self.item.control_id, value);
 
-        let wire_value = value;
-        let value = self
-            .item
-            .wire_unit
-            .map(|u| u.to_si(value).1)
-            .unwrap_or(value);
-        log::info!(
-            "value {} {} -> {} {}",
-            wire_value,
-            self.item.wire_unit.unwrap_or(Units::None),
-            value,
-            self.item.unit.unwrap_or(Units::None)
-        );
         if let Some(av) = auto_value {
-            let si = self
-                .item
-                .wire_unit
-                .map(|u| u.to_si(value).1)
-                .unwrap_or(value);
+            let si = self.item.wire_units.map(|u| u.to_si(av).1).unwrap_or(av);
             log::info!(
                 "auto value {} {} -> {} {}",
                 av,
-                self.item.wire_unit.unwrap_or(Units::None),
+                self.item.wire_units.unwrap_or(Units::None),
                 si,
-                self.item.unit.unwrap_or(Units::None)
+                self.item.units.unwrap_or(Units::None)
             );
             auto_value = Some(si);
         }
@@ -1632,9 +1797,9 @@ pub struct ControlDefinition {
     #[serde(skip)]
     wire_offset: Option<f64>,
     #[serde(skip)]
-    pub(crate) wire_unit: Option<Units>,
+    pub(crate) wire_units: Option<Units>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) unit: Option<Units>,
+    pub(crate) units: Option<Units>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) descriptions: Option<HashMap<i32, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1661,7 +1826,7 @@ impl ControlDefinition {
         step_value: Option<f64>,
         wire_scale_factor: Option<f64>,
         wire_offset: Option<f64>,
-        wire_unit: Option<Units>,
+        wire_units: Option<Units>,
         descriptions: Option<HashMap<i32, String>>,
         valid_values: Option<Vec<i32>>,
         is_read_only: bool,
@@ -1673,7 +1838,7 @@ impl ControlDefinition {
             step_value
         };
 
-        let unit = wire_unit.map(|u| u.to_si(0.0).0);
+        let units = wire_units.map(|u| u.to_si(0.0).0);
 
         ControlDefinition {
             id: control_id as u8,
@@ -1690,8 +1855,8 @@ impl ControlDefinition {
             step_value,
             wire_scale_factor,
             wire_offset,
-            unit,
-            wire_unit,
+            units,
+            wire_units,
             descriptions,
             valid_values,
             is_read_only,
@@ -2195,7 +2360,7 @@ mod test {
         match serde_json::from_str::<ControlValue>(&json) {
             Ok(cv) => {
                 assert_eq!(cv.id, ControlId::Gain);
-                assert_eq!(cv.value, "49");
+                assert_eq!(cv.value, Some(Value::String("49".to_string())));
                 assert_eq!(cv.auto, Some(true));
                 assert_eq!(cv.enabled, Some(false));
             }
@@ -2205,12 +2370,15 @@ mod test {
         }
 
         // Check without optional fields and with v1 ID
-        let json = r#"{"id":"4","value":"49"}"#;
+        let json = r#"{"id":"4","value":49}"#;
 
         match serde_json::from_str::<ControlValue>(&json) {
             Ok(cv) => {
                 assert_eq!(cv.id, ControlId::Gain);
-                assert_eq!(cv.value, "49");
+                assert_eq!(
+                    cv.value,
+                    Some(Value::Number(Number::from_i128(49).unwrap()))
+                );
                 assert_eq!(cv.auto, None);
                 assert_eq!(cv.enabled, None);
             }

@@ -19,7 +19,7 @@ import { formatRangeValue, isMetric } from "./units.js";
 var webSocket;
 var RadarMessage;
 var renderer;
-var noTransmitAngles = Array();
+var noTransmitAngles = Array.from({ length: 4 }, () => Array(2));
 
 const RANGE_SCALE = 0.9; // Factor by which we fill the (w,h) canvas with the outer radar range ring
 

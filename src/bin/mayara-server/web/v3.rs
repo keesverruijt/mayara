@@ -38,7 +38,7 @@ use super::{Message, Web, WebSocket, WebSocketUpgrade};
 use mayara::{
     VERSION,
     radar::{Legend, RadarError, RadarInfo, SharedRadars},
-    settings::{Control, ControlId, ControlValue, FullRadarControlValue, RadarControlValue, Units},
+    settings::{BareControlValue, Control, ControlId, ControlValue, RadarControlValue},
 };
 
 pub(super) fn routes(axum: axum::Router<Web>) -> axum::Router<Web> {
@@ -248,15 +248,6 @@ struct RadarControlIdParam {
     control_id: String,
 }
 
-/// Request body for PUT /radars/{id}/controls/{control_id}
-#[derive(Deserialize, Clone, Debug, ToSchema)]
-#[allow(dead_code)] // Instantiation hidden in extractor
-struct SetControlRequest {
-    value: serde_json::Value,
-    auto: Option<bool>,
-    units: Option<Units>,
-}
-
 /// PUT /v2/api/radars/{radar_id}/controls/{control_id}
 /// Sets a control value on the radar
 #[endpoint(
@@ -267,7 +258,7 @@ struct SetControlRequest {
 async fn set_control_value(
     Path(params): Path<RadarControlIdParam>,
     State(state): State<Web>,
-    extract::Json(request): extract::Json<SetControlRequest>,
+    extract::Json(request): extract::Json<BareControlValue>,
 ) -> Response {
     let (radar_id, control_id) = (params.radar_id, params.control_id);
     log::debug!(
@@ -295,12 +286,7 @@ async fn set_control_value(
                     }
                 };
 
-                let control_value = ControlValue::from_request(
-                    control.item().control_id,
-                    request.value,
-                    request.auto,
-                    request.units,
-                );
+                let control_value = ControlValue::from_request(control.item().control_id, request);
                 log::debug!("Map request to controlValue {:?}", control_value);
                 (radar.controls.clone(), control_value)
             }
@@ -361,7 +347,7 @@ async fn get_control_value(
                     let control_value = ControlValue::from(&c, None);
                     let response = wrap_response(wrap(
                         &radar_id,
-                        wrap("controls", FullRadarControlValue::from(control_value)),
+                        wrap("controls", BareControlValue::from(control_value)),
                     ));
 
                     response.into_response()
@@ -430,7 +416,7 @@ fn get_controls(info: &RadarInfo) -> Value {
         .map(|rcv| {
             (
                 rcv.control_id.unwrap().to_string(),
-                serde_json::to_value(FullRadarControlValue::from(rcv.clone())).unwrap(),
+                serde_json::to_value(BareControlValue::from(rcv.clone())).unwrap(),
             )
         })
         .collect();
@@ -1118,7 +1104,7 @@ struct Source {
 #[derive(Serialize)]
 struct DeltaValue {
     path: String,
-    value: serde_json::Value,
+    value: BareControlValue,
 }
 
 impl From<Vec<RadarControlValue>> for SignalKDelta {
@@ -1127,9 +1113,9 @@ impl From<Vec<RadarControlValue>> for SignalKDelta {
 
         let mut values = Vec::new();
         for radar_control_value in radar_control_values {
-            let path = radar_control_value.path;
+            let path = radar_control_value.path.to_string();
 
-            let value = radar_control_value.value;
+            let value = BareControlValue::from(radar_control_value);
             values.push(DeltaValue { path, value });
         }
 

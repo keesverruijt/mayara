@@ -846,10 +846,10 @@ impl NavicoReportReceiver {
                 if log::log_enabled!(log::Level::Debug) {
                     let control = self.common.info.controls.get(control_id).unwrap();
                     log::debug!(
-                        "{}: Control '{}' new value {} auto {:?} enabled {:?}",
+                        "{}: Control '{}' new value {:?} auto {:?} enabled {:?}",
                         self.common.key,
                         control_id,
-                        control.value(),
+                        control.value,
                         control.auto,
                         control.enabled
                     );
@@ -881,10 +881,10 @@ impl NavicoReportReceiver {
                 if log::log_enabled!(log::Level::Debug) {
                     let control = self.common.info.controls.get(control_id).unwrap();
                     log::debug!(
-                        "{}: Control '{}' new value {} auto_value {:?} auto {:?}",
+                        "{}: Control '{}' new value {:?} auto_value {:?} auto {:?}",
                         self.common.key,
                         control_id,
-                        control.value(),
+                        control.value,
                         control.auto_value,
                         control.auto
                     );

@@ -4,7 +4,10 @@ use crate::{
     Cli,
     brand::raymarine::RaymarineModel,
     radar::{NAUTICAL_MILE_F64, RadarInfo},
-    settings::{Control, ControlId, HAS_AUTO_NOT_ADJUSTABLE, SharedControls, Units},
+    settings::{
+        ControlId, HAS_AUTO_NOT_ADJUSTABLE, SharedControls, Units, new_auto, new_list, new_numeric,
+        new_string,
+    },
 };
 
 use super::BaseModel;
@@ -12,145 +15,104 @@ use super::BaseModel;
 pub fn new(args: &Cli, model: BaseModel) -> SharedControls {
     let mut controls = HashMap::new();
 
-    let mut control = Control::new_string(ControlId::UserName);
-    control.set_string(model.to_string());
-    controls.insert(ControlId::UserName, control.read_only(false));
+    new_string(ControlId::UserName).build(&mut controls);
+    controls
+        .get_mut(&ControlId::UserName)
+        .unwrap()
+        .set_string(model.to_string());
 
-    let mut control = Control::new_string(ControlId::ModelName);
-    control.set_string(model.to_string());
-    controls.insert(ControlId::ModelName, control);
+    new_string(ControlId::ModelName).build(&mut controls);
+    controls
+        .get_mut(&ControlId::ModelName)
+        .unwrap()
+        .set_string(model.to_string());
 
-    controls.insert(
-        ControlId::BearingAlignment,
-        Control::new_numeric(ControlId::BearingAlignment, -180., 180.)
-            .wire_unit(Units::Degrees)
-            .wire_scale_factor(10., true)
-            .wire_offset(-1.),
-    );
-    controls.insert(
-        ControlId::Gain,
-        Control::new_auto(ControlId::Gain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE),
-    );
-    controls.insert(
+    new_numeric(ControlId::BearingAlignment, -180., 180.)
+        .wire_scale_factor(10., true)
+        .wire_offset(-1.)
+        .wire_units(Units::Degrees)
+        .build(&mut controls);
+    new_auto(ControlId::Gain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE).build(&mut controls);
+    new_list(
         ControlId::InterferenceRejection,
-        Control::new_list(
-            ControlId::InterferenceRejection,
-            &["Off", "Level 1", "Level 2", "Level 3", "Level 4", "Level 5"],
-        ),
-    );
+        &["Off", "Level 1", "Level 2", "Level 3", "Level 4", "Level 5"],
+    )
+    .build(&mut controls);
 
-    controls.insert(
-        ControlId::Rain,
-        Control::new_numeric(ControlId::Rain, 0., 100.).has_enabled(),
-    );
+    new_numeric(ControlId::Rain, 0., 100.)
+        .has_enabled()
+        .build(&mut controls);
 
-    controls.insert(
-        ControlId::RotationSpeed,
-        Control::new_numeric(ControlId::RotationSpeed, 0., 99.)
-            .wire_scale_step(0.1) // 0.1 RPM
-            .read_only(true)
-            .wire_unit(Units::RotationsPerMinute),
-    );
+    new_numeric(ControlId::RotationSpeed, 0., 99.)
+        .wire_scale_step(0.1) // 0.1 RPM
+        .read_only(true)
+        .wire_units(Units::RotationsPerMinute)
+        .build(&mut controls);
 
     match model {
         BaseModel::Quantum => {
-            controls.insert(
+            new_list(
                 ControlId::Mode,
-                Control::new_list(
-                    ControlId::Mode,
-                    &["Harbor", "Coastal", "Offshore", "Weather"],
-                ),
-            );
-            controls.insert(
-                ControlId::Doppler,
-                Control::new_list(ControlId::Doppler, &["Off", "On"]),
-            );
-            controls.insert(
-                ControlId::TargetExpansion,
-                Control::new_list(ControlId::TargetExpansion, &["Off", "On"]),
-            );
-            controls.insert(
-                ControlId::ColorGain,
-                Control::new_auto(ControlId::ColorGain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE)
-                    .wire_scale_factor(100., false),
-            );
-            controls.insert(
-                ControlId::MainBangSuppression,
-                Control::new_list(ControlId::MainBangSuppression, &["Off", "On"]),
-            );
-            controls.insert(
-                ControlId::NoTransmitStart1,
-                Control::new_numeric(ControlId::NoTransmitStart1, 0., 359.)
-                    .wire_unit(Units::Degrees)
-                    .wire_scale_step(0.1)
-                    .has_enabled(),
-            );
-            controls.insert(
-                ControlId::NoTransmitEnd1,
-                Control::new_numeric(ControlId::NoTransmitEnd1, 0., 359.)
-                    .wire_unit(Units::Degrees)
-                    .wire_scale_step(0.1)
-                    .has_enabled(),
-            );
-            controls.insert(
-                ControlId::NoTransmitStart2,
-                Control::new_numeric(ControlId::NoTransmitStart2, 0., 359.)
-                    .wire_unit(Units::Degrees)
-                    .wire_scale_step(0.1)
-                    .has_enabled(),
-            );
-            controls.insert(
-                ControlId::NoTransmitEnd2,
-                Control::new_numeric(ControlId::NoTransmitEnd2, 0., 359.)
-                    .wire_unit(Units::Degrees)
-                    .wire_scale_step(0.1)
-                    .has_enabled(),
-            );
-            controls.insert(
-                ControlId::SeaClutterCurve,
-                Control::new_numeric(ControlId::SeaClutterCurve, 1., 2.),
-            );
+                &["Harbor", "Coastal", "Offshore", "Weather"],
+            )
+            .build(&mut controls);
+            new_list(ControlId::Doppler, &["Off", "On"]).build(&mut controls);
+            new_list(ControlId::TargetExpansion, &["Off", "On"]).build(&mut controls);
+            new_auto(ControlId::ColorGain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE).build(&mut controls);
+            new_list(ControlId::MainBangSuppression, &["Off", "On"]).build(&mut controls);
+            new_numeric(ControlId::NoTransmitStart1, 0., 359.)
+                .wire_scale_step(0.1)
+                .has_enabled()
+                .wire_units(Units::Degrees)
+                .build(&mut controls);
+            new_numeric(ControlId::NoTransmitEnd1, 0., 359.)
+                .wire_scale_step(0.1)
+                .has_enabled()
+                .wire_units(Units::Degrees)
+                .build(&mut controls);
+            new_numeric(ControlId::NoTransmitStart2, 0., 359.)
+                .wire_scale_step(0.1)
+                .has_enabled()
+                .wire_units(Units::Degrees)
+                .build(&mut controls);
+            new_numeric(ControlId::NoTransmitEnd2, 0., 359.)
+                .wire_scale_step(0.1)
+                .has_enabled()
+                .wire_units(Units::Degrees)
+                .build(&mut controls);
+            new_numeric(ControlId::SeaClutterCurve, 1., 2.).build(&mut controls);
         }
         BaseModel::RD => {
-            controls.insert(
-                ControlId::TransmitTime,
-                Control::new_numeric(ControlId::TransmitTime, 0., 65535.)
-                    .read_only(true)
-                    .wire_unit(Units::Hours),
-            );
-            controls.insert(
-                ControlId::MagnetronCurrent,
-                Control::new_numeric(ControlId::MagnetronCurrent, 0., 65535.).read_only(true),
-            );
-            controls.insert(
-                ControlId::DisplayTiming,
-                Control::new_numeric(ControlId::DisplayTiming, 0., 255.).read_only(true),
-            );
-            controls.insert(
-                ControlId::SignalStrength,
-                Control::new_numeric(ControlId::SignalStrength, 0., 255.).read_only(true),
-            );
-            controls.insert(
-                ControlId::WarmupTime,
-                Control::new_numeric(ControlId::WarmupTime, 0., 255.)
-                    .has_enabled()
-                    .read_only(true),
-            );
-            controls.insert(
-                ControlId::Tune,
-                Control::new_auto(ControlId::Tune, 0., 255., HAS_AUTO_NOT_ADJUSTABLE)
-                    .wire_scale_factor(255., false)
-                    .read_only(true),
-            );
+            new_numeric(ControlId::TransmitTime, 0., 65535.)
+                .read_only(true)
+                .wire_units(Units::Hours)
+                .build(&mut controls);
+            new_numeric(ControlId::MagnetronCurrent, 0., 65535.)
+                .read_only(true)
+                .build(&mut controls);
+            new_numeric(ControlId::DisplayTiming, 0., 255.)
+                .read_only(true)
+                .build(&mut controls);
+            new_numeric(ControlId::SignalStrength, 0., 255.)
+                .read_only(true)
+                .build(&mut controls);
+            new_numeric(ControlId::WarmupTime, 0., 255.)
+                .has_enabled()
+                .read_only(true)
+                .build(&mut controls);
+            new_auto(ControlId::Tune, 0., 255., HAS_AUTO_NOT_ADJUSTABLE)
+                .wire_scale_factor(255., false)
+                .read_only(true)
+                .build(&mut controls);
 
-            let mut control =
-                Control::new_numeric(ControlId::Ftc, 0., 100.).wire_scale_factor(100., false);
+            let mut builder = new_numeric(ControlId::Ftc, 0., 100.).wire_scale_factor(100., false);
             if model == BaseModel::RD {
-                control = control.has_enabled();
+                builder = builder.has_enabled();
             }
-            controls.insert(ControlId::Ftc, control);
+            builder.build(&mut controls);
         }
     }
+    new_string(ControlId::SerialNumber).build(&mut controls);
     SharedControls::new(args, controls)
 }
 
@@ -161,11 +123,11 @@ pub fn update_when_model_known(
 ) {
     controls.set_model_name(model.name.to_string());
 
-    let mut control = Control::new_string(ControlId::SerialNumber);
     if let Some(serial_number) = radar_info.serial_no.as_ref() {
-        control.set_string(serial_number.to_string());
+        controls
+            .set_string(&ControlId::SerialNumber, serial_number.to_string())
+            .expect("SerialNumber");
     }
-    controls.insert(ControlId::SerialNumber, control);
 
     // Update the UserName; it had to be present at start so it could be loaded from
     // config. Override it if it is still the 'Raymarine ... ' name.
@@ -185,19 +147,12 @@ pub fn update_when_model_known(
     }
 
     let max_value = 36. * NAUTICAL_MILE_F64 as f64;
-    let mut range_control =
-        Control::new_numeric(ControlId::Range, 50., max_value).wire_unit(Units::Meters);
-    range_control.set_valid_ranges(&radar_info.ranges);
-    controls.insert(ControlId::Range, range_control);
+    controls.add(new_numeric(ControlId::Range, 50., max_value).wire_units(Units::Meters));
+    let _ = controls.set_valid_ranges(&ControlId::Range, &radar_info.ranges);
 
-    controls.insert(
-        ControlId::Sea,
-        Control::new_auto(ControlId::Sea, 0., 100., HAS_AUTO_NOT_ADJUSTABLE)
-            .wire_scale_factor(255., false),
+    controls.add(
+        new_auto(ControlId::Sea, 0., 100., HAS_AUTO_NOT_ADJUSTABLE).wire_scale_factor(255., false),
     );
 
-    controls.insert(
-        ControlId::TargetExpansion,
-        Control::new_list(ControlId::TargetExpansion, &["Off", "On"]),
-    );
+    controls.add(new_list(ControlId::TargetExpansion, &["Off", "On"]));
 }
