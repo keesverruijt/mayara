@@ -1,0 +1,921 @@
+/* ============================================
+   Recordings Page Styles
+   ============================================ */
+
+/* Allow body to scroll for recordings page */
+html, body {
+  overflow: auto;
+}
+
+.myr_recordings_container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.myr_recordings_header {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 30px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid rgba(100, 200, 180, 0.3);
+}
+
+.myr_recordings_header h1 {
+  margin: 0;
+  font-size: 28px;
+  color: rgb(100, 200, 180);
+  flex: 1;
+}
+
+.myr_recordings_header .myr_back_link {
+  padding: 10px 18px;
+  background: rgba(100, 200, 180, 0.2);
+  color: rgb(152, 217, 204);
+  text-decoration: none;
+  border-radius: 6px;
+  border: 1px solid rgba(100, 200, 180, 0.4);
+  font-size: 14px;
+  transition: all 0.2s ease;
+}
+
+.myr_recordings_header .myr_back_link:hover {
+  background: rgba(100, 200, 180, 0.3);
+}
+
+/* Animated radar icon (reused from discovery) */
+.myr_radar_icon {
+  width: 50px;
+  height: 50px;
+  color: rgb(100, 200, 180);
+}
+
+.myr_radar_sweep {
+  width: 100%;
+  height: 100%;
+}
+
+.myr_sweep_line {
+  transform-origin: 50px 50px;
+  animation: radar-sweep 2s linear infinite;
+}
+
+@keyframes radar-sweep {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ============================================
+   Tabs
+   ============================================ */
+
+.myr_tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 20px;
+  border-bottom: 2px solid rgba(100, 200, 180, 0.3);
+  padding-bottom: 0;
+}
+
+.myr_tab {
+  padding: 12px 24px;
+  background: transparent;
+  border: none;
+  border-bottom: 3px solid transparent;
+  color: rgb(152, 217, 204);
+  font-size: 15px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-bottom: -2px;
+}
+
+.myr_tab:hover {
+  background: rgba(100, 200, 180, 0.1);
+  color: rgb(180, 240, 220);
+}
+
+.myr_tab.myr_tab_active {
+  border-bottom-color: rgb(100, 200, 180);
+  color: rgb(100, 200, 180);
+}
+
+.myr_tab_content {
+  display: none;
+}
+
+.myr_tab_content.myr_tab_visible {
+  display: block;
+}
+
+/* ============================================
+   Sections
+   ============================================ */
+
+.myr_section {
+  margin-bottom: 25px;
+  padding: 20px;
+  background: rgba(3, 37, 37, 0.8);
+  border-radius: 8px;
+  border: 1px solid rgba(100, 200, 180, 0.2);
+}
+
+.myr_section_header {
+  font-size: 16px;
+  font-weight: bold;
+  color: rgb(100, 200, 180);
+  margin-bottom: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* ============================================
+   Loading and Status Indicators
+   ============================================ */
+
+.myr_loading, .myr_detecting {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 15px;
+  background: rgba(60, 50, 10, 0.5);
+  border: 1px solid rgba(255, 200, 100, 0.3);
+  border-radius: 8px;
+  color: rgb(255, 200, 100);
+  font-size: 14px;
+}
+
+.myr_pulse {
+  width: 12px;
+  height: 12px;
+  background: rgb(255, 200, 100);
+  border-radius: 50%;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.1);
+  }
+}
+
+.myr_status_indicator {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.myr_status_idle {
+  background: rgb(100, 100, 100);
+}
+
+.myr_status_recording {
+  background: rgb(255, 80, 80);
+  animation: status-pulse 1s ease-in-out infinite;
+}
+
+.myr_status_playing {
+  background: rgb(80, 200, 80);
+  animation: status-pulse 1s ease-in-out infinite;
+}
+
+.myr_status_paused {
+  background: rgb(255, 200, 80);
+}
+
+.myr_status_loaded {
+  background: rgb(80, 150, 255);
+}
+
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ============================================
+   Radar Selection
+   ============================================ */
+
+.myr_radar_select {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.myr_radar_option {
+  display: flex;
+  max-width: none;
+  align-items: center;
+  padding: 12px 15px;
+  background: rgba(20, 40, 40, 0.8);
+  border: 1px solid rgba(100, 200, 180, 0.2);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.myr_radar_option:hover {
+  background: rgba(100, 200, 180, 0.1);
+  border-color: rgba(100, 200, 180, 0.4);
+}
+
+.myr_radar_option.myr_selected {
+  background: rgba(100, 200, 180, 0.15);
+  border-color: rgb(100, 200, 180);
+}
+
+.myr_radar_option input[type="radio"] {
+  margin-right: 12px;
+  accent-color: rgb(100, 200, 180);
+  width: 18px;
+  height: 18px;
+}
+
+.myr_radar_option_name {
+  font-weight: bold;
+  color: rgb(152, 217, 204);
+}
+
+.myr_radar_option_info {
+  margin-left: auto;
+  font-size: 12px;
+  color: rgb(120, 160, 160);
+}
+
+.myr_no_radars {
+  padding: 20px;
+  text-align: center;
+  color: rgb(200, 150, 150);
+  background: rgba(100, 50, 50, 0.3);
+  border-radius: 6px;
+}
+
+/* ============================================
+   Recording Controls
+   ============================================ */
+
+.myr_record_status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 15px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 6px;
+  margin-bottom: 15px;
+}
+
+.myr_record_info {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 15px;
+  margin-bottom: 20px;
+}
+
+.myr_info_row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.myr_info_label {
+  font-size: 12px;
+  color: rgb(120, 160, 160);
+}
+
+.myr_info_value {
+  font-size: 18px;
+  font-weight: bold;
+  color: rgb(152, 217, 204);
+  font-family: 'Consolas', 'Monaco', monospace;
+}
+
+/* ============================================
+   Buttons
+   ============================================ */
+
+.myr_button_row {
+  display: flex;
+  gap: 10px;
+}
+
+.myr_button {
+  padding: 12px 24px;
+  font-size: 14px;
+  font-weight: bold;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.myr_button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.myr_button_record {
+  background: rgb(180, 60, 60);
+  color: white;
+}
+
+.myr_button_record:hover:not(:disabled) {
+  background: rgb(200, 80, 80);
+}
+
+.myr_button_stop {
+  background: rgb(100, 100, 100);
+  color: white;
+}
+
+.myr_button_stop:hover:not(:disabled) {
+  background: rgb(120, 120, 120);
+}
+
+.myr_button_play {
+  background: rgb(60, 160, 60);
+  color: white;
+}
+
+.myr_button_play:hover:not(:disabled) {
+  background: rgb(80, 180, 80);
+}
+
+.myr_button_pause {
+  background: rgb(180, 140, 40);
+  color: white;
+}
+
+.myr_button_pause:hover:not(:disabled) {
+  background: rgb(200, 160, 60);
+}
+
+.myr_button_primary {
+  background: rgb(100, 200, 180);
+  color: #000;
+}
+
+.myr_button_primary:hover:not(:disabled) {
+  background: rgb(130, 230, 210);
+}
+
+.myr_button_small {
+  padding: 6px 12px;
+  font-size: 12px;
+  background: rgba(100, 200, 180, 0.2);
+  color: rgb(152, 217, 204);
+  border: 1px solid rgba(100, 200, 180, 0.4);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.myr_button_small:hover {
+  background: rgba(100, 200, 180, 0.3);
+}
+
+/* ============================================
+   Playback Controls
+   ============================================ */
+
+.myr_playback_status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 15px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 6px;
+  margin-bottom: 15px;
+}
+
+.myr_playback_info {
+  margin-bottom: 15px;
+}
+
+.myr_filename {
+  font-size: 14px;
+  color: rgb(100, 200, 180);
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.myr_timeline_container {
+  margin: 20px 0;
+}
+
+.myr_timeline {
+  width: 100%;
+  height: 8px;
+  background: rgba(100, 200, 180, 0.2);
+  border-radius: 4px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.myr_timeline::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  background: rgb(100, 200, 180);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.myr_timeline::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  background: rgb(100, 200, 180);
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+}
+
+.myr_timeline:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.myr_playback_buttons {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.myr_playback_options {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  padding: 15px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  margin-bottom: 20px;
+}
+
+.myr_option_row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.myr_option_label {
+  font-size: 14px;
+  color: rgb(152, 217, 204);
+  min-width: 60px;
+}
+
+.myr_checkbox_label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: rgb(152, 217, 204);
+  cursor: pointer;
+}
+
+.myr_checkbox_label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: rgb(100, 200, 180);
+}
+
+.myr_speed_buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.myr_speed_button {
+  padding: 6px 12px;
+  font-size: 12px;
+  background: rgba(100, 200, 180, 0.1);
+  color: rgb(152, 217, 204);
+  border: 1px solid rgba(100, 200, 180, 0.3);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.myr_speed_button:hover {
+  background: rgba(100, 200, 180, 0.2);
+}
+
+.myr_speed_button.myr_speed_active {
+  background: rgba(100, 200, 180, 0.3);
+  border-color: rgb(100, 200, 180);
+  color: rgb(100, 200, 180);
+}
+
+.myr_view_radar {
+  text-align: center;
+}
+
+.myr_view_radar a {
+  display: inline-block;
+  text-decoration: none;
+}
+
+/* ============================================
+   File Selection (Playback tab)
+   ============================================ */
+
+.myr_file_select {
+  display: block;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.myr_file_option {
+  display: block;
+  max-width: none;
+  padding: 12px 15px;
+  margin-bottom: 8px;
+  background: rgba(20, 40, 40, 0.8);
+  border: 1px solid rgba(100, 200, 180, 0.2);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.myr_file_option input[type="radio"] {
+  float: left;
+  margin-right: 12px;
+  margin-top: 3px;
+  accent-color: rgb(100, 200, 180);
+  width: 18px;
+  height: 18px;
+}
+
+.myr_file_option:last-child {
+  margin-bottom: 0;
+}
+
+.myr_file_option:hover {
+  background: rgba(100, 200, 180, 0.1);
+  border-color: rgba(100, 200, 180, 0.4);
+}
+
+.myr_file_option.myr_selected {
+  background: rgba(100, 200, 180, 0.15);
+  border-color: rgb(100, 200, 180);
+}
+
+.myr_file_option_info {
+  display: block;
+  overflow: hidden;
+}
+
+.myr_file_option_name {
+  display: block;
+  font-weight: bold;
+  color: rgb(152, 217, 204);
+  word-break: break-all;
+  margin-bottom: 4px;
+}
+
+.myr_file_option_meta {
+  display: block;
+  font-size: 12px;
+  color: rgb(120, 160, 160);
+}
+
+.myr_file_option_meta span {
+  margin-right: 15px;
+}
+
+.myr_no_files {
+  padding: 20px;
+  text-align: center;
+  color: rgb(150, 150, 150);
+}
+
+/* ============================================
+   Files List (Files tab)
+   ============================================ */
+
+.myr_files_list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.myr_file_row {
+  display: flex;
+  align-items: center;
+  padding: 12px 15px;
+  background: rgba(20, 40, 40, 0.8);
+  border: 1px solid rgba(100, 200, 180, 0.2);
+  border-radius: 6px;
+  gap: 15px;
+}
+
+.myr_file_row:hover {
+  background: rgba(100, 200, 180, 0.05);
+}
+
+.myr_file_info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.myr_file_name {
+  font-weight: bold;
+  color: rgb(152, 217, 204);
+  word-break: break-all;
+}
+
+.myr_file_details {
+  font-size: 12px;
+  color: rgb(120, 160, 160);
+  display: flex;
+  gap: 15px;
+  flex-wrap: wrap;
+}
+
+
+.myr_file_actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ============================================
+   Upload Zone (Files tab)
+   ============================================ */
+
+.myr_upload_zone {
+  border: 2px dashed rgba(100, 200, 180, 0.3);
+  border-radius: 8px;
+  padding: 25px;
+  text-align: center;
+  color: rgb(120, 160, 150);
+  transition: all 0.2s ease;
+  cursor: pointer;
+  margin-bottom: 20px;
+}
+
+.myr_upload_zone:hover,
+.myr_upload_zone.myr_dragover {
+  border-color: rgb(100, 200, 180);
+  background: rgba(100, 200, 180, 0.1);
+  color: rgb(152, 217, 204);
+}
+
+.myr_upload_zone input[type="file"] {
+  display: none;
+}
+
+.myr_upload_zone p {
+  margin: 5px 0;
+}
+
+.myr_upload_zone .myr_upload_hint {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+/* ============================================
+   Modal/Popup
+   ============================================ */
+
+.myr_modal_overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fade-in 0.2s ease;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.myr_modal {
+  background: rgb(20, 45, 45);
+  border: 1px solid rgba(100, 200, 180, 0.4);
+  border-radius: 12px;
+  padding: 24px;
+  min-width: 350px;
+  max-width: 500px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  animation: slide-in 0.2s ease;
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.myr_modal_header {
+  font-size: 18px;
+  font-weight: bold;
+  color: rgb(100, 200, 180);
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(100, 200, 180, 0.2);
+}
+
+.myr_modal_body {
+  margin-bottom: 20px;
+}
+
+.myr_modal_label {
+  display: block;
+  font-size: 13px;
+  color: rgb(120, 160, 160);
+  margin-bottom: 8px;
+}
+
+.myr_modal_input {
+  width: 100%;
+  padding: 12px 14px;
+  font-size: 14px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(100, 200, 180, 0.3);
+  border-radius: 6px;
+  color: rgb(152, 217, 204);
+  font-family: 'Consolas', 'Monaco', monospace;
+  box-sizing: border-box;
+}
+
+.myr_modal_input:focus {
+  outline: none;
+  border-color: rgb(100, 200, 180);
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.myr_modal_hint {
+  font-size: 12px;
+  color: rgb(100, 140, 140);
+  margin-top: 8px;
+}
+
+.myr_modal_footer {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.myr_modal_button {
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: bold;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.myr_modal_button_cancel {
+  background: rgba(100, 100, 100, 0.5);
+  color: rgb(180, 180, 180);
+}
+
+.myr_modal_button_cancel:hover {
+  background: rgba(100, 100, 100, 0.7);
+}
+
+.myr_modal_button_save {
+  background: rgb(100, 200, 180);
+  color: #000;
+}
+
+.myr_modal_button_save:hover {
+  background: rgb(130, 230, 210);
+}
+
+.myr_file_action {
+  padding: 6px 12px;
+  font-size: 12px;
+  background: transparent;
+  color: rgb(152, 217, 204);
+  border: 1px solid rgba(100, 200, 180, 0.3);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.myr_file_action:hover {
+  background: rgba(100, 200, 180, 0.1);
+}
+
+.myr_file_action_download {
+  text-decoration: none;
+  color: rgb(100, 200, 150);
+  border-color: rgba(100, 200, 150, 0.3);
+}
+
+.myr_file_action_download:hover {
+  background: rgba(100, 200, 150, 0.1);
+}
+
+.myr_file_action_delete {
+  color: rgb(200, 100, 100);
+  border-color: rgba(200, 100, 100, 0.3);
+}
+
+.myr_file_action_delete:hover {
+  background: rgba(200, 100, 100, 0.1);
+}
+
+/* ============================================
+   Status Messages
+   ============================================ */
+
+.myr_status_message {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: bold;
+  z-index: 1000;
+  animation: slide-up 0.3s ease;
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+.myr_status_message.myr_success {
+  background: rgba(60, 160, 60, 0.9);
+  color: white;
+}
+
+.myr_status_message.myr_error {
+  background: rgba(180, 60, 60, 0.9);
+  color: white;
+}
+
+.myr_status_message.myr_info {
+  background: rgba(60, 120, 180, 0.9);
+  color: white;
+}
+
+/* ============================================
+   Responsive
+   ============================================ */
+
+@media (max-width: 600px) {
+  .myr_recordings_header {
+    flex-wrap: wrap;
+  }
+
+  .myr_recordings_header h1 {
+    order: 2;
+    flex-basis: 100%;
+    margin-top: 10px;
+  }
+
+  .myr_record_info {
+    grid-template-columns: 1fr;
+  }
+
+  .myr_file_row {
+    flex-wrap: wrap;
+  }
+
+  .myr_file_meta {
+    flex-basis: 100%;
+    margin-top: 8px;
+  }
+
+  .myr_file_actions {
+    flex-basis: 100%;
+    margin-top: 8px;
+  }
+}

@@ -1,0 +1,651 @@
+/**
+ * Debug Panel Styles
+ * Protocol Debugger UI for development mode
+ */
+
+/* ============================================================================
+   Debug Panel Container
+   ============================================================================ */
+
+.debug-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 450px;
+  height: 100vh;
+  background: #1a1a2e;
+  border-left: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+  z-index: 1000;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 12px;
+  color: #e0e0e0;
+  transform: translateX(100%);
+  transition: transform 0.3s ease;
+}
+
+.debug-panel.open {
+  transform: translateX(0);
+}
+
+/* Toggle Button */
+.debug-toggle {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  width: 40px;
+  height: 40px;
+  background: #2d2d44;
+  border: 1px solid #444;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1001;
+  transition: background 0.2s, right 0.3s;
+}
+
+.debug-toggle:hover {
+  background: #3d3d54;
+}
+
+.debug-toggle.panel-open {
+  right: 460px;
+}
+
+.debug-toggle svg {
+  width: 24px;
+  height: 24px;
+  fill: #88a0ff;
+}
+
+/* ============================================================================
+   Panel Header
+   ============================================================================ */
+
+.debug-header {
+  padding: 12px 16px;
+  background: #16162a;
+  border-bottom: 1px solid #333;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.debug-header h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #88a0ff;
+}
+
+.debug-header-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.debug-btn {
+  padding: 4px 10px;
+  background: #2d2d44;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #ccc;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.debug-btn:hover {
+  background: #3d3d54;
+}
+
+.debug-btn.active {
+  background: #445566;
+  border-color: #88a0ff;
+}
+
+.debug-btn.recording {
+  background: #663333;
+  border-color: #ff6666;
+  color: #ff6666;
+}
+
+/* ============================================================================
+   Radar Status Cards
+   ============================================================================ */
+
+.debug-radars {
+  padding: 10px 16px;
+  background: #1d1d32;
+  border-bottom: 1px solid #333;
+  flex-shrink: 0;
+}
+
+.radar-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: #252540;
+  border-radius: 6px;
+  margin-bottom: 6px;
+}
+
+.radar-card:last-child {
+  margin-bottom: 0;
+}
+
+.radar-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.radar-status-dot.connected {
+  background: #44bb66;
+  box-shadow: 0 0 6px #44bb66;
+}
+
+.radar-status-dot.connecting {
+  background: #ddaa44;
+  box-shadow: 0 0 6px #ddaa44;
+}
+
+.radar-status-dot.disconnected {
+  background: #666;
+}
+
+.radar-status-dot.error {
+  background: #dd4444;
+  box-shadow: 0 0 6px #dd4444;
+}
+
+.radar-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.radar-name {
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.radar-details {
+  font-size: 10px;
+  color: #888;
+}
+
+/* ============================================================================
+   Tabs
+   ============================================================================ */
+
+.debug-tabs {
+  display: flex;
+  background: #16162a;
+  border-bottom: 1px solid #333;
+  flex-shrink: 0;
+}
+
+.debug-tab {
+  flex: 1;
+  padding: 10px 16px;
+  text-align: center;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: background 0.2s, border-color 0.2s;
+  color: #888;
+}
+
+.debug-tab:hover {
+  background: #1d1d32;
+  color: #ccc;
+}
+
+.debug-tab.active {
+  border-bottom-color: #88a0ff;
+  color: #88a0ff;
+}
+
+/* ============================================================================
+   Event Timeline
+   ============================================================================ */
+
+.debug-timeline {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.debug-event {
+  padding: 8px 16px;
+  border-bottom: 1px solid #2a2a40;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.debug-event:hover {
+  background: #252540;
+}
+
+.debug-event.selected {
+  background: #2d2d55;
+  border-left: 3px solid #88a0ff;
+  padding-left: 13px;
+}
+
+.debug-event-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.debug-event-time {
+  font-size: 10px;
+  color: #666;
+  min-width: 65px;
+}
+
+.debug-event-badge {
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+/* Event type badges */
+.debug-event-badge.send {
+  background: #334466;
+  color: #88aaff;
+}
+
+.debug-event-badge.recv {
+  background: #336644;
+  color: #88dd88;
+}
+
+.debug-event-badge.socket {
+  background: #554433;
+  color: #ddaa66;
+}
+
+.debug-event-badge.state {
+  background: #443366;
+  color: #bb88dd;
+}
+
+.debug-event-badge.unknown {
+  background: #553333;
+  color: #ff8866;
+}
+
+/* Protocol badge */
+.debug-event-proto {
+  font-size: 9px;
+  color: #777;
+  text-transform: uppercase;
+}
+
+.debug-event-radar {
+  font-size: 10px;
+  color: #888;
+  margin-left: auto;
+}
+
+.debug-event-summary {
+  font-size: 11px;
+  color: #aaa;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.debug-event-summary code {
+  color: #88cc88;
+  background: #1a3020;
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+/* No events placeholder */
+.debug-no-events {
+  padding: 40px 20px;
+  text-align: center;
+  color: #666;
+}
+
+/* ============================================================================
+   Packet View (Detail Panel)
+   ============================================================================ */
+
+.debug-detail {
+  height: 40%;
+  min-height: 200px;
+  background: #141428;
+  border-top: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.debug-detail-header {
+  padding: 8px 16px;
+  background: #16162a;
+  border-bottom: 1px solid #333;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.debug-detail-header h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #88a0ff;
+}
+
+.debug-detail-content {
+  flex: 1;
+  overflow: auto;
+  padding: 12px 16px;
+}
+
+/* Hex dump */
+.hex-dump {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.hex-row {
+  display: flex;
+  gap: 16px;
+}
+
+.hex-offset {
+  color: #666;
+  min-width: 50px;
+}
+
+.hex-bytes {
+  color: #88aacc;
+  min-width: 280px;
+}
+
+.hex-ascii {
+  color: #88cc88;
+}
+
+.hex-unknown {
+  background: #553322;
+  color: #ffaa66;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+/* Decoded fields */
+.decoded-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #333;
+}
+
+.decoded-section h4 {
+  margin: 0 0 8px 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: #aaa;
+  text-transform: uppercase;
+}
+
+.decoded-field {
+  display: flex;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.decoded-field-name {
+  color: #88a0ff;
+  min-width: 120px;
+}
+
+.decoded-field-value {
+  color: #88cc88;
+}
+
+.decoded-description {
+  margin-top: 8px;
+  padding: 8px;
+  background: #1d1d32;
+  border-radius: 4px;
+  color: #aaa;
+  font-size: 11px;
+}
+
+/* ============================================================================
+   State Diff View
+   ============================================================================ */
+
+.state-diff {
+  padding: 12px;
+}
+
+.state-diff-row {
+  display: flex;
+  align-items: center;
+  padding: 8px;
+  background: #1d1d32;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.state-diff-control {
+  flex: 1;
+  font-weight: 600;
+  color: #88a0ff;
+}
+
+.state-diff-arrow {
+  padding: 0 12px;
+  color: #666;
+}
+
+.state-diff-before {
+  padding: 4px 8px;
+  background: #442233;
+  border-radius: 4px;
+  color: #dd8888;
+  min-width: 60px;
+  text-align: center;
+}
+
+.state-diff-after {
+  padding: 4px 8px;
+  background: #223344;
+  border-radius: 4px;
+  color: #88ddcc;
+  min-width: 60px;
+  text-align: center;
+}
+
+.state-diff-trigger {
+  margin-top: 8px;
+  font-size: 10px;
+  color: #666;
+}
+
+.state-diff-trigger a {
+  color: #88a0ff;
+  cursor: pointer;
+}
+
+.state-diff-trigger a:hover {
+  text-decoration: underline;
+}
+
+/* ============================================================================
+   Filter Bar
+   ============================================================================ */
+
+.debug-filter {
+  padding: 8px 16px;
+  background: #1d1d32;
+  border-bottom: 1px solid #333;
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.debug-filter-input {
+  flex: 1;
+  padding: 6px 10px;
+  background: #252540;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 11px;
+  font-family: inherit;
+}
+
+.debug-filter-input:focus {
+  outline: none;
+  border-color: #88a0ff;
+}
+
+.debug-filter-input::placeholder {
+  color: #666;
+}
+
+.debug-filter select {
+  padding: 6px 10px;
+  background: #252540;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.debug-filter select:focus {
+  outline: none;
+  border-color: #88a0ff;
+}
+
+/* ============================================================================
+   Stats Bar
+   ============================================================================ */
+
+.debug-stats {
+  padding: 6px 16px;
+  background: #16162a;
+  border-top: 1px solid #333;
+  display: flex;
+  gap: 16px;
+  font-size: 10px;
+  color: #666;
+  flex-shrink: 0;
+}
+
+.debug-stat {
+  display: flex;
+  gap: 4px;
+}
+
+.debug-stat-value {
+  color: #88a0ff;
+}
+
+/* ============================================================================
+   Recording Controls
+   ============================================================================ */
+
+.debug-recording {
+  padding: 8px 16px;
+  background: #1d1d32;
+  border-bottom: 1px solid #333;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.recording-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.recording-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #dd4444;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.recording-time {
+  font-size: 11px;
+  color: #dd4444;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================================
+   Scrollbar Styling
+   ============================================================================ */
+
+.debug-panel ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.debug-panel ::-webkit-scrollbar-track {
+  background: #1a1a2e;
+}
+
+.debug-panel ::-webkit-scrollbar-thumb {
+  background: #3d3d54;
+  border-radius: 4px;
+}
+
+.debug-panel ::-webkit-scrollbar-thumb:hover {
+  background: #4d4d64;
+}
+
+/* ============================================================================
+   Responsive adjustments
+   ============================================================================ */
+
+@media (max-width: 1200px) {
+  .debug-panel {
+    width: 380px;
+  }
+
+  .debug-toggle.panel-open {
+    right: 390px;
+  }
+}
+
+@media (max-width: 900px) {
+  .debug-panel {
+    width: 100%;
+  }
+
+  .debug-toggle.panel-open {
+    right: 10px;
+    top: auto;
+    bottom: 10px;
+  }
+}

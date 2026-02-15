@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Mayara Recordings</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <link type="text/css" rel="stylesheet" href="base.css?v=1" />
+    <link type="text/css" rel="stylesheet" href="recordings.css?v=1" />
+    <script type="module" src="recordings.js?v=1"></script>
+</head>
+<body>
+    <div class="myr_recordings_container">
+        <div class="myr_recordings_header">
+            <div class="myr_radar_icon">
+                <svg viewBox="0 0 100 100" class="myr_radar_sweep">
+                    <circle cx="50" cy="50" r="45" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3"/>
+                    <circle cx="50" cy="50" r="30" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3"/>
+                    <circle cx="50" cy="50" r="15" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3"/>
+                    <line x1="50" y1="50" x2="50" y2="5" stroke="currentColor" stroke-width="2" class="myr_sweep_line"/>
+                </svg>
+            </div>
+            <h1>Recordings</h1>
+            <a href="/" class="myr_back_link">Back to Radars</a>
+        </div>
+
+        <!-- Tab Navigation -->
+        <div class="myr_tabs">
+            <button class="myr_tab myr_tab_active" data-tab="record">Record</button>
+            <button class="myr_tab" data-tab="playback">Playback</button>
+            <button class="myr_tab" data-tab="files">Files</button>
+        </div>
+
+        <!-- Record Tab -->
+        <div id="tab_record" class="myr_tab_content myr_tab_visible">
+            <div class="myr_section">
+                <div class="myr_section_header">Select Radar to Record</div>
+                <div id="record_radar_list" class="myr_radar_select">
+                    <div class="myr_detecting">
+                        <span class="myr_pulse"></span>
+                        Detecting radars...
+                    </div>
+                </div>
+            </div>
+
+            <div class="myr_section" id="record_controls" style="display: none;">
+                <div class="myr_section_header">Recording Controls</div>
+                <div class="myr_record_status">
+                    <div id="record_status_indicator" class="myr_status_indicator myr_status_idle"></div>
+                    <span id="record_status_text">Ready to record</span>
+                </div>
+                <div class="myr_record_info">
+                    <div class="myr_info_row">
+                        <span class="myr_info_label">Duration:</span>
+                        <span id="record_duration" class="myr_info_value">0:00</span>
+                    </div>
+                    <div class="myr_info_row">
+                        <span class="myr_info_label">Frames:</span>
+                        <span id="record_frames" class="myr_info_value">0</span>
+                    </div>
+                    <div class="myr_info_row">
+                        <span class="myr_info_label">Size:</span>
+                        <span id="record_size" class="myr_info_value">0 KB</span>
+                    </div>
+                </div>
+                <div class="myr_button_row">
+                    <button id="btn_start_record" class="myr_button myr_button_record">Start Recording</button>
+                    <button id="btn_stop_record" class="myr_button myr_button_stop" disabled>Stop</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Playback Tab -->
+        <div id="tab_playback" class="myr_tab_content">
+            <div class="myr_section">
+                <div class="myr_section_header">Select Recording</div>
+                <div id="playback_file_list" class="myr_file_select">
+                    <div class="myr_loading">Loading recordings...</div>
+                </div>
+            </div>
+
+            <div class="myr_section" id="playback_controls" style="display: none;">
+                <div class="myr_section_header">Playback Controls</div>
+                <div class="myr_playback_status">
+                    <div id="playback_status_indicator" class="myr_status_indicator myr_status_idle"></div>
+                    <span id="playback_status_text">No recording loaded</span>
+                </div>
+
+                <div class="myr_playback_info">
+                    <div id="playback_filename" class="myr_filename"></div>
+                    <div class="myr_info_row">
+                        <span class="myr_info_label">Position:</span>
+                        <span id="playback_position" class="myr_info_value">0:00 / 0:00</span>
+                    </div>
+                    <div class="myr_info_row">
+                        <span class="myr_info_label">Frame:</span>
+                        <span id="playback_frame" class="myr_info_value">0 / 0</span>
+                    </div>
+                </div>
+
+                <!-- Timeline slider -->
+                <div class="myr_timeline_container">
+                    <input type="range" id="playback_timeline" class="myr_timeline" min="0" max="100" value="0" disabled />
+                </div>
+
+                <div class="myr_playback_buttons">
+                    <button id="btn_play" class="myr_button myr_button_play" disabled>Play</button>
+                    <button id="btn_pause" class="myr_button myr_button_pause" disabled>Pause</button>
+                    <button id="btn_stop_playback" class="myr_button myr_button_stop" disabled>Stop</button>
+                </div>
+
+                <div class="myr_playback_options">
+                    <div class="myr_option_row">
+                        <label class="myr_checkbox_label">
+                            <input type="checkbox" id="playback_loop" checked />
+                            Loop playback
+                        </label>
+                    </div>
+                    <div class="myr_option_row">
+                        <span class="myr_option_label">Speed:</span>
+                        <div class="myr_speed_buttons">
+                            <button class="myr_speed_button" data-speed="0.5">0.5x</button>
+                            <button class="myr_speed_button myr_speed_active" data-speed="1">1x</button>
+                            <button class="myr_speed_button" data-speed="2">2x</button>
+                            <button class="myr_speed_button" data-speed="4">4x</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="myr_view_radar">
+                    <a id="view_radar_link" href="#" class="myr_button myr_button_primary" style="display: none;">
+                        View Radar Display
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Files Tab -->
+        <div id="tab_files" class="myr_tab_content">
+            <div class="myr_section">
+                <div class="myr_section_header">Upload Recording</div>
+                <div id="upload_zone" class="myr_upload_zone">
+                    <p>Drop .mrr or .mrr.gz file here</p>
+                    <p class="myr_upload_hint">or click to browse</p>
+                    <input type="file" id="file_input" accept=".mrr,.gz">
+                </div>
+            </div>
+
+            <div class="myr_section">
+                <div class="myr_section_header">
+                    Recorded Files
+                    <button id="btn_refresh_files" class="myr_button_small">Refresh</button>
+                </div>
+                <div id="files_list" class="myr_files_list">
+                    <div class="myr_loading">Loading files...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status/Error message area -->
+        <div id="status_message" class="myr_status_message" style="display: none;"></div>
+    </div>
+</body>
+</html>
