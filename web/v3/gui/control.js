@@ -7,10 +7,28 @@
  * UI Design: Touch-friendly with sliders and buttons only (no dropdowns).
  */
 
-export { loadRadar, registerRadarCallback, registerControlCallback, setCurrentRange, getPowerState, getOperatingHours, hasHoursCapability, isPlaybackMode };
+export {
+  loadRadar,
+  registerRadarCallback,
+  registerControlCallback,
+  setCurrentRange,
+  getPowerState,
+  getOperatingTime,
+  hasTimeCapability,
+  isPlaybackMode,
+};
 
 import van from "./van-1.5.2.js";
-import { fetchRadarIds, fetchCapabilities, fetchState, setControl, detectMode, isStandaloneMode, saveInstallationSetting, isPlaybackRadar } from "./api.js";
+import {
+  fetchRadars,
+  fetchRadarIds,
+  fetchCapabilities,
+  setControl,
+  detectMode,
+  isStandaloneMode,
+  saveInstallationSetting,
+  isPlaybackRadar,
+} from "./api.js";
 
 const { div, label, input, button, span } = van.tags;
 
@@ -18,24 +36,52 @@ const { div, label, input, button, span } = van.tags;
 let radarId = null;
 let capabilities = null;
 let radarState = null;
-let statePollingInterval = null;
-let callbacks = [];
+let stateWebSocket = null;
+let radarCallbacks = [];
 let controlCallbacks = [];
 let playbackMode = false; // True when viewing a playback radar (controls disabled)
 
 // Current range (for viewer.js integration)
 let currentRange = 1852;
 let lastRangeUpdateTime = 0;
-let rangeUpdateCount = {};  // Track how often each range value is seen
-let userRequestedRangeIndex = -1;  // Track user's position in range table
-let rangeFromSpokeData = false;  // True once we've received range from spoke data
+let rangeUpdateCount = {}; // Track how often each range value is seen
+let userRequestedRangeIndex = -1; // Track user's position in range table
+let rangeFromSpokeData = false; // True once we've received range from spoke data
 
 // Track pending control changes to prevent polling from overwriting user input
 // Maps controlId -> { value, timestamp }
 let pendingControls = {};
 
+/**
+ * Normalize capabilities.controls to always be a HashMap
+ * Converts array format (v2) to object format for consistent access
+ */
+function normalizeControls(controls) {
+  if (!controls) {
+    return {};
+  }
+
+  // If already an object (v3 format), return as-is
+  if (!Array.isArray(controls)) {
+    return controls;
+  }
+
+  // Convert array (v2 format) to object keyed by controlId
+  const controlsMap = {};
+  for (const control of controls) {
+    const controlId = control.controlId || control.id;
+    if (controlId) {
+      controlsMap[controlId] = {
+        ...control,
+        controlId, // Ensure controlId is set
+      };
+    }
+  }
+  return controlsMap;
+}
+
 function registerRadarCallback(callback) {
-  callbacks.push(callback);
+  radarCallbacks.push(callback);
 }
 
 function registerControlCallback(callback) {
@@ -71,14 +117,14 @@ function setCurrentRange(meters) {
   // Only update if we have a clear majority (5+ samples) and it's different
   if (maxCount >= 5 && dominantRange !== currentRange) {
     currentRange = dominantRange;
-    rangeFromSpokeData = true;  // Mark that we have real range from radar
+    rangeFromSpokeData = true; // Mark that we have real range from radar
     // Also update userRequestedRangeIndex to match spoke data
-    const ranges = capabilities?.characteristics?.supportedRanges || [];
-    const newIndex = ranges.findIndex(r => Math.abs(r - dominantRange) < 50);
+    const ranges = capabilities?.supportedRanges || [];
+    const newIndex = ranges.findIndex((r) => Math.abs(r - dominantRange) < 50);
     if (newIndex >= 0) {
       userRequestedRangeIndex = newIndex;
     }
-    rangeUpdateCount = {};  // Reset after accepting new range
+    rangeUpdateCount = {}; // Reset after accepting new range
     updateRangeDisplay();
   }
 }
@@ -99,12 +145,18 @@ function buildControlsFromCapabilities() {
   // Set title
   if (titleEl) {
     titleEl.innerHTML = "";
-    const titleText = `${capabilities.make || ''} ${capabilities.model || ''} Controls`;
+    const titleText = `${capabilities.make || ""} ${
+      capabilities.model || ""
+    } Controls`;
     if (playbackMode) {
-      van.add(titleEl, div({ class: "myr_title_with_badge" },
-        span(titleText),
-        span({ class: "myr_playback_badge" }, "PLAYBACK")
-      ));
+      van.add(
+        titleEl,
+        div(
+          { class: "myr_title_with_badge" },
+          span(titleText),
+          span({ class: "myr_playback_badge" }, "PLAYBACK")
+        )
+      );
     } else {
       van.add(titleEl, div(titleText));
     }
@@ -124,18 +176,20 @@ function buildControlsFromCapabilities() {
   if (capabilities.firmwareVersion) {
     infoItems.push({ label: "Firmware", value: capabilities.firmwareVersion });
   }
-  if (capabilities.characteristics?.maxRange) {
-    const maxNm = (capabilities.characteristics.maxRange / 1852).toFixed(0);
+  if (capabilities.maxRange) {
+    const maxNm = (capabilities.maxRange / 1852).toFixed(0);
     infoItems.push({ label: "Max Range", value: `${maxNm} nm` });
   }
-  if (capabilities.characteristics?.hasDoppler) {
+  if (capabilities.hasDoppler) {
     infoItems.push({ label: "Doppler", value: "Yes" });
   }
 
   if (infoItems.length > 0) {
-    const infoHeader = div({ class: "myr_radar_info_header" },
-      ...infoItems.map(item =>
-        div({ class: "myr_radar_info_item" },
+    const infoHeader = div(
+      { class: "myr_radar_info_header" },
+      ...infoItems.map((item) =>
+        div(
+          { class: "myr_radar_info_item" },
           span({ class: "myr_info_label" }, item.label + ":"),
           span({ class: "myr_info_value" }, item.value)
         )
@@ -145,42 +199,51 @@ function buildControlsFromCapabilities() {
   }
 
   // Group controls by category
+  // capabilities.controls is now always a HashMap (normalized on load)
   const baseControls = [];
   const extendedControls = [];
   const configControls = [];
   const infoControls = [];
 
-  for (const control of capabilities.controls || []) {
-    if (control.readOnly) {
-      infoControls.push(control);
-    } else if (control.category === 'installation') {
-      configControls.push(control);
-    } else if (control.category === 'extended') {
-      extendedControls.push(control);
+  // Convert HashMap to array for iteration
+  for (const [controlId, control] of Object.entries(
+    capabilities.controls || {}
+  )) {
+    // Ensure control has controlId field set
+    const fullControl = { ...control, controlId };
+
+    if (fullControl.readOnly) {
+      infoControls.push(fullControl);
+    } else if (fullControl.category === "installation") {
+      configControls.push(fullControl);
+    } else if (fullControl.category === "advanced") {
+      extendedControls.push(fullControl);
     } else {
-      baseControls.push(control);
+      // Default: base category and any unhandled categories
+      baseControls.push(fullControl);
     }
   }
 
-  // Build base controls (power, range, gain, sea, rain)
+  // Sort controls by their numeric id field
+  const sortById = (a, b) => (a.id || 0) - (b.id || 0);
+  baseControls.sort(sortById);
+  extendedControls.sort(sortById);
+  configControls.sort(sortById);
+  infoControls.sort(sortById);
+
+  // Build base controls (range, gain, sea, rain, etc.)
   if (baseControls.length > 0) {
     const baseSection = div({ class: "myr_control_section" });
 
-    // Power control first (special handling)
-    const powerControl = baseControls.find(c => c.id === 'power');
-    if (powerControl) {
-      van.add(baseSection, buildPowerControl(powerControl));
-    }
-
     // Range control (special handling with +/- buttons)
-    const rangeControl = baseControls.find(c => c.id === 'range');
+    const rangeControl = baseControls.find((c) => c.controlId === "range");
     if (rangeControl) {
       van.add(baseSection, buildRangeControl(rangeControl));
     }
 
     // Other base controls
     for (const control of baseControls) {
-      if (control.id !== 'power' && control.id !== 'range') {
+      if (control.controlId !== "range") {
         van.add(baseSection, buildControl(control));
       }
     }
@@ -190,7 +253,8 @@ function buildControlsFromCapabilities() {
 
   // Build extended controls in a collapsible section
   if (extendedControls.length > 0) {
-    const extSection = div({ class: "myr_control_section myr_extended_section" },
+    const extSection = div(
+      { class: "myr_control_section myr_extended_section" },
       div({ class: "myr_section_header" }, "Advanced Controls")
     );
 
@@ -203,7 +267,8 @@ function buildControlsFromCapabilities() {
 
   // Build installation controls (config settings - rarely changed)
   if (configControls.length > 0) {
-    const configSection = div({ class: "myr_control_section myr_installation_section" },
+    const configSection = div(
+      { class: "myr_control_section myr_installation_section" },
       div({ class: "myr_section_header" }, "Installation")
     );
 
@@ -216,7 +281,8 @@ function buildControlsFromCapabilities() {
 
   // Build info controls (read-only)
   if (infoControls.length > 0) {
-    const infoSection = div({ class: "myr_control_section myr_info_section" },
+    const infoSection = div(
+      { class: "myr_control_section myr_info_section" },
       div({ class: "myr_section_header" }, "Radar Information")
     );
 
@@ -238,48 +304,34 @@ function buildControlsFromCapabilities() {
  */
 function buildControl(control) {
   // Special case for dopplerMode - needs custom UI (enabled toggle + mode selector)
-  if (control.id === 'dopplerMode') {
+  if (control.controlId === "dopplerMode") {
     return buildDopplerModeControl(control);
   }
 
   // Special case for noTransmitZones - needs custom UI (2 zone editors)
-  if (control.id === 'noTransmitZones') {
+  if (control.controlId === "noTransmitZones") {
     return buildNoTransmitZonesControl(control);
   }
 
-  switch (control.type) {
-    case 'boolean':
+  switch (control.dataType) {
+    case "boolean":
       return buildBooleanControl(control);
-    case 'number':
+    case "button":
+      return buildButtonControl(control);
+    case "string":
+      return buildStringControl(control);
+    case "number":
       return buildNumberControl(control);
-    case 'enum':
+    case "enum":
       return buildEnumControl(control);
-    case 'compound':
+    case "compound":
       return buildCompoundControl(control);
     default:
-      console.warn(`Unknown control type: ${control.type} for ${control.id}`);
+      console.warn(
+        `Unknown control dataType: ${control.dataType} for ${control.controlId}`
+      );
       return div();
   }
-}
-
-/**
- * Power control - special Transmit/Standby buttons
- */
-function buildPowerControl(control) {
-  const currentValue = getControlValue('power') || 'standby';
-
-  return div({ class: "myr_power_buttons" },
-    button({
-      type: "button",
-      class: `myr_power_button myr_power_button_transmit ${currentValue === 'transmit' ? 'myr_power_active' : ''}`,
-      onclick: () => sendControlValue('power', 'transmit'),
-    }, "Transmit"),
-    button({
-      type: "button",
-      class: `myr_power_button myr_power_button_standby ${currentValue === 'standby' ? 'myr_power_active' : ''}`,
-      onclick: () => sendControlValue('power', 'standby'),
-    }, "Standby")
-  );
 }
 
 /**
@@ -287,19 +339,26 @@ function buildPowerControl(control) {
  */
 function buildRangeControl(control) {
   // Get supported ranges from characteristics
-  const ranges = capabilities.characteristics?.supportedRanges || [];
+  const ranges = capabilities.supportedRanges || [];
 
-  return div({ class: "myr_range_buttons" },
-    button({
-      type: "button",
-      class: "myr_range_button",
-      onclick: () => changeRange(-1),
-    }, "Range -"),
-    button({
-      type: "button",
-      class: "myr_range_button",
-      onclick: () => changeRange(1),
-    }, "Range +")
+  return div(
+    { class: "myr_range_buttons" },
+    button(
+      {
+        type: "button",
+        class: "myr_range_button",
+        onclick: () => changeRange(-1),
+      },
+      "Range -"
+    ),
+    button(
+      {
+        type: "button",
+        class: "myr_range_button",
+        onclick: () => changeRange(1),
+      },
+      "Range +"
+    )
   );
 }
 
@@ -307,19 +366,57 @@ function buildRangeControl(control) {
  * Boolean control - toggle button
  */
 function buildBooleanControl(control) {
-  const currentValue = getControlValue(control.id) || control.default || false;
+  const currentValue =
+    getControlValue(control.controlId) || control.default || false;
 
-  return div({ class: "myr_control myr_boolean_control" },
+  return div(
+    { class: "myr_control myr_boolean_control" },
     span({ class: "myr_control_label" }, control.name),
-    button({
-      type: "button",
-      id: `myr_${control.id}`,
-      class: `myr_toggle_button ${currentValue ? 'myr_toggle_active' : ''}`,
-      onclick: (e) => {
-        const isActive = e.target.classList.contains('myr_toggle_active');
-        sendControlValue(control.id, !isActive);
+    button(
+      {
+        type: "button",
+        id: `myr_${control.controlId}`,
+        class: `myr_toggle_button ${currentValue ? "myr_toggle_active" : ""}`,
+        onclick: (e) => {
+          const isActive = e.target.classList.contains("myr_toggle_active");
+          sendControlValue(control.controlId, !isActive);
+        },
       },
-    }, currentValue ? "On" : "Off")
+      currentValue ? "On" : "Off"
+    )
+  );
+}
+
+/**
+ * Button control - action button
+ */
+function buildButtonControl(control) {
+  return div(
+    { class: "myr_control myr_button_control" },
+    button(
+      {
+        type: "button",
+        id: `myr_${control.controlId}`,
+        class: "myr_action_button",
+        onclick: () => {
+          sendControlValue(control.controlId, null);
+        },
+      },
+      control.name
+    )
+  );
+}
+
+/**
+ * String control - read-only string display
+ */
+function buildStringControl(control) {
+  const value = getControlValue(control.controlId) || "-";
+
+  return div(
+    { class: "myr_control myr_string_control myr_readonly" },
+    span({ class: "myr_control_label" }, control.name),
+    span({ id: `myr_${control.controlId}`, class: "myr_string_value" }, value)
   );
 }
 
@@ -328,24 +425,29 @@ function buildBooleanControl(control) {
  */
 function buildNumberControl(control) {
   const range = control.range || { min: 0, max: 100 };
-  let currentValue = getControlValue(control.id);
+  let currentValue = getControlValue(control.controlId);
 
   // Handle compound values (objects with mode/value)
-  if (typeof currentValue === 'object' && currentValue !== null) {
+  if (typeof currentValue === "object" && currentValue !== null) {
     currentValue = currentValue.value;
   }
 
-  const value = currentValue !== undefined ? currentValue : (control.default || range.min);
+  const value =
+    currentValue !== undefined ? currentValue : control.default || range.min;
 
-  return div({ class: "myr_control myr_number_control" },
-    div({ class: "myr_control_header" },
+  return div(
+    { class: "myr_control myr_number_control" },
+    div(
+      { class: "myr_control_header" },
       span({ class: "myr_control_label" }, control.name),
-      span({ id: `myr_${control.id}_value`, class: "myr_control_value" },
-        formatNumberValue(value, control))
+      span(
+        { id: `myr_${control.controlId}_value`, class: "myr_control_value" },
+        formatNumberValue(value, control)
+      )
     ),
     input({
       type: "range",
-      id: `myr_${control.id}`,
+      id: `myr_${control.controlId}`,
       class: "myr_slider",
       min: range.min,
       max: range.max,
@@ -353,13 +455,16 @@ function buildNumberControl(control) {
       value: value,
       oninput: (e) => {
         // Update display while dragging
-        const valEl = document.getElementById(`myr_${control.id}_value`);
+        const valEl = document.getElementById(`myr_${control.controlId}_value`);
         if (valEl) {
-          valEl.textContent = formatNumberValue(parseInt(e.target.value), control);
+          valEl.textContent = formatNumberValue(
+            parseInt(e.target.value),
+            control
+          );
         }
       },
       onchange: (e) => {
-        sendControlValue(control.id, parseInt(e.target.value));
+        sendControlValue(control.controlId, parseInt(e.target.value));
       },
     })
   );
@@ -369,21 +474,29 @@ function buildNumberControl(control) {
  * Enum control - row of buttons (no dropdown per user request)
  */
 function buildEnumControl(control) {
-  const values = control.values || [];
-  const currentValue = getControlValue(control.id) ?? control.default;
+  const descriptions = control.descriptions || {};
 
-  return div({ class: "myr_control myr_enum_control" },
+  // Convert descriptions object {0: "Off", 1: "Normal", 2: "Approaching"} to array of [value, label] pairs
+  const valueEntries = Object.entries(descriptions).map(([key, label]) => [
+    parseInt(key),
+    label,
+  ]);
+
+  return div(
+    { class: "myr_control myr_enum_control" },
     span({ class: "myr_control_label" }, control.name),
-    div({ class: "myr_button_group", id: `myr_${control.id}_group` },
-      ...values.map(v => {
-        // Compare as strings to handle number/string type differences
-        const isActive = String(v.value) === String(currentValue);
-        return button({
-          type: "button",
-          class: `myr_enum_button ${isActive ? 'myr_enum_active' : ''}`,
-          "data-value": v.value,
-          onclick: () => sendControlValue(control.id, v.value),
-        }, v.label || v.value);
+    div(
+      { class: "myr_button_group", id: `myr_${control.controlId}_group` },
+      ...valueEntries.map(([value, label]) => {
+        return button(
+          {
+            type: "button",
+            class: "myr_enum_button",
+            "data-value": value,
+            onclick: () => sendControlValue(control.controlId, value),
+          },
+          label
+        );
       })
     )
   );
@@ -393,43 +506,60 @@ function buildEnumControl(control) {
  * Compound control - mode selector + value slider (e.g., gain with auto/manual)
  */
 function buildCompoundControl(control) {
-  const modes = control.modes || ['auto', 'manual'];
-  const currentState = getControlValue(control.id) || {};
+  const modes = control.modes || ["auto", "manual"];
+  const currentState = getControlValue(control.controlId) || {};
   const currentMode = currentState.mode || control.defaultMode || modes[0];
-  const currentValue = currentState.value !== undefined ? currentState.value : 50;
+  const currentValue =
+    currentState.value !== undefined ? currentState.value : 50;
 
   // Get value range from properties
   const valueProps = control.properties?.value || {};
   const range = valueProps.range || { min: 0, max: 100 };
 
-  const isAuto = currentMode === 'auto';
+  const isAuto = currentMode === "auto";
 
-  return div({ class: "myr_control myr_compound_control", id: `myr_${control.id}_compound` },
-    div({ class: "myr_compound_header" },
+  return div(
+    {
+      class: "myr_control myr_compound_control",
+      id: `myr_${control.controlId}_compound`,
+    },
+    div(
+      { class: "myr_compound_header" },
       span({ class: "myr_control_label" }, control.name),
-      span({ id: `myr_${control.id}_value`, class: "myr_control_value" },
-        isAuto ? "Auto" : currentValue)
+      span(
+        { id: `myr_${control.controlId}_value`, class: "myr_control_value" },
+        isAuto ? "Auto" : currentValue
+      )
     ),
-    div({ class: "myr_compound_body" },
+    div(
+      { class: "myr_compound_body" },
       // Mode buttons
-      div({ class: "myr_mode_buttons" },
-        ...modes.map(mode =>
-          button({
-            type: "button",
-            class: `myr_mode_button ${mode === currentMode ? 'myr_mode_active' : ''}`,
-            "data-mode": mode,
-            onclick: () => {
-              const slider = document.getElementById(`myr_${control.id}_slider`);
-              const value = slider ? parseInt(slider.value) : currentValue;
-              sendControlValue(control.id, { mode, value });
+      div(
+        { class: "myr_mode_buttons" },
+        ...modes.map((mode) =>
+          button(
+            {
+              type: "button",
+              class: `myr_mode_button ${
+                mode === currentMode ? "myr_mode_active" : ""
+              }`,
+              "data-mode": mode,
+              onclick: () => {
+                const slider = document.getElementById(
+                  `myr_${control.controlId}_slider`
+                );
+                const value = slider ? parseInt(slider.value) : currentValue;
+                sendControlValue(control.controlId, { mode, value });
+              },
             },
-          }, mode.charAt(0).toUpperCase() + mode.slice(1))
+            mode.charAt(0).toUpperCase() + mode.slice(1)
+          )
         )
       ),
       // Value slider (disabled when auto)
       input({
         type: "range",
-        id: `myr_${control.id}_slider`,
+        id: `myr_${control.controlId}_slider`,
         class: "myr_slider myr_compound_slider",
         min: range.min,
         max: range.max,
@@ -437,20 +567,29 @@ function buildCompoundControl(control) {
         value: currentValue,
         disabled: isAuto,
         oninput: (e) => {
-          const valEl = document.getElementById(`myr_${control.id}_value`);
+          const valEl = document.getElementById(
+            `myr_${control.controlId}_value`
+          );
           // Check current mode dynamically, not the captured isAuto
-          const modeEl = document.querySelector(`#myr_${control.id}_compound .myr_mode_active`);
-          const currentMode = modeEl?.dataset.mode || 'auto';
-          if (valEl && currentMode !== 'auto') {
+          const modeEl = document.querySelector(
+            `#myr_${control.controlId}_compound .myr_mode_active`
+          );
+          const currentMode = modeEl?.dataset.mode || "auto";
+          if (valEl && currentMode !== "auto") {
             valEl.textContent = e.target.value;
           }
         },
         onchange: (e) => {
           // Check current mode dynamically
-          const modeEl = document.querySelector(`#myr_${control.id}_compound .myr_mode_active`);
-          const mode = modeEl?.dataset.mode || 'manual';
-          if (mode !== 'auto') {
-            sendControlValue(control.id, { mode, value: parseInt(e.target.value) });
+          const modeEl = document.querySelector(
+            `#myr_${control.controlId}_compound .myr_mode_active`
+          );
+          const mode = modeEl?.dataset.mode || "manual";
+          if (mode !== "auto") {
+            sendControlValue(control.controlId, {
+              mode,
+              value: parseInt(e.target.value),
+            });
           }
         },
       })
@@ -463,34 +602,66 @@ function buildCompoundControl(control) {
  * Furuno Target Analyzer: { enabled: bool, mode: "target" | "rain" }
  */
 function buildDopplerModeControl(control) {
-  const currentState = getControlValue(control.id) || { enabled: false, mode: 'target' };
+  const currentState = getControlValue(control.controlId) || {
+    enabled: false,
+    mode: "target",
+  };
   const enabled = currentState.enabled || false;
-  const mode = currentState.mode || 'target';
+  const mode = currentState.mode || "target";
 
   // Determine which button is active: off, target, or rain
-  const activeBtn = !enabled ? 'off' : mode;
+  const activeBtn = !enabled ? "off" : mode;
 
-  return div({ class: "myr_control", id: `myr_${control.id}_compound` },
+  return div(
+    { class: "myr_control", id: `myr_${control.controlId}_compound` },
     span({ class: "myr_control_label" }, control.name),
-    div({ class: "myr_mode_buttons myr_mode_buttons_3" },
-      button({
-        type: "button",
-        class: `myr_mode_button ${activeBtn === 'off' ? 'myr_mode_active' : ''}`,
-        "data-value": "off",
-        onclick: () => sendControlValue(control.id, { enabled: false, mode: 'target' }),
-      }, "Off"),
-      button({
-        type: "button",
-        class: `myr_mode_button ${activeBtn === 'target' ? 'myr_mode_active' : ''}`,
-        "data-value": "target",
-        onclick: () => sendControlValue(control.id, { enabled: true, mode: 'target' }),
-      }, "Target"),
-      button({
-        type: "button",
-        class: `myr_mode_button ${activeBtn === 'rain' ? 'myr_mode_active' : ''}`,
-        "data-value": "rain",
-        onclick: () => sendControlValue(control.id, { enabled: true, mode: 'rain' }),
-      }, "Rain")
+    div(
+      { class: "myr_mode_buttons myr_mode_buttons_3" },
+      button(
+        {
+          type: "button",
+          class: `myr_mode_button ${
+            activeBtn === "off" ? "myr_mode_active" : ""
+          }`,
+          "data-value": "off",
+          onclick: () =>
+            sendControlValue(control.controlId, {
+              enabled: false,
+              mode: "target",
+            }),
+        },
+        "Off"
+      ),
+      button(
+        {
+          type: "button",
+          class: `myr_mode_button ${
+            activeBtn === "target" ? "myr_mode_active" : ""
+          }`,
+          "data-value": "target",
+          onclick: () =>
+            sendControlValue(control.controlId, {
+              enabled: true,
+              mode: "target",
+            }),
+        },
+        "Target"
+      ),
+      button(
+        {
+          type: "button",
+          class: `myr_mode_button ${
+            activeBtn === "rain" ? "myr_mode_active" : ""
+          }`,
+          "data-value": "rain",
+          onclick: () =>
+            sendControlValue(control.controlId, {
+              enabled: true,
+              mode: "rain",
+            }),
+        },
+        "Rain"
+      )
     )
   );
 }
@@ -503,21 +674,21 @@ function buildDopplerModeControl(control) {
 function buildNoTransmitZonesControl(control) {
   // Read from individual controls (server uses flat model)
   // -1 means zone is disabled
-  const z1Start = getControlValue('noTransmitStart1') ?? -1;
-  const z1End = getControlValue('noTransmitEnd1') ?? -1;
-  const z2Start = getControlValue('noTransmitStart2') ?? -1;
-  const z2End = getControlValue('noTransmitEnd2') ?? -1;
+  const z1Start = getControlValue("noTransmitStart1") ?? -1;
+  const z1End = getControlValue("noTransmitEnd1") ?? -1;
+  const z2Start = getControlValue("noTransmitStart2") ?? -1;
+  const z2End = getControlValue("noTransmitEnd2") ?? -1;
 
   // -1 means disabled (value < 0)
   const zone1 = {
     enabled: z1Start >= 0 && z1End >= 0,
     start: z1Start < 0 ? 0 : z1Start,
-    end: z1End < 0 ? 0 : z1End
+    end: z1End < 0 ? 0 : z1End,
   };
   const zone2 = {
     enabled: z2Start >= 0 && z2End >= 0,
     start: z2Start < 0 ? 0 : z2Start,
-    end: z2End < 0 ? 0 : z2End
+    end: z2End < 0 ? 0 : z2End,
   };
 
   // Read current zone values from DOM (to avoid stale closure values)
@@ -529,14 +700,14 @@ function buildNoTransmitZonesControl(control) {
     return {
       enabled: enabledEl?.checked || false,
       start: parseInt(startEl?.value) || 0,
-      end: parseInt(endEl?.value) || 0
+      end: parseInt(endEl?.value) || 0,
     };
   }
 
   function sendCurrentZones() {
     const z1 = getZoneFromDOM(1);
     const z2 = getZoneFromDOM(2);
-    console.log('NTZ: Sending zones:', { z1, z2 });
+    console.log("NTZ: Sending zones:", { z1, z2 });
 
     // Send individual control values (server has noTransmitStart1/End1/Start2/End2)
     // When zone is disabled, send -1 for both angles (server convention for disabled)
@@ -546,10 +717,10 @@ function buildNoTransmitZonesControl(control) {
     const z2End = z2.enabled ? z2.end : -1;
 
     // Send all four controls using sendControlValue to get pending tracking
-    sendControlValue('noTransmitStart1', z1Start);
-    sendControlValue('noTransmitEnd1', z1End);
-    sendControlValue('noTransmitStart2', z2Start);
-    sendControlValue('noTransmitEnd2', z2End);
+    sendControlValue("noTransmitStart1", z1Start);
+    sendControlValue("noTransmitEnd1", z1End);
+    sendControlValue("noTransmitStart2", z2Start);
+    sendControlValue("noTransmitEnd2", z2End);
   }
 
   function buildZoneEditor(zoneNum, zone) {
@@ -565,20 +736,25 @@ function buildNoTransmitZonesControl(control) {
       sendCurrentZones();
     }
 
-    return div({ class: "myr_ntz_zone" },
-      div({ class: "myr_ntz_zone_header" },
-        label({ class: "myr_checkbox_label" },
+    return div(
+      { class: "myr_ntz_zone" },
+      div(
+        { class: "myr_ntz_zone_header" },
+        label(
+          { class: "myr_checkbox_label" },
           input({
             type: "checkbox",
             id: `${prefix}_enabled`,
             checked: zone.enabled,
-            onchange: onEnabledChange
+            onchange: onEnabledChange,
           }),
           ` Zone ${zoneNum}`
         )
       ),
-      div({ class: "myr_ntz_angles" },
-        div({ class: "myr_ntz_angle" },
+      div(
+        { class: "myr_ntz_angles" },
+        div(
+          { class: "myr_ntz_angle" },
           label({ for: `${prefix}_start` }, "Start°"),
           input({
             type: "number",
@@ -587,10 +763,11 @@ function buildNoTransmitZonesControl(control) {
             max: 359,
             value: zone.start,
             disabled: !zone.enabled,
-            onchange: () => sendCurrentZones()
+            onchange: () => sendCurrentZones(),
           })
         ),
-        div({ class: "myr_ntz_angle" },
+        div(
+          { class: "myr_ntz_angle" },
           label({ for: `${prefix}_end` }, "End°"),
           input({
             type: "number",
@@ -599,16 +776,21 @@ function buildNoTransmitZonesControl(control) {
             max: 359,
             value: zone.end,
             disabled: !zone.enabled,
-            onchange: () => sendCurrentZones()
+            onchange: () => sendCurrentZones(),
           })
         )
       )
     );
   }
 
-  return div({ class: "myr_control myr_ntz_control", id: `myr_${control.id}_compound` },
+  return div(
+    {
+      class: "myr_control myr_ntz_control",
+      id: `myr_${control.controlId}_compound`,
+    },
     span({ class: "myr_control_label" }, control.name),
-    div({ class: "myr_ntz_zones" },
+    div(
+      { class: "myr_ntz_zones" },
       buildZoneEditor(1, zone1),
       buildZoneEditor(2, zone2)
     )
@@ -619,11 +801,15 @@ function buildNoTransmitZonesControl(control) {
  * Read-only info control
  */
 function buildInfoControl(control) {
-  const value = getControlValue(control.id) || '-';
+  const value = getControlValue(control.controlId) || "-";
 
-  return div({ class: "myr_control myr_info_control" },
+  return div(
+    { class: "myr_control myr_info_control" },
     span({ class: "myr_control_label" }, control.name),
-    span({ id: `myr_${control.id}`, class: "myr_info_value" }, formatInfoValue(value, control))
+    span(
+      { id: `myr_${control.controlId}`, class: "myr_info_value" },
+      formatInfoValue(value, control)
+    )
   );
 }
 
@@ -632,29 +818,31 @@ function buildInfoControl(control) {
 // ============================================================================
 
 function getControlValue(controlId) {
-  return radarState?.controls?.[controlId];
+  return radarState[controlId];
 }
 
 function formatNumberValue(value, control) {
   // Handle compound values (objects with mode/value)
   let numValue = value;
-  if (typeof value === 'object' && value !== null) {
-    if (value.mode === 'auto') {
-      return 'Auto';
+  if (typeof value === "object" && value !== null) {
+    if (value.mode === "auto") {
+      return "Auto";
     }
     numValue = value.value !== undefined ? value.value : 0;
   }
 
-  const unit = control?.range?.unit || '';
-  if (unit === 'percent') {
+  const unit = control?.range?.unit || "";
+  if (unit === "percent") {
     return `${numValue}%`;
   }
   return unit ? `${numValue} ${unit}` : String(numValue);
 }
 
 function formatInfoValue(value, control) {
-  if (control.id === 'operatingHours' && typeof value === 'number') {
-    return `${value.toFixed(1)} hrs`;
+  if (control.units && control.units === "s") {
+    if (value % 3600 == 0) {
+      return String(value / 3600) + " h";
+    }
   }
   return String(value);
 }
@@ -708,13 +896,13 @@ async function sendControlValue(controlId, value) {
   const success = await setControl(radarId, controlId, value);
 
   if (success) {
-    // Notify callbacks
-    const control = capabilities?.controls?.find(c => c.id === controlId);
-    controlCallbacks.forEach(cb => cb(control, { id: controlId, value }));
+    // Notify callbacks (capabilities.controls is a HashMap)
+    const control = capabilities?.controls?.[controlId];
+    controlCallbacks.forEach((cb) => cb(control, { id: controlId, value }));
 
     // Persist Installation category controls (write-only settings like bearingAlignment)
     // Use capabilities.key (e.g., "Furuno-RD003212") for storage - compatible with WASM SignalK plugin
-    if (control?.category === 'installation') {
+    if (control?.category === "installation") {
       const storageKey = capabilities?.key || radarId;
       saveInstallationSetting(storageKey, controlId, value);
     }
@@ -722,22 +910,27 @@ async function sendControlValue(controlId, value) {
 }
 
 function changeRange(direction) {
-  const ranges = capabilities?.characteristics?.supportedRanges || [];
+  const ranges = capabilities?.supportedRanges || [];
   if (ranges.length === 0) return;
 
   // Use tracked index if valid, otherwise find from current range
   if (userRequestedRangeIndex < 0 || userRequestedRangeIndex >= ranges.length) {
-    userRequestedRangeIndex = ranges.findIndex(r => Math.abs(r - currentRange) < 50);
+    userRequestedRangeIndex = ranges.findIndex(
+      (r) => Math.abs(r - currentRange) < 50
+    );
     if (userRequestedRangeIndex < 0) userRequestedRangeIndex = 0;
   }
 
-  const newIndex = Math.max(0, Math.min(ranges.length - 1, userRequestedRangeIndex + direction));
+  const newIndex = Math.max(
+    0,
+    Math.min(ranges.length - 1, userRequestedRangeIndex + direction)
+  );
   const newRange = ranges[newIndex];
 
   // Always update index to track user's position
   userRequestedRangeIndex = newIndex;
 
-  sendControlValue('range', newRange);
+  sendControlValue("range", newRange);
 }
 
 // ============================================================================
@@ -746,69 +939,65 @@ function changeRange(direction) {
 
 function updateControlUI(controlId, value) {
   // Update local state
-  if (radarState?.controls) {
-    radarState.controls[controlId] = value;
-  }
+  radarState[controlId] = value;
 
-  // Update UI based on control type
-  const control = capabilities?.controls?.find(c => c.id === controlId);
+  // Update UI based on control type (capabilities.controls is a HashMap)
+  const control = capabilities?.controls?.[controlId];
   if (!control) return;
 
+  if (controlId === "power") {
+    console.log("*** updateControlUI POWER");
+  }
   // Special case for dopplerMode
-  if (controlId === 'dopplerMode') {
+  if (controlId === "dopplerMode") {
     updateDopplerModeUI(controlId, value);
     return;
   }
 
   // Special case for noTransmitZones (compound) or individual NTZ controls
-  if (controlId === 'noTransmitZones') {
+  if (controlId === "noTransmitZones") {
     updateNoTransmitZonesUI(value);
     return;
   }
   // Handle individual NTZ controls - update the compound UI
-  if (controlId.startsWith('noTransmit')) {
+  if (controlId.startsWith("noTransmit")) {
     updateNoTransmitZoneFromIndividual(controlId, value);
     return;
   }
 
-  switch (control.type) {
-    case 'boolean':
+  switch (control.dataType) {
+    case "boolean":
       updateBooleanUI(controlId, value);
       break;
-    case 'number':
+    case "string":
+      updateStringUI(controlId, value);
+      break;
+    case "number":
       updateNumberUI(controlId, value, control);
       break;
-    case 'enum':
+    case "enum":
       updateEnumUI(controlId, value);
       break;
-    case 'compound':
+    case "compound":
       updateCompoundUI(controlId, value, control);
       break;
-  }
-
-  // Special handling for power
-  if (controlId === 'power') {
-    updatePowerUI(value);
-  }
-}
-
-function updatePowerUI(value) {
-  const transmitBtn = document.querySelector('.myr_power_button_transmit');
-  const standbyBtn = document.querySelector('.myr_power_button_standby');
-
-  if (transmitBtn) {
-    transmitBtn.classList.toggle('myr_power_active', value === 'transmit');
-  }
-  if (standbyBtn) {
-    standbyBtn.classList.toggle('myr_power_active', value === 'standby');
   }
 }
 
 function updateBooleanUI(controlId, value) {
   const btn = document.getElementById(`myr_${controlId}`);
+  const boolValue = value.value;
   if (btn) {
-    btn.classList.toggle('myr_toggle_active', value);
+    btn.classList.toggle("myr_toggle_active", boolValue);
     btn.textContent = value ? "On" : "Off";
+  }
+}
+
+function updateStringUI(controlId, value, control) {
+  const valueEl = document.getElementById(`myr_${controlId}_value`);
+
+  if (valueEl) {
+    valueEl.textContent = value.value;
   }
 }
 
@@ -817,10 +1006,10 @@ function updateNumberUI(controlId, value, control) {
   const valueEl = document.getElementById(`myr_${controlId}_value`);
 
   if (slider) {
-    slider.value = value;
+    slider.value = value.value;
   }
   if (valueEl) {
-    valueEl.textContent = formatNumberValue(value, control);
+    valueEl.textContent = formatNumberValue(value.value, control);
   }
 }
 
@@ -828,9 +1017,9 @@ function updateEnumUI(controlId, value) {
   const group = document.getElementById(`myr_${controlId}_group`);
   if (group) {
     // Convert value to string for comparison (dataset values are always strings)
-    const valueStr = String(value);
-    group.querySelectorAll('.myr_enum_button').forEach(btn => {
-      btn.classList.toggle('myr_enum_active', btn.dataset.value === valueStr);
+    const valueStr = String(value.value);
+    group.querySelectorAll(".myr_enum_button").forEach((btn) => {
+      btn.classList.toggle("myr_enum_active", btn.dataset.value == valueStr);
     });
   }
 }
@@ -839,19 +1028,19 @@ function updateCompoundUI(controlId, value, control) {
   const compound = document.getElementById(`myr_${controlId}_compound`);
   if (!compound) return;
 
-  const mode = value?.mode || 'auto';
+  const mode = value?.mode || "auto";
   const val = value?.value;
 
   // Update mode buttons
-  compound.querySelectorAll('.myr_mode_button').forEach(btn => {
-    btn.classList.toggle('myr_mode_active', btn.dataset.mode === mode);
+  compound.querySelectorAll(".myr_mode_button").forEach((btn) => {
+    btn.classList.toggle("myr_mode_active", btn.dataset.mode === mode);
   });
 
   // Update slider
-  const slider = compound.querySelector('.myr_compound_slider');
+  const slider = compound.querySelector(".myr_compound_slider");
   const valueEl = document.getElementById(`myr_${controlId}_value`);
 
-  const isAuto = mode === 'auto';
+  const isAuto = mode === "auto";
   if (slider) {
     slider.disabled = isAuto;
     if (val !== undefined) {
@@ -859,7 +1048,7 @@ function updateCompoundUI(controlId, value, control) {
     }
   }
   if (valueEl) {
-    valueEl.textContent = isAuto ? "Auto" : (val !== undefined ? val : '-');
+    valueEl.textContent = isAuto ? "Auto" : val !== undefined ? val : "-";
   }
 }
 
@@ -868,12 +1057,12 @@ function updateDopplerModeUI(controlId, value) {
   if (!compound) return;
 
   const enabled = value?.enabled || false;
-  const mode = value?.mode || 'target';
-  const activeBtn = !enabled ? 'off' : mode;
+  const mode = value?.mode || "target";
+  const activeBtn = !enabled ? "off" : mode;
 
   // Update buttons (Off / Target / Rain)
-  compound.querySelectorAll('.myr_mode_button').forEach(btn => {
-    btn.classList.toggle('myr_mode_active', btn.dataset.value === activeBtn);
+  compound.querySelectorAll(".myr_mode_button").forEach((btn) => {
+    btn.classList.toggle("myr_mode_active", btn.dataset.value === activeBtn);
   });
 }
 
@@ -883,9 +1072,9 @@ function updateNoTransmitZonesUI(value) {
   const zone2 = zones[1] || { enabled: false, start: 0, end: 0 };
 
   // Update zone 1
-  const z1Enabled = document.getElementById('myr_ntz_zone1_enabled');
-  const z1Start = document.getElementById('myr_ntz_zone1_start');
-  const z1End = document.getElementById('myr_ntz_zone1_end');
+  const z1Enabled = document.getElementById("myr_ntz_zone1_enabled");
+  const z1Start = document.getElementById("myr_ntz_zone1_start");
+  const z1End = document.getElementById("myr_ntz_zone1_end");
   if (z1Enabled) z1Enabled.checked = zone1.enabled;
   if (z1Start) {
     z1Start.value = zone1.start;
@@ -897,9 +1086,9 @@ function updateNoTransmitZonesUI(value) {
   }
 
   // Update zone 2
-  const z2Enabled = document.getElementById('myr_ntz_zone2_enabled');
-  const z2Start = document.getElementById('myr_ntz_zone2_start');
-  const z2End = document.getElementById('myr_ntz_zone2_end');
+  const z2Enabled = document.getElementById("myr_ntz_zone2_enabled");
+  const z2Start = document.getElementById("myr_ntz_zone2_start");
+  const z2End = document.getElementById("myr_ntz_zone2_end");
   if (z2Enabled) z2Enabled.checked = zone2.enabled;
   if (z2Start) {
     z2Start.value = zone2.start;
@@ -922,14 +1111,16 @@ function updateNoTransmitZoneFromIndividual(controlId, value) {
 
   const [, type, zoneNum] = match;
   const prefix = `myr_ntz_zone${zoneNum}`;
-  const isStart = type === 'Start';
+  const isStart = type === "Start";
 
   // -1 means zone is disabled (value < 0)
   const isDisabled = value < 0;
   const displayValue = isDisabled ? 0 : value;
 
   // Update the angle input
-  const inputEl = document.getElementById(`${prefix}_${isStart ? 'start' : 'end'}`);
+  const inputEl = document.getElementById(
+    `${prefix}_${isStart ? "start" : "end"}`
+  );
   if (inputEl) {
     inputEl.value = displayValue;
   }
@@ -938,7 +1129,8 @@ function updateNoTransmitZoneFromIndividual(controlId, value) {
   // Use pending values if available, otherwise fall back to state
   const startId = `noTransmitStart${zoneNum}`;
   const endId = `noTransmitEnd${zoneNum}`;
-  const startVal = pendingControls[startId]?.value ?? getControlValue(startId) ?? -1;
+  const startVal =
+    pendingControls[startId]?.value ?? getControlValue(startId) ?? -1;
   const endVal = pendingControls[endId]?.value ?? getControlValue(endId) ?? -1;
   const zoneEnabled = startVal >= 0 && endVal >= 0;
 
@@ -953,9 +1145,9 @@ function updateNoTransmitZoneFromIndividual(controlId, value) {
 }
 
 function applyStateToUI(state) {
-  if (!state?.controls) return;
+  if (!state) return;
 
-  for (const [controlId, value] of Object.entries(state.controls)) {
+  for (const [controlId, value] of Object.entries(state)) {
     // Skip controls with pending changes until server confirms the same value
     const pending = pendingControls[controlId];
     if (pending) {
@@ -975,68 +1167,171 @@ function applyStateToUI(state) {
 
   // Update range display and initialize range index
   // Skip if we already have range from spoke data (more accurate than state API)
-  if (state.controls.range && !rangeFromSpokeData) {
-    currentRange = state.controls.range;
+  if (state.range && !rangeFromSpokeData) {
+    currentRange = state.range;
     // Initialize userRequestedRangeIndex from actual radar range
-    const ranges = capabilities?.characteristics?.supportedRanges || [];
-    userRequestedRangeIndex = ranges.findIndex(r => Math.abs(r - currentRange) < 50);
+    const ranges = capabilities?.supportedRanges || [];
+    userRequestedRangeIndex = ranges.findIndex(
+      (r) => Math.abs(r - currentRange) < 50
+    );
     if (userRequestedRangeIndex < 0) userRequestedRangeIndex = 0;
     updateRangeDisplay();
   }
 }
 
 // ============================================================================
-// State Polling
+// State Streaming (WebSocket)
 // ============================================================================
 
-let pollFailCount = 0;
-const MAX_POLL_INTERVAL = 30000; // Max 30s between polls on repeated failures
-const BASE_POLL_INTERVAL = 2000; // Normal 2s polling
+let reconnectAttempts = 0;
+const MAX_RECONNECT_DELAY = 30000; // Max 30s between reconnects
+const BASE_RECONNECT_DELAY = 1000; // Start with 1s
 
-async function pollState() {
-  if (!radarId) return;
+function connectStateStream(streamUrl, radarId) {
+  if (stateWebSocket) {
+    stateWebSocket.close();
+    stateWebSocket = null;
+  }
 
-  try {
-    const newState = await fetchState(radarId);
-    if (newState) {
-      radarState = newState;
-      applyStateToUI(radarState);
+  // Add query parameter for no initial subscription
+  const streamUrlWithParams = streamUrl.includes("?")
+    ? `${streamUrl}&subscribe=none`
+    : `${streamUrl}?subscribe=none`;
 
-      // Reset fail count on success and restore normal polling
-      if (pollFailCount > 0) {
-        pollFailCount = 0;
-        startStatePolling(); // Restart with normal interval
+  console.log(`Connecting to state stream: ${streamUrlWithParams}`);
+
+  stateWebSocket = new WebSocket(streamUrlWithParams);
+
+  stateWebSocket.onopen = () => {
+    console.log("State stream connected");
+    reconnectAttempts = 0;
+  };
+
+  stateWebSocket.onmessage = (event) => {
+    try {
+      const message = JSON.parse(event.data);
+
+      // Signal K header:
+      // { name: "Marine Yacht Radar",
+      //   version: "3.0.0",
+      //   timestamp: "2026-02-15T17:27:15.750914737+00:00",
+      //   roles: ["master"] }
+
+      // Signal K delta format:
+      // {
+      //   "context": "self",
+      //   "updates": [{
+      //     "source": { "label": "radar-id", ... },
+      //     "values": [{ "path": "radars.<id>.<control>", "value": ... }]
+      //   }]
+      // }
+
+      if (message.updates) {
+        for (const update of message.updates) {
+          if (update.values) {
+            for (const item of update.values) {
+              // Extract control ID from path: radars.<id>.<controlId>
+              const pathParts = item.path.split(".");
+              if (
+                pathParts.length == 4 &&
+                pathParts[0] === "radars" &&
+                pathParts[1] === radarId &&
+                pathParts[2] === "controls"
+              ) {
+                const controlId = pathParts[pathParts.length - 1];
+
+                // Update radarState
+                if (!radarState) radarState = {};
+                radarState[controlId] = item.value;
+
+                console.log(
+                  `Receiving control: ${controlId} = ${JSON.stringify(
+                    item.value
+                  )}`
+                );
+
+                // Update UI for this control
+                applyControlValueToUI(controlId, item.value);
+              } else {
+                console.log("Dropping unknown SK path " + item.path);
+              }
+            }
+          }
+        }
+      } else if (message.name && message.version) {
+        console.log("Connected to " + message.name + " v" + message.version);
+
+        // Subscribe to this radar's control values
+        const subscription = {
+          subscribe: [
+            {
+              path: `radars.${radarId}.controls.*`,
+              policy: "instant",
+            },
+          ],
+        };
+
+        console.log("Subscribing to radar controls:", subscription);
+        stateWebSocket.send(JSON.stringify(subscription));
       }
+    } catch (err) {
+      console.error("Error processing state stream message:", err);
     }
-  } catch (err) {
-    pollFailCount++;
-    if (pollFailCount <= 3) {
-      console.warn(`State poll failed (${pollFailCount}):`, err.message);
-    } else if (pollFailCount === 4) {
-      console.warn("State polling failing, backing off...");
-    }
-    // Exponential backoff: restart polling with longer interval
-    if (pollFailCount > 2) {
-      startStatePolling();
-    }
-  }
+  };
+
+  stateWebSocket.onerror = (error) => {
+    console.error("State stream error:", error);
+  };
+
+  stateWebSocket.onclose = () => {
+    console.log("State stream closed");
+    stateWebSocket = null;
+
+    // Attempt to reconnect with exponential backoff
+    reconnectAttempts++;
+    const delay = Math.min(
+      BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1),
+      MAX_RECONNECT_DELAY
+    );
+
+    console.log(
+      `Reconnecting state stream in ${delay}ms (attempt ${reconnectAttempts})`
+    );
+    setTimeout(() => {
+      if (radarId) {
+        connectStateStream(streamUrl, radarId);
+      }
+    }, delay);
+  };
 }
 
-function startStatePolling() {
-  if (statePollingInterval) {
-    clearInterval(statePollingInterval);
+function disconnectStateStream() {
+  if (stateWebSocket) {
+    stateWebSocket.close();
+    stateWebSocket = null;
   }
-
-  // Exponential backoff on failures
-  const interval = Math.min(BASE_POLL_INTERVAL * Math.pow(2, pollFailCount), MAX_POLL_INTERVAL);
-  statePollingInterval = setInterval(pollState, interval);
+  reconnectAttempts = 0;
 }
 
-function stopStatePolling() {
-  if (statePollingInterval) {
-    clearInterval(statePollingInterval);
-    statePollingInterval = null;
+// Apply a single control value to the UI
+function applyControlValueToUI(controlId, value) {
+  // Check if this is a pending control change from the user
+
+  const pending = pendingControls[controlId];
+  if (pending) {
+    // No no no, controls, come back from other devices as well!
+    //   const age = Date.now() - pending.timestamp;
+    //   if (age < 2000) {
+    //     // Ignore server update if we recently sent a change
+    //     return;
+    //   }
+    delete pendingControls[controlId];
   }
+
+  updateControlUI(controlId, value);
+
+  // Notify control callbacks
+  controlCallbacks.forEach((cb) => cb(controlId, value));
 }
 
 // ============================================================================
@@ -1049,8 +1344,8 @@ function stopStatePolling() {
 // (viewer.js calls registerRadarCallback before window.onload)
 setTimeout(() => {
   // If no callbacks registered after module evaluation, we're in standalone mode
-  if (callbacks.length === 0) {
-    window.onload = function() {
+  if (radarCallbacks.length === 0) {
+    window.onload = function () {
       const urlParams = new URLSearchParams(window.location.search);
       const id = urlParams.get("id");
       loadRadar(id);
@@ -1079,47 +1374,68 @@ async function loadRadar(id) {
 
     radarId = id;
     playbackMode = isPlaybackRadar(id);
-    console.log(`Loading radar: ${radarId}${playbackMode ? ' (playback mode)' : ''}`);
+    console.log(
+      `Loading radar: ${radarId}${playbackMode ? " (playback mode)" : ""}`
+    );
+
+    // Fetch radar info to get spokeDataUrl and streamUrl
+    const radars = await fetchRadars();
+    const radarInfo = radars[radarId];
 
     // Fetch capabilities
     capabilities = await fetchCapabilities(radarId);
     console.log("Capabilities:", capabilities);
 
-    // Fetch initial state
-    radarState = await fetchState(radarId);
-    console.log("Initial state:", radarState);
+    // Normalize controls to always be a HashMap for consistent access
+    if (capabilities.controls) {
+      capabilities.controls = normalizeControls(capabilities.controls);
+    }
+
+    // Initialize empty state (will be populated by stream)
+    radarState = {};
 
     // Build UI
     buildControlsFromCapabilities();
 
-    // Start polling for state updates
-    startStatePolling();
+    // Connect to state stream for real-time control value updates
+    let controlStreamUrl = radarInfo?.streamUrl;
+    if (!controlStreamUrl) {
+      const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      if (isStandaloneMode()) {
+        // Standalone mode: use v3 stream endpoint
+        controlStreamUrl = `${wsProtocol}//${window.location.host}/v3/api/stream`;
+      } else {
+        // SignalK mode: use default SignalK stream
+        controlStreamUrl = `${wsProtocol}//${window.location.host}/signalk/v1/stream`;
+      }
+    }
+    connectStateStream(controlStreamUrl, radarId);
 
     // Notify callbacks (viewer.js expects these properties)
-    const chars = capabilities.characteristics || {};
+    const chars = capabilities || {};
 
-    // Build streamUrl based on mode
-    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    let streamUrl;
-    if (isStandaloneMode()) {
-      // Standalone mode: use /v2/api/radars/{id}/spokes
-      streamUrl = `${wsProtocol}//${window.location.host}/v2/api/radars/${radarId}/spokes`;
-    } else {
-      // SignalK mode: use /signalk/v2/api/vessels/self/radars/{id}/stream
-      streamUrl = `${wsProtocol}//${window.location.host}/signalk/v2/api/vessels/self/radars/${radarId}/stream`;
+    // Get spokeDataUrl from radar info (v3 API provides spokeDataUrl)
+    // Fall back to constructing URL for SignalK mode if not available
+    let spokeDataUrl = radarInfo?.spokeDataUrl;
+    if (!spokeDataUrl) {
+      const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      if (isStandaloneMode()) {
+        // Standalone mode fallback (shouldn't happen with v3 API)
+        spokeDataUrl = `${wsProtocol}//${window.location.host}/v1/api/spokes/${radarId}`;
+      } else {
+        // SignalK mode: use /signalk/v2/api/vessels/self/radars/{id}/stream
+        spokeDataUrl = `${wsProtocol}//${window.location.host}/signalk/v2/api/vessels/self/radars/${radarId}/stream`;
+      }
     }
 
-    callbacks.forEach(cb => cb({
-      id: radarId,
-      name: `${capabilities.make} ${capabilities.model}`,
-      maxSpokeLen: chars.maxSpokeLength || 512,
-      spokesPerRevolution: chars.spokesPerRevolution || 2048,
-      controls: capabilities.controls || [],
-      capabilities,
-      state: radarState,
-      streamUrl,
-    }));
-
+    radarCallbacks.forEach((cb) =>
+      cb({
+        id: radarId,
+        name: `${capabilities.make} ${capabilities.model}`,
+        capabilities,
+        spokeDataUrl: spokeDataUrl,
+      })
+    );
   } catch (err) {
     console.error("Failed to load radar:", err);
     showError(`Failed to load radar: ${err.message}`);
@@ -1140,33 +1456,33 @@ function showError(message) {
 
 /**
  * Get current power state
- * @returns {string} 'standby' | 'transmit' | 'off' | 'warming'
+ * @returns {number}
  */
 function getPowerState() {
-  return radarState?.controls?.power || 'standby';
+  return radarState?.power?.value || 1;
 }
 
 /**
- * Get operating hours from radar state
- * @returns {{ onTime: number, txTime: number }} Operating hours
+ * Get operating time from radar state
+ * @returns {{ onTime: number, txTime: number }} time in seconds
  */
-function getOperatingHours() {
-  const controls = radarState?.controls || {};
+function getOperatingTime() {
   return {
-    onTime: controls.operatingHours || 0,
-    txTime: controls.transmitHours || 0
+    onTime: radarState?.operatingTime?.value || 0,
+    txTime: radarState?.transmitTime?.value || 0,
   };
 }
 
 /**
- * Check if radar has hours capability (operatingHours or transmitHours)
+ * Check if radar has capability (operatingTime or transmitTime)
  * @returns {{ hasOnTime: boolean, hasTxTime: boolean }}
  */
-function hasHoursCapability() {
-  const controls = capabilities?.controls || [];
+function hasTimeCapability() {
+  // capabilities.controls is a HashMap
+  const controls = capabilities?.controls || {};
   return {
-    hasOnTime: controls.some(c => c.id === 'operatingHours'),
-    hasTxTime: controls.some(c => c.id === 'transmitHours')
+    hasOnTime: "operatingTime" in controls,
+    hasTxTime: "transmitTime" in controls,
   };
 }
 

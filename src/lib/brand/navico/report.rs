@@ -34,7 +34,7 @@ use crate::radar::{
     BYTE_LOOKUP_LENGTH, CommonRadar, DopplerMode, Legend, Power, RadarError, RadarInfo,
     SharedRadars, SpokeBearing,
 };
-use crate::settings::{ControlError, ControlId, ControlValue};
+use crate::settings::{ControlId, ControlValue};
 use crate::util::PrintableSpoke;
 use crate::util::{c_string, c_wide_string};
 

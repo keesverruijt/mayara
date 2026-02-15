@@ -213,7 +213,6 @@ impl SharedControls {
         self.controls.write().unwrap().controls.insert(id, control);
     }
 
-    #[deprecated]
     pub(crate) fn set_radar_info(
         &mut self,
         sk_client_tx: tokio::sync::broadcast::Sender<RadarControlValue>,
@@ -435,6 +434,7 @@ impl SharedControls {
         if let (Some(label), Some(sk_client_tx)) = (&locked.key, &locked.sk_client_tx) {
             let radar_control_value = RadarControlValue::new(label, control, None);
 
+            log::debug!("Sending control to SK client: {:?}", radar_control_value);
             match sk_client_tx.send(radar_control_value) {
                 Err(_e) => {}
                 Ok(cnt) => {
@@ -1126,6 +1126,19 @@ pub struct BareControlValue {
     pub error: Option<String>,
 }
 
+impl BareControlValue {
+    pub fn new_error(error: String) -> Self {
+        BareControlValue {
+            value: None,
+            units: None,
+            auto: None,
+            auto_value: None,
+            enabled: None,
+            allowed: None,
+            error: Some(error),
+        }
+    }
+}
 impl From<RadarControlValue> for BareControlValue {
     fn from(rcv: RadarControlValue) -> Self {
         BareControlValue {
@@ -1313,7 +1326,7 @@ pub(crate) fn new_list(control_id: ControlId, descriptions: &[&str]) -> ControlB
     let description_count = ((descriptions.len() as i32) - 1) as f64;
     let control = Control::new(ControlDefinition::new(
         control_id,
-        ControlDataType::Number,
+        ControlDataType::Enum,
         Some(0.),
         None,
         false,
@@ -1344,7 +1357,7 @@ pub(crate) fn new_map(control_id: ControlId, descriptions: HashMap<i32, String>)
     let description_count = ((descriptions.len() as i32) - 1) as f64;
     let control = Control::new(ControlDefinition::new(
         control_id,
-        ControlDataType::Number,
+        ControlDataType::Enum,
         Some(0.),
         None,
         false,
@@ -1755,6 +1768,7 @@ pub(crate) const HAS_AUTO_NOT_ADJUSTABLE: AutomaticValue = AutomaticValue {
 #[serde(rename_all = "camelCase")]
 pub enum ControlDataType {
     Number,
+    Enum,
     String,
     Button,
 }
@@ -1832,11 +1846,12 @@ impl ControlDefinition {
         is_read_only: bool,
         is_send_always: bool,
     ) -> Self {
-        let step_value = if data_type == ControlDataType::Number {
-            step_value.or(Some(1.0))
-        } else {
-            step_value
-        };
+        let step_value =
+            if data_type == ControlDataType::Number || data_type == ControlDataType::Enum {
+                step_value.or(Some(1.0))
+            } else {
+                step_value
+            };
 
         let units = wire_units.map(|u| u.to_si(0.0).0);
 
@@ -2224,6 +2239,7 @@ impl ControlId {
 }
 
 #[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Category {
     Base,
     Advanced,

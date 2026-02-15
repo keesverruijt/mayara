@@ -261,27 +261,6 @@ impl FurunoReportReceiver {
         Ok(())
     }
 
-    fn set(&mut self, control_id: &ControlId, value: f64, auto: Option<bool>) {
-        match self.common.info.controls.set(control_id, value, auto) {
-            Err(e) => {
-                log::error!("{}: {}", self.common.key, e.to_string());
-            }
-            Ok(Some(())) => {
-                if log::log_enabled!(log::Level::Debug) {
-                    let control = self.common.info.controls.get(control_id).unwrap();
-                    log::trace!(
-                        "{}: Control '{}' new value {:?} enabled {:?}",
-                        self.common.key,
-                        control_id,
-                        control.value,
-                        control.enabled
-                    );
-                }
-            }
-            Ok(None) => {}
-        };
-    }
-
     fn process_report(&mut self, line: &str) -> Result<(), Error> {
         let line = match line.find('$') {
             Some(pos) => {

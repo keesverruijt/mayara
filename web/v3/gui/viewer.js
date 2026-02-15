@@ -1,6 +1,12 @@
 "use strict";
 
-export { RANGE_SCALE, formatRangeValue, is_metric, getHeadingMode, getTrueHeading };
+export {
+  RANGE_SCALE,
+  formatRangeValue,
+  is_metric,
+  getHeadingMode,
+  getTrueHeading,
+};
 
 import {
   loadRadar,
@@ -8,8 +14,8 @@ import {
   registerControlCallback,
   setCurrentRange,
   getPowerState,
-  getOperatingHours,
-  hasHoursCapability,
+  getOperatingTime,
+  hasTimeCapability,
 } from "./control.js";
 import { isStandaloneMode, detectMode } from "./api.js";
 import "./protobuf/protobuf.min.js";
@@ -277,24 +283,24 @@ async function checkWebGPU() {
 }
 
 function showWebGPUError(failureReason, hasWebGPUApi, isSecure) {
-  const container = document.querySelector('.myr_container');
+  const container = document.querySelector(".myr_container");
   if (!container) return;
 
   const os = detectOS();
   const browser = detectBrowser();
   const hostname = window.location.hostname;
-  const port = window.location.port || '80';
+  const port = window.location.port || "80";
 
   // Build error message based on failure reason
-  let errorMessage = '';
-  if (failureReason === 'no-api' && !isSecure) {
-    errorMessage = 'WebGPU API not available - likely due to insecure context.';
-  } else if (failureReason === 'no-api') {
-    errorMessage = 'WebGPU API not available in this browser.';
-  } else if (failureReason === 'no-adapter') {
-    errorMessage = 'No WebGPU adapter found. Your GPU may not support WebGPU.';
+  let errorMessage = "";
+  if (failureReason === "no-api" && !isSecure) {
+    errorMessage = "WebGPU API not available - likely due to insecure context.";
+  } else if (failureReason === "no-api") {
+    errorMessage = "WebGPU API not available in this browser.";
+  } else if (failureReason === "no-adapter") {
+    errorMessage = "No WebGPU adapter found. Your GPU may not support WebGPU.";
   } else {
-    errorMessage = 'WebGPU initialization failed.';
+    errorMessage = "WebGPU initialization failed.";
   }
 
   container.innerHTML = `
@@ -302,13 +308,17 @@ function showWebGPUError(failureReason, hasWebGPUApi, isSecure) {
       <h2>WebGPU Required</h2>
       <p class="myr_error_message">${errorMessage}</p>
 
-      ${!isSecure ? `
+      ${
+        !isSecure
+          ? `
         <div class="myr_error_section">
           <h3>Secure Context Required</h3>
           <p>WebGPU requires a secure context. You are accessing via HTTP on "${hostname}".</p>
           ${getSecureContextOptionsHTML(browser, os, port)}
         </div>
-      ` : ''}
+      `
+          : ""
+      }
 
       <div class="myr_error_section">
         <h3>Enable WebGPU / Hardware Acceleration</h3>
@@ -325,35 +335,39 @@ function showWebGPUError(failureReason, hasWebGPUApi, isSecure) {
 
 function detectOS() {
   const ua = navigator.userAgent.toLowerCase();
-  const platform = navigator.platform?.toLowerCase() || '';
+  const platform = navigator.platform?.toLowerCase() || "";
 
   // Check mobile/tablet FIRST (iPadOS reports as macOS in Safari)
-  if (ua.includes('iphone') || ua.includes('ipad')) return 'ios';
+  if (ua.includes("iphone") || ua.includes("ipad")) return "ios";
   // Also detect iPad via touch + macOS combination (iPadOS 13+ desktop mode)
-  if (navigator.maxTouchPoints > 1 && (ua.includes('mac') || platform.includes('mac'))) return 'ios';
-  if (ua.includes('android')) return 'android';
+  if (
+    navigator.maxTouchPoints > 1 &&
+    (ua.includes("mac") || platform.includes("mac"))
+  )
+    return "ios";
+  if (ua.includes("android")) return "android";
 
   // Desktop OS detection
-  if (ua.includes('win') || platform.includes('win')) return 'windows';
-  if (ua.includes('mac') || platform.includes('mac')) return 'macos';
-  if (ua.includes('linux') || platform.includes('linux')) return 'linux';
-  return 'unknown';
+  if (ua.includes("win") || platform.includes("win")) return "windows";
+  if (ua.includes("mac") || platform.includes("mac")) return "macos";
+  if (ua.includes("linux") || platform.includes("linux")) return "linux";
+  return "unknown";
 }
 
 function detectBrowser() {
   const ua = navigator.userAgent.toLowerCase();
-  if (ua.includes('edg/')) return 'edge';
-  if (ua.includes('chrome')) return 'chrome';
-  if (ua.includes('firefox')) return 'firefox';
-  if (ua.includes('safari') && !ua.includes('chrome')) return 'safari';
-  return 'unknown';
+  if (ua.includes("edg/")) return "edge";
+  if (ua.includes("chrome")) return "chrome";
+  if (ua.includes("firefox")) return "firefox";
+  if (ua.includes("safari") && !ua.includes("chrome")) return "safari";
+  return "unknown";
 }
 
 function getSecureContextOptionsHTML(browser, os, port) {
   const origin = window.location.origin;
-  const isMobile = (os === 'ios' || os === 'android');
+  const isMobile = os === "ios" || os === "android";
 
-  let options = '';
+  let options = "";
 
   // Only show localhost option for desktop
   if (!isMobile) {
@@ -370,7 +384,9 @@ function getSecureContextOptionsHTML(browser, os, port) {
   options += `
     <p><strong>Option ${optNum}:</strong> Add this site to browser exceptions:</p>
     ${getInsecureOriginHTML(browser, os)}
-    <p><strong>Option ${optNum + 1}:</strong> Use HTTPS (requires server configuration)</p>
+    <p><strong>Option ${
+      optNum + 1
+    }:</strong> Use HTTPS (requires server configuration)</p>
   `;
 
   return options;
@@ -381,7 +397,7 @@ function getInsecureOriginHTML(browser, os) {
   const hostname = window.location.hostname;
 
   // iOS Safari has no way to add insecure origin exceptions
-  if (os === 'ios') {
+  if (os === "ios") {
     return `
       <div class="myr_code_instructions">
         <p>Safari on iOS/iPadOS does not support insecure origin exceptions.</p>
@@ -394,7 +410,7 @@ function getInsecureOriginHTML(browser, os) {
   }
 
   // Android Chrome
-  if (os === 'android' && browser === 'chrome') {
+  if (os === "android" && browser === "chrome") {
     return `
       <div class="myr_code_instructions">
         <p>1. Open Chrome on your Android device</p>
@@ -406,8 +422,8 @@ function getInsecureOriginHTML(browser, os) {
     `;
   }
 
-  if (browser === 'chrome' || browser === 'edge') {
-    const flagPrefix = browser === 'edge' ? 'edge' : 'chrome';
+  if (browser === "chrome" || browser === "edge") {
+    const flagPrefix = browser === "edge" ? "edge" : "chrome";
     const flagUrl = `${flagPrefix}://flags/#unsafely-treat-insecure-origin-as-secure`;
     return `
       <div class="myr_code_instructions">
@@ -419,7 +435,7 @@ function getInsecureOriginHTML(browser, os) {
       </div>
     `;
   }
-  if (browser === 'firefox') {
+  if (browser === "firefox") {
     return `
       <div class="myr_code_instructions">
         <p>1. Open: <a href="about:config" class="myr_flag_link"><code>about:config</code></a></p>
@@ -435,7 +451,7 @@ function getInsecureOriginHTML(browser, os) {
 
 function getBrowserInstructionsHTML(browser, os) {
   // iOS/iPadOS Safari
-  if (browser === 'safari' && os === 'ios') {
+  if (browser === "safari" && os === "ios") {
     return `
       <div class="myr_code_instructions">
         <p>Safari on iOS/iPadOS 17+:</p>
@@ -451,7 +467,7 @@ function getBrowserInstructionsHTML(browser, os) {
   }
 
   switch (browser) {
-    case 'chrome':
+    case "chrome":
       return `
         <div class="myr_code_instructions">
           <p>Chrome should have WebGPU enabled by default (v113+).</p>
@@ -459,10 +475,14 @@ function getBrowserInstructionsHTML(browser, os) {
           <p>1. Open: <code>chrome://flags/#enable-unsafe-webgpu</code></p>
           <p>2. Set to "Enabled"</p>
           <p>3. Relaunch Chrome</p>
-          ${os === 'linux' ? '<p class="myr_note">Linux: Vulkan drivers required.</p>' : ''}
+          ${
+            os === "linux"
+              ? '<p class="myr_note">Linux: Vulkan drivers required.</p>'
+              : ""
+          }
         </div>
       `;
-    case 'edge':
+    case "edge":
       return `
         <div class="myr_code_instructions">
           <p>Edge should have WebGPU enabled by default.</p>
@@ -472,7 +492,7 @@ function getBrowserInstructionsHTML(browser, os) {
           <p>3. Relaunch Edge</p>
         </div>
       `;
-    case 'firefox':
+    case "firefox":
       return `
         <div class="myr_code_instructions">
           <p>Firefox WebGPU (experimental):</p>
@@ -482,7 +502,7 @@ function getBrowserInstructionsHTML(browser, os) {
           <p>4. Restart Firefox</p>
         </div>
       `;
-    case 'safari':
+    case "safari":
       return `
         <div class="myr_code_instructions">
           <p>Safari WebGPU (macOS 14+):</p>
@@ -509,7 +529,7 @@ function getBrowserInstructionsHTML(browser, os) {
 
 function getHardwareAccelerationHTML(browser, os) {
   // iOS/iPadOS - no hardware acceleration toggle
-  if (os === 'ios') {
+  if (os === "ios") {
     return `
       <div class="myr_code_instructions">
         <p>On iOS/iPadOS, hardware acceleration cannot be disabled.</p>
@@ -522,7 +542,7 @@ function getHardwareAccelerationHTML(browser, os) {
   }
 
   switch (browser) {
-    case 'chrome':
+    case "chrome":
       return `
         <div class="myr_code_instructions">
           <p>1. Open: <code>chrome://settings/system</code></p>
@@ -530,7 +550,7 @@ function getHardwareAccelerationHTML(browser, os) {
           <p>3. Relaunch Chrome</p>
         </div>
       `;
-    case 'edge':
+    case "edge":
       return `
         <div class="myr_code_instructions">
           <p>1. Open: <code>edge://settings/system</code></p>
@@ -538,7 +558,7 @@ function getHardwareAccelerationHTML(browser, os) {
           <p>3. Relaunch Edge</p>
         </div>
       `;
-    case 'firefox':
+    case "firefox":
       return `
         <div class="myr_code_instructions">
           <p>1. Open: <code>about:preferences</code></p>
@@ -548,7 +568,7 @@ function getHardwareAccelerationHTML(browser, os) {
           <p>5. Restart Firefox</p>
         </div>
       `;
-    case 'safari':
+    case "safari":
       return `
         <div class="myr_code_instructions">
           <p>Safari uses hardware acceleration by default on macOS.</p>
@@ -576,12 +596,14 @@ function restart(id) {
 // Pending radar data if callback arrives before renderer is ready
 var pendingRadarData = null;
 
+//
+// r contains id, name, capabilities and spokeDataUrl
 function radarLoaded(r) {
-  let maxSpokeLen = r.maxSpokeLen;
-  let spokesPerRevolution = r.spokesPerRevolution;
+  let maxSpokeLength = r.capabilities.maxSpokeLength;
+  let spokesPerRevolution = r.capabilities.spokesPerRevolution;
   let prev_angle = -1;
 
-  if (r === undefined || r.controls === undefined) {
+  if (r === undefined || r.capabilities.controls === undefined) {
     return;
   }
 
@@ -592,33 +614,50 @@ function radarLoaded(r) {
     return;
   }
 
-  renderer.setLegend(buildMayaraLegend());
-  renderer.setSpokes(spokesPerRevolution, maxSpokeLen);
+  renderer.setLegend(r.capabilities.legend);
+  renderer.setSpokes(spokesPerRevolution, maxSpokeLength);
 
   // Check initial power state and set standby mode if needed
   const initialPowerState = getPowerState();
-  const isStandby = initialPowerState === 'standby' || initialPowerState === 'off';
+  const isStandby = initialPowerState === 1 || initialPowerState === 0;
   if (isStandby) {
-    const hours = getOperatingHours();
-    const hoursCap = hasHoursCapability();
-    renderer.setStandbyMode(true, hours.onTime, hours.txTime, hoursCap.hasOnTime, hoursCap.hasTxTime);
+    const time = getOperatingTime();
+    const timeCap = hasTimeCapability();
+    renderer.setStandbyMode(
+      true,
+      time.onTime,
+      time.txTime,
+      timeCap.hasOnTime,
+      timeCap.hasTxTime
+    );
   }
 
-  // Use provided streamUrl or construct SignalK stream URL
-  let streamUrl = r.streamUrl;
-  if (!streamUrl || streamUrl === "undefined" || streamUrl === "null") {
+  // Use provided spokeDataUrl or construct SignalK stream URL
+  let spokeDataUrl = r.spokeDataUrl;
+  if (
+    !spokeDataUrl ||
+    spokeDataUrl === "undefined" ||
+    spokeDataUrl === "null"
+  ) {
     const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    streamUrl = `${wsProtocol}//${window.location.host}/signalk/v2/api/vessels/self/radars/${r.id}/stream`;
+    spokeDataUrl = `${wsProtocol}//${window.location.host}/signalk/v2/api/vessels/self/radars/${r.id}/spoke_stream`;
   }
-  console.log("Connecting to radar stream:", streamUrl);
-  webSocket = new WebSocket(streamUrl);
+  console.log("Connecting to radar stream:", spokeDataUrl);
+  webSocket = new WebSocket(spokeDataUrl);
   webSocket.binaryType = "arraybuffer";
 
   webSocket.onopen = (e) => {
     console.log("websocket open: " + JSON.stringify(e));
   };
   webSocket.onclose = (e) => {
-    console.log("websocket close: code=" + e.code + ", reason=" + e.reason + ", wasClean=" + e.wasClean);
+    console.log(
+      "websocket close: code=" +
+        e.code +
+        ", reason=" +
+        e.reason +
+        ", wasClean=" +
+        e.wasClean
+    );
     restart(r.id);
   };
   webSocket.onerror = (e) => {
@@ -653,9 +692,11 @@ function radarLoaded(r) {
             renderer.setRange(spoke.range);
           }
           // Also update control.js for range display and index tracking
-          if (spoke.range > 0) {
-            setCurrentRange(spoke.range);
-          }
+          // Kees: NO! Bad idea, on Navico this range is 1.1 .. 1.3 the radar's range
+          // and on others, it gives spurious data. Much safer to not update it!
+          // if (spoke.range > 0) {
+          //   setCurrentRange(spoke.range);
+          // }
         }
         renderer.render();
       }
@@ -663,68 +704,6 @@ function radarLoaded(r) {
       console.error("Error processing WebSocket message:", err);
     }
   };
-}
-
-// Build 256-color MaYaRa palette for radar PPI display
-// Smooth color gradient: Dark Green → Green → Yellow → Red
-// Designed for 6-bit radar data (0-63 intensity values)
-// This is a client-side rendering concern - not part of the radar API
-function buildMayaraLegend() {
-  const legend = [];
-  for (let i = 0; i < 256; i++) {
-    let r, g, b;
-    if (i === 0) {
-      // Index 0: transparent/black (noise floor)
-      r = g = b = 0;
-    } else if (i <= 15) {
-      // 1-15: dark green → brighter green (weak returns)
-      const t = (i - 1) / 14;
-      r = 0;
-      g = Math.floor(50 + t * 100);
-      b = 0;
-    } else if (i <= 31) {
-      // 16-31: green → yellow-green (moderate returns)
-      const t = (i - 16) / 15;
-      r = Math.floor(t * 200);
-      g = Math.floor(150 + t * 55);
-      b = 0;
-    } else if (i <= 47) {
-      // 32-47: yellow → yellow-red (stronger returns)
-      const t = (i - 32) / 15;
-      r = Math.floor(200 + t * 55);
-      g = Math.floor(205 - t * 125);
-      b = 0;
-    } else if (i <= 63) {
-      // 48-63: red (strong returns / land)
-      const t = (i - 48) / 15;
-      r = 255;
-      g = Math.max(0, Math.floor(80 - t * 80));
-      b = 0;
-    } else {
-      // >63: saturated red (overflow)
-      r = 255;
-      g = 0;
-      b = 0;
-    }
-    // RGBA: alpha is 0 for index 0 (transparent), 255 for others
-    legend.push([r, g, b, i === 0 ? 0 : 255]);
-  }
-  return legend;
-}
-
-function hexToRGBA(hex) {
-  let a = Array();
-  for (let i = 1; i < hex.length; i += 2) {
-    a.push(parseInt(hex.slice(i, i + 2), 16));
-  }
-  while (a.length < 3) {
-    a.push(0);
-  }
-  while (a.length < 4) {
-    a.push(255);
-  }
-
-  return a;
 }
 
 function controlUpdate(control, controlValue) {
@@ -745,12 +724,18 @@ function controlUpdate(control, controlValue) {
     }
   }
   // Handle power state changes
-  if (controlValue && controlValue.id === 'power') {
-    const isStandby = controlValue.value === 'standby' || controlValue.value === 'off';
+  if (controlValue && controlValue.id === "power") {
+    const isStandby = controlValue.value === 1 || controlValue.value === 0;
     if (renderer) {
-      const hours = getOperatingHours();
-      const hoursCap = hasHoursCapability();
-      renderer.setStandbyMode(isStandby, hours.onTime, hours.txTime, hoursCap.hasOnTime, hoursCap.hasTxTime);
+      const time = getOperatingTime();
+      const timeCap = hasTimeCapability();
+      renderer.setStandbyMode(
+        isStandby,
+        time.onTime,
+        time.txTime,
+        timeCap.hasOnTime,
+        timeCap.hasTxTime
+      );
     }
   }
 }

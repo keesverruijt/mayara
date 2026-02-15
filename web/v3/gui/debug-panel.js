@@ -3,6 +3,9 @@
  *
  * Main component that provides real-time protocol analysis for reverse engineering.
  * Only available when mayara-server is built with --features dev.
+ *
+ * NOTE: The debug API endpoints were removed in v3. This feature is kept for
+ * compatibility with v2 but will not work with the v3 backend.
  */
 
 import { createEventTimeline, updateTimeline, selectEvent, clearEvents } from './event-timeline.js';

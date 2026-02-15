@@ -74,6 +74,7 @@ struct RadarApiV3 {
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
     spoke_data_url: String,
+    stream_url: String,
     radar_ip_address: Ipv4Addr,
 }
 
@@ -112,6 +113,7 @@ async fn get_radars(
             brand: info.brand.to_string(),
             model: info.controls.model_name(),
             spoke_data_url: format!("ws://{}{}{}", host, super::v1::SPOKES_URI, info.key()),
+            stream_url: format!("ws://{}/v3/api/stream", host),
             radar_ip_address: *info.addr.ip(),
         };
 
@@ -617,6 +619,8 @@ async fn ws_signalk_delta(
                                 log::error!("send to websocket client: {e}");
                                 break Err(e.into());
                             }
+                        } else {
+                            log::debug!("Skipping not subscribed value: {:?}", rcv);
                         }
                     },
                     Err(e) => {
@@ -654,7 +658,7 @@ async fn ws_signalk_delta(
                 }
             }
 
-            _ = tokio::time::sleep(subscriptions.timeout) => {
+            _ = tokio::time::sleep(subscriptions.get_timeout()) => {
                 if let Err(e) = send_all_subscribed(&mut socket, &radars, &mut subscriptions).await
                 {
                     log::warn!("Cannot send subscribed data to websocket");
@@ -747,6 +751,7 @@ where
 struct ActiveSubscriptions {
     mode: Subscribe,
     timeout: Duration,
+    next_timeout: Duration,
     paths: HashMap<String, HashMap<ControlId, PathSubscribe>>,
 }
 
@@ -755,7 +760,8 @@ impl ActiveSubscriptions {
         ActiveSubscriptions {
             mode,
             paths: HashMap::new(),
-            timeout: Duration::from_secs(60),
+            timeout: Duration::from_secs(99999999),
+            next_timeout: Duration::from_secs(99999999),
         }
     }
 }
@@ -768,6 +774,14 @@ impl ActiveSubscriptions {
                 self.timeout = timeout;
             };
         }
+        self.next_timeout = Duration::from_secs(0);
+    }
+
+    fn get_timeout(&mut self) -> Duration {
+        let next = self.next_timeout;
+        self.next_timeout = self.timeout;
+
+        next
     }
 }
 
@@ -785,60 +799,61 @@ async fn handle_client_request(
     log::info!("Decoded Stream request: {:?}", stream_request);
 
     if let Ok(stream_request) = stream_request {
-        match stream_request {
+        let r = match stream_request {
             StreamRequest::Subscription(subscription) => {
-                handle_subscription(subscriptions, subscription);
+                handle_subscription(subscriptions, subscription)
             }
             StreamRequest::Desubscription(desubscription) => {
-                handle_desubscription(subscriptions, desubscription);
+                handle_desubscription(subscriptions, desubscription)
             }
             StreamRequest::RadarControlValue(rcv) => {
-                handle_control_request(socket, message, radars, reply_tx, rcv).await;
+                handle_control_request(message, radars, reply_tx, rcv).await
+            }
+        };
+        match r {
+            Ok(()) => {}
+            Err(e) => {
+                let cv = BareControlValue::new_error(e.to_string());
+                let str_message: String = serde_json::to_string(&cv).unwrap();
+                log::debug!("stream error {}", str_message);
+                let ws_message = Message::Text(str_message.into());
+
+                let _ = socket.send(ws_message);
             }
         }
     }
 }
 
 async fn handle_control_request(
-    socket: &mut WebSocket,
     message: &str,
     radars: &SharedRadars,
     reply_tx: mpsc::Sender<ControlValue>,
     mut rcv: RadarControlValue,
-) {
+) -> Result<(), RadarError> {
     if let Some(radar_id) = rcv.parse_path() {
         if let Some(radar) = radars.get_by_key(&radar_id) {
-            let mut control_value: ControlValue = rcv.into();
-            match radar
+            let control_value: ControlValue = rcv.into();
+            radar
                 .controls
                 .process_client_request(control_value.clone(), reply_tx)
-            {
-                Ok(()) => {
-                    log::debug!("ControlValue {} handled", message);
-                }
-                Err(e) => {
-                    log::warn!("ControlValue {} error: {}", message, e);
-                    control_value.error = Some(e.to_string());
-                    let str_message = serde_json::to_string(&control_value).unwrap();
-                    let ws_message = Message::Text(str_message.into());
-                    if let Err(e) = socket.send(ws_message).await {
-                        log::error!("send to websocket client: {e}");
-                    }
-                }
-            }
         } else {
             log::warn!(
                 "No radar '{}' active; ControlValue '{}' ignored",
                 radar_id,
                 message
             );
+            Err(RadarError::NoSuchRadar(radar_id.to_string()))
         }
     } else {
         log::warn!("Cannot determine control from path '{}'; ignored", rcv.path);
+        Err(RadarError::CannotParseControlId(rcv.path))
     }
 }
 
-fn handle_subscription(subscriptions: &mut ActiveSubscriptions, subscription: Subscription) {
+fn handle_subscription(
+    subscriptions: &mut ActiveSubscriptions,
+    subscription: Subscription,
+) -> Result<(), RadarError> {
     subscriptions.mode = Subscribe::Some;
 
     let mut period = u64::MAX;
@@ -854,7 +869,7 @@ fn handle_subscription(subscriptions: &mut ActiveSubscriptions, subscription: Su
         }
         let paths = paths.unwrap();
 
-        if control_id.contains("\\*") {
+        if control_id.contains("*") {
             for id in ControlId::iter() {
                 let matcher = WildMatch::new(control_id);
                 if matcher.matches(&id.to_string()) {
@@ -885,14 +900,22 @@ fn handle_subscription(subscriptions: &mut ActiveSubscriptions, subscription: Su
                         radar_id,
                         control_id,
                     );
+                    return Err(RadarError::CannotParseControlId(control_id.to_string()));
                 }
             }
         }
     }
     subscriptions.set_timeout(period);
+
+    // Now send all current values of everything just subscribed
+
+    Ok(())
 }
 
-fn handle_desubscription(subscriptions: &mut ActiveSubscriptions, subscription: Desubscription) {
+fn handle_desubscription(
+    subscriptions: &mut ActiveSubscriptions,
+    subscription: Desubscription,
+) -> Result<(), RadarError> {
     subscriptions.mode = Subscribe::Some;
     for path_desubscription in subscription.desubscribe {
         let (radar_id, control_id) = extract_path(&path_desubscription.path);
@@ -920,10 +943,13 @@ fn handle_desubscription(subscriptions: &mut ActiveSubscriptions, subscription: 
                         radar_id,
                         path_desubscription.path
                     );
+                    return Err(RadarError::CannotParseControlId(control_id.to_string()));
                 }
             }
         }
     }
+
+    Ok(())
 }
 
 fn extract_path(mut path: &str) -> (&str, &str) {
@@ -933,8 +959,11 @@ fn extract_path(mut path: &str) -> (&str, &str) {
     if path == "*" {
         return ("*", "*");
     }
-    if let Some(r) = path.split_once('.') {
-        return r;
+    if let Some((radar, mut control)) = path.split_once('.') {
+        if control.starts_with("controls.") {
+            control = &control["controls.".len()..];
+        }
+        return (radar, control);
     }
 
     ("*", path)
@@ -1005,17 +1034,16 @@ async fn send_all_subscribed(
     radars: &SharedRadars,
     subscriptions: &mut ActiveSubscriptions,
 ) -> Result<(), RadarError> {
-    for radar in radars.get_active() {
-        let mut rcvs: Vec<RadarControlValue> = radar.controls.get_radar_control_values();
-        log::info!(
-            "Sending {} controls for radar '{}'",
-            rcvs.len(),
-            radar.key()
-        );
-        if subscriptions.mode == Subscribe::Some {
-            rcvs.retain(|x| is_subscribed(x, subscriptions, true));
-        }
+    let mut rcvs: Vec<RadarControlValue> = Vec::with_capacity(80);
 
+    for radar in radars.get_active() {
+        rcvs.append(&mut radar.controls.get_radar_control_values());
+    }
+    if subscriptions.mode == Subscribe::Some {
+        rcvs.retain(|x| is_subscribed(x, subscriptions, true));
+    }
+    log::info!("Sending {} subscribed controls", rcvs.len());
+    if rcvs.len() > 0 {
         let message: SignalKDelta = rcvs.into();
         let message: String = serde_json::to_string(&message).unwrap();
         socket
@@ -1023,6 +1051,7 @@ async fn send_all_subscribed(
             .await
             .map_err(|e| RadarError::Axum(e))?;
     }
+
     Ok(())
 }
 

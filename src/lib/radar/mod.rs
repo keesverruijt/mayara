@@ -5,7 +5,7 @@ use protobuf::Message;
 use serde::Serialize;
 use serde::ser::{SerializeMap, Serializer};
 use serde_json::Value;
-use std::cmp::min;
+use std::cmp::{max, min};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{
     collections::HashMap,
@@ -62,6 +62,8 @@ pub enum RadarError {
     InvalidControlId(String),
     #[error("{0}")]
     ControlError(#[from] ControlError),
+    #[error("Cannot derive control from path '{0}'")]
+    CannotParseControlId(String),
     #[error("Cannot set value for control '{0}'")]
     CannotSetControlId(ControlId),
     #[error("Cannot control '{0}' to value {1}")]
@@ -150,6 +152,8 @@ pub struct Legend {
     pub doppler_receding: u8,
     pub history_start: u8,
     pub strong_return: u8,
+    pub medium_return: u8,
+    pub low_return: u8,
 }
 
 impl Serialize for Legend {
@@ -690,6 +694,8 @@ fn default_legend(targets: &TargetMode, doppler: bool, pixel_values: u8) -> Lege
         doppler_approaching: 0,
         doppler_receding: 0,
         strong_return: 0,
+        medium_return: 0,
+        low_return: 0,
     };
 
     let pixel_values = min(
@@ -722,6 +728,8 @@ fn default_legend(targets: &TargetMode, doppler: bool, pixel_values: u8) -> Lege
     let pixels_with_color = pixel_values - 1;
     let one_third = pixels_with_color / 3;
     let two_thirds = one_third * 2;
+    legend.low_return = max(1, one_third / 3);
+    legend.medium_return = one_third;
     legend.strong_return = two_thirds;
 
     for v in 1..pixel_values {

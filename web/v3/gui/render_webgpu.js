@@ -1,6 +1,12 @@
 export { render_webgpu };
 
-import { RANGE_SCALE, formatRangeValue, is_metric, getHeadingMode, getTrueHeading } from "./viewer.js";
+import {
+  RANGE_SCALE,
+  formatRangeValue,
+  is_metric,
+  getHeadingMode,
+  getTrueHeading,
+} from "./viewer.js";
 
 class render_webgpu {
   constructor(canvas_dom, canvas_background_dom, drawBackground) {
@@ -9,13 +15,16 @@ class render_webgpu {
     this.background_ctx = this.background_dom.getContext("2d");
     // Overlay canvas for range rings (on top of radar)
     this.overlay_dom = document.getElementById("myr_canvas_overlay");
-    this.overlay_ctx = this.overlay_dom ? this.overlay_dom.getContext("2d") : null;
+    this.overlay_ctx = this.overlay_dom
+      ? this.overlay_dom.getContext("2d")
+      : null;
     this.drawBackgroundCallback = drawBackground;
 
     this.actual_range = 0;
     this.ready = false;
     this.pendingLegend = null;
     this.pendingSpokes = null;
+    this.legend = null;
 
     // Rotation tracking for neighbor enhancement
     this.rotationCount = 0;
@@ -67,21 +76,19 @@ class render_webgpu {
       magFilter: "linear",
       minFilter: "linear",
       addressModeU: "clamp-to-edge",
-      addressModeV: "repeat",  // Wrap around for angles
+      addressModeV: "repeat", // Wrap around for angles
     });
 
     // Create uniform buffer for parameters
     this.uniformBuffer = this.device.createBuffer({
-      size: 32,  // scaleX, scaleY, spokesPerRev, maxSpokeLen + padding
+      size: 32, // scaleX, scaleY, spokesPerRev, maxSpokeLen + padding
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
     // Create vertex buffer for fullscreen quad
     const vertices = new Float32Array([
-      -1.0, -1.0, 0.0, 0.0,
-       1.0, -1.0, 1.0, 0.0,
-      -1.0,  1.0, 0.0, 1.0,
-       1.0,  1.0, 1.0, 1.0,
+      -1.0, -1.0, 0.0, 0.0, 1.0, -1.0, 1.0, 0.0, -1.0, 1.0, 0.0, 1.0, 1.0, 1.0,
+      1.0, 1.0,
     ]);
 
     this.vertexBuffer = this.device.createBuffer({
@@ -97,7 +104,10 @@ class render_webgpu {
     this.redrawCanvas();
 
     if (this.pendingSpokes) {
-      this.setSpokes(this.pendingSpokes.spokesPerRevolution, this.pendingSpokes.max_spoke_len);
+      this.setSpokes(
+        this.pendingSpokes.spokesPerRevolution,
+        this.pendingSpokes.maxspokelength
+      );
       this.pendingSpokes = null;
     }
     if (this.pendingLegend) {
@@ -114,25 +124,45 @@ class render_webgpu {
 
     this.bindGroupLayout = this.device.createBindGroupLayout({
       entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } }, // polar data
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } }, // color table
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
-        { binding: 3, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+        {
+          binding: 0,
+          visibility: GPUShaderStage.FRAGMENT,
+          texture: { sampleType: "float" },
+        }, // polar data
+        {
+          binding: 1,
+          visibility: GPUShaderStage.FRAGMENT,
+          texture: { sampleType: "float" },
+        }, // color table
+        {
+          binding: 2,
+          visibility: GPUShaderStage.FRAGMENT,
+          sampler: { type: "filtering" },
+        },
+        {
+          binding: 3,
+          visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+          buffer: { type: "uniform" },
+        },
       ],
     });
 
     this.renderPipeline = this.device.createRenderPipeline({
-      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.bindGroupLayout] }),
+      layout: this.device.createPipelineLayout({
+        bindGroupLayouts: [this.bindGroupLayout],
+      }),
       vertex: {
         module: shaderModule,
         entryPoint: "vertexMain",
-        buffers: [{
-          arrayStride: 16,
-          attributes: [
-            { shaderLocation: 0, offset: 0, format: "float32x2" },
-            { shaderLocation: 1, offset: 8, format: "float32x2" },
-          ],
-        }],
+        buffers: [
+          {
+            arrayStride: 16,
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: "float32x2" },
+              { shaderLocation: 1, offset: 8, format: "float32x2" },
+            ],
+          },
+        ],
       },
       fragment: {
         module: shaderModule,
@@ -143,22 +173,22 @@ class render_webgpu {
     });
   }
 
-  setSpokes(spokesPerRevolution, max_spoke_len) {
+  setSpokes(spokesPerRevolution, maxspokelength) {
     if (!this.ready) {
-      this.pendingSpokes = { spokesPerRevolution, max_spoke_len };
+      this.pendingSpokes = { spokesPerRevolution, maxspokelength };
       this.spokesPerRevolution = spokesPerRevolution;
-      this.max_spoke_len = max_spoke_len;
-      this.data = new Uint8Array(spokesPerRevolution * max_spoke_len);
+      this.maxspokelength = maxspokelength;
+      this.data = new Uint8Array(spokesPerRevolution * maxspokelength);
       return;
     }
 
     this.spokesPerRevolution = spokesPerRevolution;
-    this.max_spoke_len = max_spoke_len;
-    this.data = new Uint8Array(spokesPerRevolution * max_spoke_len);
+    this.maxspokelength = maxspokelength;
+    this.data = new Uint8Array(spokesPerRevolution * maxspokelength);
 
     // Create polar data texture (width = range samples, height = angles)
     this.polarTexture = this.device.createTexture({
-      size: [max_spoke_len, spokesPerRevolution],
+      size: [maxspokelength, spokesPerRevolution],
       format: "r8unorm",
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });
@@ -182,7 +212,13 @@ class render_webgpu {
     }
   }
 
-  setStandbyMode(isStandby, onTimeHours, txTimeHours, hasOnTimeCap, hasTxTimeCap) {
+  setStandbyMode(
+    isStandby,
+    onTimeHours,
+    txTimeHours,
+    hasOnTimeCap,
+    hasTxTimeCap
+  ) {
     const wasStandby = this.standbyMode;
     this.standbyMode = isStandby;
     this.onTimeHours = onTimeHours || 0;
@@ -222,18 +258,72 @@ class render_webgpu {
       this.device.queue.writeTexture(
         { texture: this.polarTexture },
         this.data,
-        { bytesPerRow: this.max_spoke_len },
-        { width: this.max_spoke_len, height: this.spokesPerRevolution }
+        { bytesPerRow: this.maxspokelength },
+        { width: this.maxspokelength, height: this.spokesPerRevolution }
       );
       this.render();
     }
   }
 
-  setLegend(l) {
+  #convertServerLegend(serverLegend) {
+    const colors = new Array(256);
+
+    // Fill with red (overflow) by default
+    for (let i = 0; i < 256; i++) {
+      colors[i] = [255, 0, 0, 255];
+    }
+
+    let normal = 0;
+
+    // serverLegend is a HashMap where keys are string indices (e.g., "0", "1", ...)
+    // and values are objects with a "color" field containing "#rrggbbaa"
+    for (const [indexStr, entry] of Object.entries(serverLegend)) {
+      const index = parseInt(indexStr, 10);
+      if (index >= 0 && index < 256 && entry.color) {
+        colors[index] = this.#hexToRGBA(entry.color);
+      }
+      if (entry.type === "Normal") {
+        normal++;
+      }
+    }
+
+    const oneThird = Math.round(normal / 3);
+    const oneNinth = Math.round(normal / 9);
+
+    const legend = {
+      colors: colors,
+      weakReturn: Math.max(1, oneNinth),
+      mediumReturn: oneThird,
+      strongReturn: 2 * oneThird,
+      specialStart: normal,
+    };
+
+    return legend;
+  }
+
+  #hexToRGBA(hex) {
+    let a = Array();
+    for (let i = 1; i < hex.length; i += 2) {
+      a.push(parseInt(hex.slice(i, i + 2), 16));
+    }
+    while (a.length < 3) {
+      a.push(0);
+    }
+    while (a.length < 4) {
+      a.push(255);
+    }
+
+    return a;
+  }
+
+  setLegend(legend) {
     if (!this.ready) {
-      this.pendingLegend = l;
+      this.pendingLegend = legend;
       return;
     }
+
+    this.legend = this.#convertServerLegend(legend);
+    const l = this.legend.colors;
 
     const colorTableData = new Uint8Array(256 * 4);
     for (let i = 0; i < l.length; i++) {
@@ -276,7 +366,7 @@ class render_webgpu {
   }
 
   drawSpoke(spoke) {
-    if (!this.data) return;
+    if (!this.data || !this.legend) return;
 
     // Don't draw spokes in standby mode
     if (this.standbyMode) {
@@ -289,7 +379,9 @@ class render_webgpu {
 
     // Bounds check - log bad angles
     if (spoke.angle >= this.spokesPerRevolution) {
-      console.error(`Bad spoke angle: ${spoke.angle} >= ${this.spokesPerRevolution}`);
+      console.error(
+        `Bad spoke angle: ${spoke.angle} >= ${this.spokesPerRevolution}`
+      );
       return;
     }
 
@@ -304,7 +396,10 @@ class render_webgpu {
       }
 
       // Detect angle wraparound (e.g., from 2000 to 100)
-      if (!this.seenAngleWrap && spoke.angle < this.lastWaitAngle - this.spokesPerRevolution / 2) {
+      if (
+        !this.seenAngleWrap &&
+        spoke.angle < this.lastWaitAngle - this.spokesPerRevolution / 2
+      ) {
         this.seenAngleWrap = true;
       }
 
@@ -322,8 +417,8 @@ class render_webgpu {
           this.device.queue.writeTexture(
             { texture: this.polarTexture },
             this.data,
-            { bytesPerRow: this.max_spoke_len },
-            { width: this.max_spoke_len, height: this.spokesPerRevolution }
+            { bytesPerRow: this.maxspokelength },
+            { width: this.maxspokelength, height: this.spokesPerRevolution }
           );
         }
         // Fall through to draw this spoke
@@ -356,12 +451,12 @@ class render_webgpu {
           this.device.queue.writeTexture(
             { texture: this.polarTexture },
             this.data,
-            { bytesPerRow: this.max_spoke_len },
-            { width: this.max_spoke_len, height: this.spokesPerRevolution }
+            { bytesPerRow: this.maxspokelength },
+            { width: this.maxspokelength, height: this.spokesPerRevolution }
           );
           this.render();
         }
-        return;  // Skip this spoke, it's from the old range
+        return; // Skip this spoke, it's from the old range
       }
       // For initial range, just continue drawing - no stale data to flush
     }
@@ -372,21 +467,32 @@ class render_webgpu {
     }
 
     // Track rotations: detect when we wrap around from high angle to low angle
-    if (this.lastSpokeAngle >= 0 && spoke.angle < this.lastSpokeAngle - this.spokesPerRevolution / 2) {
+    if (
+      this.lastSpokeAngle >= 0 &&
+      spoke.angle < this.lastSpokeAngle - this.spokesPerRevolution / 2
+    ) {
       this.rotationCount++;
     }
     this.lastSpokeAngle = spoke.angle;
 
-    let offset = spoke.angle * this.max_spoke_len;
+    let offset = spoke.angle * this.maxspokelength;
 
     // Check if data fits in buffer
     if (offset + spoke.data.length > this.data.length) {
-      console.error(`Buffer overflow: offset=${offset}, data.len=${spoke.data.length}, buf.len=${this.data.length}, angle=${spoke.angle}, maxSpokeLen=${this.max_spoke_len}, spokes=${this.spokesPerRevolution}`);
+      console.error(
+        `Buffer overflow: offset=${offset}, data.len=${spoke.data.length}, buf.len=${this.data.length}, angle=${spoke.angle}, maxSpokeLen=${this.maxspokelength}, spokes=${this.spokesPerRevolution}`
+      );
       return;
     }
 
     const spokeLen = spoke.data.length;
-    const maxLen = this.max_spoke_len;
+    const maxLen = this.maxspokelength;
+
+    const strongReturn = this.legend.strongReturn; // 60 for furuno
+    const mediumReturn = this.legend.mediumReturn; // 25 for furuno
+    const weakReturn = this.legend.mediumReturn;
+    const specialStart = this.legend.specialStart;
+    const maxNormal = specialStart - 1;
 
     // Only use neighbor enhancement during first few rotations to fill display quickly
     if (this.rotationCount < this.fillRotations) {
@@ -399,17 +505,22 @@ class render_webgpu {
         // Write current spoke at full value
         this.data[offset + i] = val;
 
+        if (val >= specialStart) {
+          // Leave things like history, doppler etc as they are
+          continue;
+        }
+
         if (val > 1) {
           // Strong signals (>60): spread wide (±6 spokes) with higher intensity
           // Medium signals (25-60): spread medium (±4 spokes)
           // Weak signals (<25): spread narrow (±2 spokes) with lower intensity
           let spreadWidth, blendFactors;
 
-          if (val > 60) {
+          if (val > strongReturn) {
             // Strong signal - spread wide and strong
             spreadWidth = 6;
-            blendFactors = [0.95, 0.88, 0.78, 0.65, 0.50, 0.35];
-          } else if (val > 25) {
+            blendFactors = [0.95, 0.88, 0.78, 0.65, 0.5, 0.35];
+          } else if (val > mediumReturn) {
             // Medium signal - normal spread
             spreadWidth = 4;
             blendFactors = [0.85, 0.65, 0.45, 0.25];
@@ -466,37 +577,63 @@ class render_webgpu {
         const next4 = this.data[next4Offset + i];
 
         // For strong signals: use wide sum (±4)
-        const wideSum = prev1 + prev2 + prev3 + prev4 + next1 + next2 + next3 + next4;
-        const wideMax = Math.max(prev1, prev2, prev3, prev4, next1, next2, next3, next4);
+        const wideSum =
+          prev1 + prev2 + prev3 + prev4 + next1 + next2 + next3 + next4;
+        const wideMax = Math.max(
+          prev1,
+          prev2,
+          prev3,
+          prev4,
+          next1,
+          next2,
+          next3,
+          next4
+        );
         // For weak signals: use narrow sum (±2)
         const narrowSum = prev1 + prev2 + next1 + next2;
         const narrowMax = Math.max(prev1, prev2, next1, next2);
 
         let outputVal;
 
-        if (val > 60) {
+        if (val > strongReturn) {
           // Strong signal: use wide neighbor check (±4)
-          if (wideSum > 200) {
+          if (wideSum > 3 * strongReturn) {
             // Solid mass - boost hard and spread to neighbors
-            outputVal = Math.min(255, Math.floor(val * 1.35));
+            outputVal = Math.min(maxNormal, Math.floor(val * 1.35));
             // Boost immediate neighbors to fill gaps
-            if (prev1 > 25) this.data[prev1Offset + i] = Math.min(255, Math.floor(prev1 * 1.15));
-            if (next1 > 25) this.data[next1Offset + i] = Math.min(255, Math.floor(next1 * 1.15));
-            if (prev2 > 25) this.data[prev2Offset + i] = Math.min(255, Math.floor(prev2 * 1.1));
-            if (next2 > 25) this.data[next2Offset + i] = Math.min(255, Math.floor(next2 * 1.1));
-          } else if (wideMax > 50) {
+            if (prev1 > mediumReturn)
+              this.data[prev1Offset + i] = Math.min(
+                maxNormal,
+                Math.floor(prev1 * 1.15)
+              );
+            if (next1 > mediumReturn)
+              this.data[next1Offset + i] = Math.min(
+                maxNormal,
+                Math.floor(next1 * 1.15)
+              );
+            if (prev2 > mediumReturn)
+              this.data[prev2Offset + i] = Math.min(
+                maxNormal,
+                Math.floor(prev2 * 1.1)
+              );
+            if (mediumReturn)
+              this.data[next2Offset + i] = Math.min(
+                maxNormal,
+                Math.floor(next2 * 1.1)
+              );
+          } else if (wideMax > mediumReturn) {
             // Some support - moderate boost
-            outputVal = Math.min(255, Math.floor(val * 1.2));
+            outputVal = Math.min(maxNormal, Math.floor(val * 1.2));
           } else {
             // Strong but isolated - suspicious, reduce
             outputVal = Math.floor(val * 0.8);
           }
-        } else if (val > 25) {
+        } else if (val > mediumReturn) {
           // Medium signal: needs good neighbor support
-          if (narrowSum > 80) {
+          if (narrowSum > 3 * mediumReturn) {
             // Good support - boost it
-            outputVal = Math.min(255, Math.floor(val * 1.2));
-          } else if (narrowMax > 40) {
+            outputVal = Math.min(maxNormal, Math.floor(val * 1.2));
+          } else if (narrowMax > 2 * mediumReturn) {
             // Some support - keep
             outputVal = val;
           } else {
@@ -505,10 +642,10 @@ class render_webgpu {
           }
         } else if (val > 1) {
           // Weak signal: kill it unless very well supported
-          if (narrowSum > 100) {
+          if (narrowSum > 3 * mediumReturn) {
             // Strong neighbors - this might be edge of real target
             outputVal = val;
-          } else if (narrowMax > 60) {
+          } else if (narrowMax > strongReturn) {
             // Next to something strong - keep faint
             outputVal = Math.floor(val * 0.5);
           } else {
@@ -519,7 +656,7 @@ class render_webgpu {
           outputVal = val;
         }
 
-        this.data[offset + i] = outputVal;
+        this.data[offset + i] = val; // outputVal;
       }
     }
 
@@ -538,19 +675,21 @@ class render_webgpu {
     this.device.queue.writeTexture(
       { texture: this.polarTexture },
       this.data,
-      { bytesPerRow: this.max_spoke_len },
-      { width: this.max_spoke_len, height: this.spokesPerRevolution }
+      { bytesPerRow: this.maxspokelength },
+      { width: this.maxspokelength, height: this.spokesPerRevolution }
     );
 
     const encoder = this.device.createCommandEncoder();
 
     const renderPass = encoder.beginRenderPass({
-      colorAttachments: [{
-        view: this.context.getCurrentTexture().createView(),
-        clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 },
-        loadOp: "clear",
-        storeOp: "store",
-      }],
+      colorAttachments: [
+        {
+          view: this.context.getCurrentTexture().createView(),
+          clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 },
+          loadOp: "clear",
+          storeOp: "store",
+        },
+      ],
     });
     renderPass.setPipeline(this.renderPipeline);
     renderPass.setBindGroup(0, this.bindGroup);
@@ -606,9 +745,9 @@ class render_webgpu {
     const minutes = Math.floor((remainingAfterDays % 3600) / 60);
     const seconds = remainingAfterDays % 60;
 
-    const hh = hours.toString().padStart(2, '0');
-    const mm = minutes.toString().padStart(2, '0');
-    const ss = seconds.toString().padStart(2, '0');
+    const hh = hours.toString().padStart(2, "0");
+    const mm = minutes.toString().padStart(2, "0");
+    const ss = seconds.toString().padStart(2, "0");
 
     return `${days}.${hh}:${mm}:${ss}`;
   }
@@ -686,8 +825,8 @@ class render_webgpu {
       if (range) {
         const text = formatRangeValue(is_metric(range), (range * i) / 4);
         // Position labels at 45 degrees (upper right)
-        const labelX = this.center_x + (radius * 0.707);
-        const labelY = this.center_y - (radius * 0.707);
+        const labelX = this.center_x + radius * 0.707;
+        const labelY = this.center_y - radius * 0.707;
         ctx.fillText(text, labelX + 5, labelY - 5);
       }
     }
@@ -767,20 +906,40 @@ class render_webgpu {
 
     // Pack uniforms: scaleX, scaleY, spokesPerRev, maxSpokeLen, headingRotation
     const uniforms = new Float32Array([
-      scaleX, scaleY,
+      scaleX,
+      scaleY,
       this.spokesPerRevolution || 2048,
-      this.max_spoke_len || 512,
-      this.headingRotation || 0,  // Heading rotation in radians (for North Up mode)
-      0, 0, 0  // padding to 32 bytes
+      this.maxspokelength || 512,
+      this.headingRotation || 0, // Heading rotation in radians (for North Up mode)
+      0,
+      0,
+      0, // padding to 32 bytes
     ]);
 
     this.device.queue.writeBuffer(this.uniformBuffer, 0, uniforms);
 
     this.background_ctx.fillStyle = "lightgreen";
-    this.background_ctx.fillText("Beam length: " + this.beam_length + " px", 5, 40);
-    this.background_ctx.fillText("Display range: " + formatRangeValue(is_metric(range), range), 5, 60);
-    this.background_ctx.fillText("Radar range: " + formatRangeValue(is_metric(this.actual_range), this.actual_range), 5, 80);
-    this.background_ctx.fillText("Spoke length: " + (this.max_spoke_len || 0) + " px", 5, 100);
+    this.background_ctx.fillText(
+      "Beam length: " + this.beam_length + " px",
+      5,
+      40
+    );
+    this.background_ctx.fillText(
+      "Display range: " + formatRangeValue(is_metric(range), range),
+      5,
+      60
+    );
+    this.background_ctx.fillText(
+      "Radar range: " +
+        formatRangeValue(is_metric(this.actual_range), this.actual_range),
+      5,
+      80
+    );
+    this.background_ctx.fillText(
+      "Spoke length: " + (this.maxspokelength || 0) + " px",
+      5,
+      100
+    );
   }
 }
 
