@@ -386,7 +386,9 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
             Power::Standby // Default to Standby if unknown
         }
     };
-    receiver.set_value(&ControlId::Power, status as i32 as f64);
+    receiver
+        .common
+        .set_value(&ControlId::Power, status as i32 as f64);
 
     if receiver.common.info.ranges.is_empty() {
         let mut ranges = Ranges::empty();
@@ -411,26 +413,46 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
     receiver.range_meters = range_meters as u32;
     log::info!("{}: range_meters={}", receiver.common.key, range_meters);
 
-    receiver.set_value(&ControlId::Range, range_meters as f64);
-    receiver.set_value_auto(&ControlId::Gain, report.gain as f64, report.auto_gain);
+    receiver
+        .common
+        .set_value(&ControlId::Range, range_meters as f64);
+    receiver
+        .common
+        .set_value_auto(&ControlId::Gain, report.gain as f64, report.auto_gain);
 
-    receiver.set_value_auto(&ControlId::Sea, report.sea, report.auto_sea);
-    receiver.set_value_enabled(&ControlId::Rain, report.rain, report.rain_enabled);
-    receiver.set_value_enabled(&ControlId::Ftc, report.ftc, report.ftc_enabled);
-    receiver.set_value_auto(&ControlId::Tune, report.tune, report.auto_tune);
-    receiver.set_value(&ControlId::TargetExpansion, report.target_expansion);
-    receiver.set_value(
+    receiver
+        .common
+        .set_value_auto(&ControlId::Sea, report.sea, report.auto_sea);
+    receiver
+        .common
+        .set_value_enabled(&ControlId::Rain, report.rain, report.rain_enabled);
+    receiver
+        .common
+        .set_value_enabled(&ControlId::Ftc, report.ftc, report.ftc_enabled);
+    receiver
+        .common
+        .set_value_auto(&ControlId::Tune, report.tune, report.auto_tune);
+    receiver
+        .common
+        .set_value(&ControlId::TargetExpansion, report.target_expansion);
+    receiver.common.set_value(
         &ControlId::InterferenceRejection,
         report.interference_rejection,
     );
-    receiver.set_value(&ControlId::BearingAlignment, report.bearing_offset);
-    receiver.set_value(&ControlId::MainBangSuppression, report.mbs_enabled);
-    receiver.set_value_enabled(
+    receiver
+        .common
+        .set_value(&ControlId::BearingAlignment, report.bearing_offset);
+    receiver
+        .common
+        .set_value(&ControlId::MainBangSuppression, report.mbs_enabled);
+    receiver.common.set_value_enabled(
         &ControlId::WarmupTime,
         report.warmup_time,
         report.warmup_time,
     );
-    receiver.set_value(&ControlId::SignalStrength, report.signal_strength);
+    receiver
+        .common
+        .set_value(&ControlId::SignalStrength, report.signal_strength);
 }
 
 #[derive(Deserialize, Debug, Clone, Copy)]
@@ -513,15 +535,31 @@ pub(super) fn process_fixed_report(receiver: &mut RaymarineReportReceiver, data:
     }
 
     if receiver.model.is_some() {
-        receiver.set_value(&ControlId::TransmitTime, report.magnetron_time);
-        receiver.set_value(&ControlId::MagnetronCurrent, report.magnetron_current);
-        receiver.set_value(&ControlId::SignalStrength, report.signal_strength_value);
-        receiver.set_value(&ControlId::DisplayTiming, report.display_timing);
+        receiver
+            .common
+            .set_value(&ControlId::TransmitTime, report.magnetron_time);
+        receiver
+            .common
+            .set_value(&ControlId::MagnetronCurrent, report.magnetron_current);
+        receiver
+            .common
+            .set_value(&ControlId::SignalStrength, report.signal_strength_value);
+        receiver
+            .common
+            .set_value(&ControlId::DisplayTiming, report.display_timing);
 
-        receiver.set_wire_range(&ControlId::Gain, report.gain_min, report.gain_max);
-        receiver.set_wire_range(&ControlId::Sea, report.sea_min, report.sea_max);
-        receiver.set_wire_range(&ControlId::Rain, report.rain_min, report.rain_max);
-        receiver.set_wire_range(&ControlId::Ftc, report.ftc_min, report.ftc_max);
+        receiver
+            .common
+            .set_wire_range(&ControlId::Gain, report.gain_min, report.gain_max);
+        receiver
+            .common
+            .set_wire_range(&ControlId::Sea, report.sea_min, report.sea_max);
+        receiver
+            .common
+            .set_wire_range(&ControlId::Rain, report.rain_min, report.rain_max);
+        receiver
+            .common
+            .set_wire_range(&ControlId::Ftc, report.ftc_min, report.ftc_max);
     }
 }
 
@@ -571,7 +609,9 @@ pub(super) fn process_info_report(receiver: &mut RaymarineReportReceiver, data: 
         model.name,
         serial_nr
     );
-    receiver.set_string(&ControlId::SerialNumber, serial_nr.clone());
+    receiver
+        .common
+        .set_string(&ControlId::SerialNumber, serial_nr.clone());
     receiver.common.info.serial_no = Some(serial_nr);
     receiver.common.info.spokes_per_revolution = model.max_spoke_len as u16;
     receiver.common.info.max_spoke_len = model.max_spoke_len as u16;

@@ -828,89 +828,6 @@ impl NavicoReportReceiver {
         Ok(())
     }
 
-    fn set_control(
-        &mut self,
-        control_id: &ControlId,
-        value: f64,
-        auto: Option<bool>,
-    ) -> Result<Option<()>, ControlError> {
-        self.common.info.controls.set(control_id, value, auto)
-    }
-
-    fn set(&mut self, control_id: &ControlId, value: f64, auto: Option<bool>) {
-        match self.set_control(control_id, value, auto) {
-            Err(e) => {
-                log::error!("{}: {}", self.common.key, e.to_string());
-            }
-            Ok(Some(())) => {
-                if log::log_enabled!(log::Level::Debug) {
-                    let control = self.common.info.controls.get(control_id).unwrap();
-                    log::debug!(
-                        "{}: Control '{}' new value {:?} auto {:?} enabled {:?}",
-                        self.common.key,
-                        control_id,
-                        control.value,
-                        control.auto,
-                        control.enabled
-                    );
-                }
-            }
-            Ok(None) => {}
-        };
-    }
-
-    fn set_value(&mut self, control_id: &ControlId, value: f64) {
-        self.set(control_id, value, None)
-    }
-
-    fn set_value_auto(&mut self, control_id: &ControlId, value: f64, auto: u8) {
-        self.set(control_id, value, Some(auto > 0))
-    }
-
-    fn set_value_with_many_auto(&mut self, control_id: &ControlId, value: f64, auto_value: f64) {
-        match self
-            .common
-            .info
-            .controls
-            .set_value_with_many_auto(control_id, value, auto_value)
-        {
-            Err(e) => {
-                log::error!("{}: {}", self.common.key, e.to_string());
-            }
-            Ok(Some(())) => {
-                if log::log_enabled!(log::Level::Debug) {
-                    let control = self.common.info.controls.get(control_id).unwrap();
-                    log::debug!(
-                        "{}: Control '{}' new value {:?} auto_value {:?} auto {:?}",
-                        self.common.key,
-                        control_id,
-                        control.value,
-                        control.auto_value,
-                        control.auto
-                    );
-                }
-            }
-            Ok(None) => {}
-        };
-    }
-
-    fn set_string(&mut self, control: &ControlId, value: String) {
-        match self.common.info.controls.set_string(control, value) {
-            Err(e) => {
-                log::error!("{}: {}", self.common.key, e.to_string());
-            }
-            Ok(Some(v)) => {
-                log::debug!(
-                    "{}: Control '{}' new value '{}'",
-                    self.common.key,
-                    control,
-                    v
-                );
-            }
-            Ok(None) => {}
-        };
-    }
-
     // If range detection is in progress, go to the next range
     async fn process_range(&mut self, range: i32) -> Result<(), RadarError> {
         let range = range / 10;
@@ -1136,7 +1053,8 @@ impl NavicoReportReceiver {
                 bail!("{}: Unknown radar status {}", self.common.key, status);
             }
         };
-        self.set_value(&ControlId::Power, status as i32 as f64);
+        self.common
+            .set_value(&ControlId::Power, status as i32 as f64);
         Ok(())
     }
 
@@ -1156,10 +1074,10 @@ impl NavicoReportReceiver {
         let target_expansion = report.target_expansion as i32;
         let target_boost = report.target_boost as i32;
 
-        self.set_value(&ControlId::Range, range as f64);
+        self.common.set_value(&ControlId::Range, range as f64);
         if self.model == Model::HALO {
             if let Some(halo_mode) = HaloMode::from_i32(mode) {
-                self.set_value(&ControlId::Mode, mode as f64);
+                self.common.set_value(&ControlId::Mode, mode as f64);
                 let allowed = halo_mode == HaloMode::Custom;
                 let controls = &self.common.info.controls;
                 for ct in &DYNAMIC_ALLOWED_CONTROLS {
@@ -1171,9 +1089,11 @@ impl NavicoReportReceiver {
 
             // todo!() if mode !=
         }
-        self.set_value_auto(&ControlId::Gain, gain as f64, gain_auto);
+        self.common
+            .set_value_auto(&ControlId::Gain, gain as f64, gain_auto);
         if self.model != Model::HALO {
-            self.set_value_auto(&ControlId::Sea, sea as f64, sea_auto);
+            self.common
+                .set_value_auto(&ControlId::Sea, sea as f64, sea_auto);
         } else {
             self.common
                 .info
@@ -1181,13 +1101,15 @@ impl NavicoReportReceiver {
                 .set_auto_state(&ControlId::Sea, sea_auto > 0)
                 .unwrap(); // Only crashes if control not supported which would be an internal bug
         }
-        self.set_value(&ControlId::Rain, rain as f64);
-        self.set_value(
+        self.common.set_value(&ControlId::Rain, rain as f64);
+        self.common.set_value(
             &ControlId::InterferenceRejection,
             interference_rejection as f64,
         );
-        self.set_value(&ControlId::TargetExpansion, target_expansion as f64);
-        self.set_value(&ControlId::TargetBoost, target_boost as f64);
+        self.common
+            .set_value(&ControlId::TargetExpansion, target_expansion as f64);
+        self.common
+            .set_value(&ControlId::TargetBoost, target_boost as f64);
 
         self.process_range(range).await?;
 
@@ -1240,8 +1162,10 @@ impl NavicoReportReceiver {
         }
 
         let firmware = format!("{} {}", firmware_date, firmware_time);
-        self.set_value(&ControlId::TransmitTime, hours as f64);
-        self.set_string(&ControlId::FirmwareVersion, firmware);
+        self.common
+            .set_value(&ControlId::TransmitTime, hours as f64);
+        self.common
+            .set_string(&ControlId::FirmwareVersion, firmware);
 
         Ok(())
     }
@@ -1251,16 +1175,17 @@ impl NavicoReportReceiver {
 
         log::trace!("{}: report {:?}", self.common.key, report);
 
-        self.set_value(
+        self.common.set_value(
             &ControlId::BearingAlignment,
             i16::from_le_bytes(report.bearing_alignment) as f64,
         );
-        self.set_value(
+        self.common.set_value(
             &ControlId::AntennaHeight,
             u16::from_le_bytes(report.antenna_height) as f64,
         );
         if self.model == Model::HALO {
-            self.set_value(&ControlId::AccentLight, report.accent_light as f64);
+            self.common
+                .set_value(&ControlId::AccentLight, report.accent_light as f64);
         }
 
         Ok(())
@@ -1275,7 +1200,8 @@ impl NavicoReportReceiver {
         log::trace!("{}: report {:?}", self.common.key, report);
 
         let name = c_string(&report.name);
-        self.set_string(&ControlId::ModelName, name.unwrap_or("").to_string());
+        self.common
+            .set_string(&ControlId::ModelName, name.unwrap_or("").to_string());
 
         for (i, start, end) in super::BLANKING_SETS {
             let blanking = &report.blanking[i];
@@ -1308,7 +1234,7 @@ impl NavicoReportReceiver {
         log::trace!("{}: report {:?}", self.common.key, report);
 
         let name = c_string(&report.name);
-        // self.set_string(&ControlId::ModelName, name.unwrap_or("").to_string());
+        // self.common.set_string(&ControlId::ModelName, name.unwrap_or("").to_string());
         log::debug!(
             "Radar name '{}' model '{}'",
             name.unwrap_or("null"),
@@ -1412,8 +1338,10 @@ impl NavicoReportReceiver {
                     self.doppler = doppler_mode;
                 }
             }
-            self.set_value(&ControlId::Doppler, doppler_state as f64);
-            self.set_value(&ControlId::DopplerSpeedThreshold, doppler_speed as f64);
+            self.common
+                .set_value(&ControlId::Doppler, doppler_state as f64);
+            self.common
+                .set_value(&ControlId::DopplerSpeedThreshold, doppler_speed as f64);
 
             log::debug!(
                 "{}: report w={} x={:?}",
@@ -1448,31 +1376,37 @@ impl NavicoReportReceiver {
                     self.doppler = doppler_mode;
                 }
             }
-            self.set_value(&ControlId::Doppler, doppler_state as f64);
-            self.set_value(&ControlId::DopplerSpeedThreshold, doppler_speed as f64);
+            self.common
+                .set_value(&ControlId::Doppler, doppler_state as f64);
+            self.common
+                .set_value(&ControlId::DopplerSpeedThreshold, doppler_speed as f64);
         }
 
         if self.model == Model::HALO {
-            self.set_value(&ControlId::SeaState, sea_state as f64);
-            self.set_value_with_many_auto(
+            self.common
+                .set_value(&ControlId::SeaState, sea_state as f64);
+            self.common.set_value_with_many_auto(
                 &ControlId::Sea,
                 sea_clutter as f64,
                 auto_sea_clutter as f64,
             );
         }
-        self.set_value(
+        self.common.set_value(
             &ControlId::LocalInterferenceRejection,
             local_interference_rejection as f64,
         );
-        self.set_value(&ControlId::ScanSpeed, scan_speed as f64);
-        self.set_value_auto(
+        self.common
+            .set_value(&ControlId::ScanSpeed, scan_speed as f64);
+        self.common.set_value_auto(
             &ControlId::SideLobeSuppression,
             sidelobe_suppression as f64,
             sidelobe_suppression_auto,
         );
-        self.set_value(&ControlId::NoiseRejection, noise_reduction as f64);
+        self.common
+            .set_value(&ControlId::NoiseRejection, noise_reduction as f64);
         if self.model == Model::HALO || self.model == Model::Gen4 {
-            self.set_value(&ControlId::TargetSeparation, target_sep as f64);
+            self.common
+                .set_value(&ControlId::TargetSeparation, target_sep as f64);
         } else if target_sep > 0 {
             log::trace!(
                 "{}: Target separation value {} not supported on model {}",

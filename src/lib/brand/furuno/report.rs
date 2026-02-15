@@ -282,83 +282,6 @@ impl FurunoReportReceiver {
         };
     }
 
-    fn set_value(&mut self, control_id: &ControlId, value: f64) {
-        self.set(control_id, value, None)
-    }
-
-    fn set_value_auto(&mut self, control_id: &ControlId, value: f64, auto: u8) {
-        match self
-            .common
-            .info
-            .controls
-            .set_value_auto(control_id, auto > 0, value)
-        {
-            Err(e) => {
-                log::error!("{}: {}", self.common.key, e.to_string());
-            }
-            Ok(Some(())) => {
-                if log::log_enabled!(log::Level::Debug) {
-                    let control = self.common.info.controls.get(control_id).unwrap();
-                    log::debug!(
-                        "{}: Control '{}' new value {:?} auto {} auto_value {:?}",
-                        self.common.key,
-                        control_id,
-                        control.value,
-                        auto,
-                        control.auto_value,
-                    );
-                }
-            }
-            Ok(None) => {}
-        };
-    }
-
-    #[allow(dead_code)]
-    fn set_value_with_many_auto(&mut self, control_id: &ControlId, value: f64, auto_value: f64) {
-        match self
-            .common
-            .info
-            .controls
-            .set_value_with_many_auto(control_id, value, auto_value)
-        {
-            Err(e) => {
-                log::error!("{}: {}", self.common.key, e.to_string());
-            }
-            Ok(Some(())) => {
-                if log::log_enabled!(log::Level::Debug) {
-                    let control = self.common.info.controls.get(control_id).unwrap();
-                    log::debug!(
-                        "{}: Control '{}' new value {:?} auto_value {:?} auto {:?}",
-                        self.common.key,
-                        control_id,
-                        control.value,
-                        control.auto_value,
-                        control.auto
-                    );
-                }
-            }
-            Ok(None) => {}
-        };
-    }
-
-    #[allow(dead_code)]
-    fn set_string(&mut self, control: &ControlId, value: String) {
-        match self.common.info.controls.set_string(control, value) {
-            Err(e) => {
-                log::error!("{}: {}", self.common.key, e.to_string());
-            }
-            Ok(Some(v)) => {
-                log::debug!(
-                    "{}: Control '{}' new value '{}'",
-                    self.common.key,
-                    control,
-                    v
-                );
-            }
-            Ok(None) => {}
-        };
-    }
-
     fn process_report(&mut self, line: &str) -> Result<(), Error> {
         let line = match line.find('$') {
             Some(pos) => {
@@ -447,7 +370,8 @@ impl FurunoReportReceiver {
                     _ => Power::Off,
                 };
                 // TODO check values with generic values [1 = Standby, 2 = Transmit but the others...]
-                self.set_value(&ControlId::Power, generic_state as i32 as f64);
+                self.common
+                    .set_value(&ControlId::Power, generic_state as i32 as f64);
             }
             CommandId::Gain => {
                 // Response format: $N63,{auto},{value},0,80,0
@@ -461,7 +385,7 @@ impl FurunoReportReceiver {
                 }
                 let auto = numbers[0] as u8;
                 let gain = numbers[1];
-                self.set_value_auto(&ControlId::Gain, gain, auto);
+                self.common.set_value_auto(&ControlId::Gain, gain, auto);
             }
             CommandId::Sea => {
                 // Response format: $N64,{auto},{value},50,0,0,0
@@ -470,7 +394,7 @@ impl FurunoReportReceiver {
                 }
                 let auto = numbers[0] as u8;
                 let sea = numbers[1];
-                self.set_value_auto(&ControlId::Sea, sea, auto);
+                self.common.set_value_auto(&ControlId::Sea, sea, auto);
             }
             CommandId::Rain => {
                 // Response format: $N65,{auto},{value},0,0,0,0
@@ -482,7 +406,7 @@ impl FurunoReportReceiver {
                 }
                 let auto = numbers[0] as u8;
                 let rain = numbers[1];
-                self.set_value_auto(&ControlId::Rain, rain, auto);
+                self.common.set_value_auto(&ControlId::Rain, rain, auto);
             }
             CommandId::ScanSpeed => {
                 // Response format: $N89,{mode},0
@@ -494,7 +418,7 @@ impl FurunoReportReceiver {
                     );
                 }
                 let mode = numbers[0];
-                self.set_value(&ControlId::ScanSpeed, mode);
+                self.common.set_value(&ControlId::ScanSpeed, mode);
             }
             CommandId::BlindSector => {
                 // Response format: $N77,{s2_enable},{s1_start},{s1_width},{s2_start},{s2_width}
@@ -513,10 +437,12 @@ impl FurunoReportReceiver {
                 let s1_end = (s1_start + s1_width) % 360.0;
                 let s2_end = (s2_start + s2_width) % 360.0;
 
-                self.set_value(&ControlId::NoTransmitStart1, s1_start);
-                self.set_value(&ControlId::NoTransmitEnd1, s1_end);
-                self.set_value(&ControlId::NoTransmitStart2, s2_start);
-                self.set_value(&ControlId::NoTransmitEnd2, s2_end);
+                self.common
+                    .set_value(&ControlId::NoTransmitStart1, s1_start);
+                self.common.set_value(&ControlId::NoTransmitEnd1, s1_end);
+                self.common
+                    .set_value(&ControlId::NoTransmitStart2, s2_start);
+                self.common.set_value(&ControlId::NoTransmitEnd2, s2_end);
             }
             CommandId::Range => {
                 if numbers.len() < 3 {
@@ -539,15 +465,16 @@ impl FurunoReportReceiver {
                         )
                     })?;
 
-                self.set_value(&ControlId::Range, range_meters as f64);
+                self.common
+                    .set_value(&ControlId::Range, range_meters as f64);
             }
             CommandId::OnTime => {
                 let seconds = numbers[0];
-                self.set_value(&ControlId::OperatingTime, seconds);
+                self.common.set_value(&ControlId::OperatingTime, seconds);
             }
             CommandId::TxTime => {
                 let seconds = numbers[0];
-                self.set_value(&ControlId::TransmitTime, seconds);
+                self.common.set_value(&ControlId::TransmitTime, seconds);
             }
             CommandId::MainBangSize => {
                 // Response format: $N83,{value},0
@@ -560,7 +487,8 @@ impl FurunoReportReceiver {
                 }
                 // Convert 0-255 to 0-100%
                 let percent = (numbers[0] as i32 * 100) / 255;
-                self.set_value(&ControlId::MainBangSuppression, percent as f64);
+                self.common
+                    .set_value(&ControlId::MainBangSuppression, percent as f64);
             }
 
             // NXT-specific features
@@ -587,12 +515,13 @@ impl FurunoReportReceiver {
                     0 => {
                         // Interference Rejection: value 2=ON, 0=OFF
                         let enabled = if value == 2 { 1.0 } else { 0.0 };
-                        self.set_value(&ControlId::InterferenceRejection, enabled);
+                        self.common
+                            .set_value(&ControlId::InterferenceRejection, enabled);
                     }
                     3 => {
                         // Noise Reduction: value 1=ON, 0=OFF
                         let enabled = if value == 1 { 1.0 } else { 0.0 };
-                        self.set_value(&ControlId::NoiseRejection, enabled);
+                        self.common.set_value(&ControlId::NoiseRejection, enabled);
                     }
                     _ => {
                         log::debug!(
@@ -612,7 +541,8 @@ impl FurunoReportReceiver {
                         numbers.len()
                     );
                 }
-                self.set_value(&ControlId::TargetSeparation, numbers[0]);
+                self.common
+                    .set_value(&ControlId::TargetSeparation, numbers[0]);
             }
             CommandId::BirdMode => {
                 // Response format: $NED,{level},{screen}
@@ -623,7 +553,7 @@ impl FurunoReportReceiver {
                         numbers.len()
                     );
                 }
-                self.set_value(&ControlId::BirdMode, numbers[0]);
+                self.common.set_value(&ControlId::BirdMode, numbers[0]);
             }
             CommandId::TargetAnalyzer => {
                 // Response format: $NEF,{enabled},{mode},{screen}
@@ -646,7 +576,7 @@ impl FurunoReportReceiver {
                     2.0 // Rain
                 };
 
-                self.set_value(&ControlId::Doppler, value);
+                self.common.set_value(&ControlId::Doppler, value);
             }
 
             CommandId::AliveCheck => {}

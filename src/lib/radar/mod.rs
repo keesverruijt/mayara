@@ -986,4 +986,141 @@ impl CommonRadar {
             self.info.broadcast_radar_message(message);
         }
     }
+
+    pub(crate) fn set_control(
+        &mut self,
+        control_id: &ControlId,
+        value: f64,
+        auto: Option<bool>,
+    ) -> Result<Option<()>, ControlError> {
+        self.info.controls.set(control_id, value, auto)
+    }
+
+    pub(crate) fn set<T>(
+        &mut self,
+        control_id: &ControlId,
+        value: T,
+        auto: Option<bool>,
+        enabled: Option<bool>,
+    ) where
+        f64: From<T>,
+    {
+        match self
+            .info
+            .controls
+            .set_value_auto_enabled(control_id, value, auto, enabled)
+        {
+            Err(e) => {
+                log::error!("{}: {}", self.key, e.to_string());
+            }
+            Ok(Some(())) => {
+                if log::log_enabled!(log::Level::Debug) {
+                    let control = self.info.controls.get(control_id).unwrap();
+                    log::trace!(
+                        "{}: Control '{}' new value {:?} auto {:?} auto_value {:?} enabled {:?}",
+                        self.key,
+                        control_id,
+                        control.value,
+                        control.auto,
+                        control.auto_value,
+                        control.enabled
+                    );
+                }
+            }
+            Ok(None) => {}
+        };
+    }
+
+    pub(crate) fn set_value<T>(&mut self, control_id: &ControlId, value: T)
+    where
+        f64: From<T>,
+    {
+        self.set(control_id, value.into(), None, None)
+    }
+
+    pub(crate) fn set_value_auto<T>(&mut self, control_id: &ControlId, value: T, auto: u8)
+    where
+        f64: From<T>,
+    {
+        self.set(control_id, value, Some(auto > 0), None)
+    }
+
+    pub(crate) fn set_value_enabled<T>(&mut self, control_id: &ControlId, value: T, enabled: u8)
+    where
+        f64: From<T>,
+    {
+        self.set(control_id, value, None, Some(enabled > 0))
+    }
+
+    pub(crate) fn set_string(&mut self, control: &ControlId, value: String) {
+        match self.info.controls.set_string(control, value) {
+            Err(e) => {
+                log::error!("{}: {}", self.key, e.to_string());
+            }
+            Ok(Some(v)) => {
+                log::debug!("{}: Control '{}' new value '{}'", self.key, control, v);
+            }
+            Ok(None) => {}
+        };
+    }
+
+    pub(crate) fn set_wire_range(&mut self, control_id: &ControlId, min: u8, max: u8) {
+        match self
+            .info
+            .controls
+            .set_wire_range(control_id, min as f64, max as f64)
+        {
+            Err(e) => {
+                log::error!("{}: {}", self.key, e.to_string());
+            }
+            Ok(Some(())) => {
+                if log::log_enabled!(log::Level::Debug) {
+                    let control = self.info.controls.get(control_id).unwrap();
+                    log::trace!(
+                        "{}: Control '{}' new wire min {} max {} value {:?} auto {:?} auto_value {:?} enabled {:?} ",
+                        self.key,
+                        control_id,
+                        min,
+                        max,
+                        control.value,
+                        control.auto,
+                        control.auto_value,
+                        control.enabled,
+                    );
+                }
+            }
+            Ok(None) => {}
+        };
+    }
+
+    pub(crate) fn set_value_with_many_auto(
+        &mut self,
+        control_id: &ControlId,
+        value: f64,
+        auto_value: f64,
+    ) {
+        match self
+            .info
+            .controls
+            .set_value_with_many_auto(control_id, value, auto_value)
+        {
+            Err(e) => {
+                log::error!("{}: {}", self.key, e.to_string());
+            }
+            Ok(Some(())) => {
+                if log::log_enabled!(log::Level::Debug) {
+                    let control = self.info.controls.get(control_id).unwrap();
+                    log::debug!(
+                        "{}: Control '{}' new value {:?} auto_value {:?} auto {:?}",
+                        self.key,
+                        control_id,
+                        control.value,
+                        control.auto_value,
+                        control.auto
+                    );
+                }
+            }
+            Ok(None) => {}
+        };
+    }
 }
