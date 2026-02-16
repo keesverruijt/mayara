@@ -8,6 +8,8 @@ import {
   getTrueHeading,
 } from "./viewer.js";
 
+import { SpokeProcessorFactory } from "./spoke_processor.js";
+
 class render_webgpu {
   constructor(canvas_dom, canvas_background_dom, drawBackground) {
     this.dom = canvas_dom;
@@ -26,10 +28,9 @@ class render_webgpu {
     this.pendingSpokes = null;
     this.legend = null;
 
-    // Rotation tracking for neighbor enhancement
-    this.rotationCount = 0;
-    this.lastSpokeAngle = -1;
-    this.fillRotations = 4; // Number of rotations to use neighbor enhancement
+    // Spoke processing strategy
+    this.spokeProcessor = null;
+    this.processingMode = "auto"; // "auto", "clean", or "smoothing"
 
     // Buffer flush - wait for full rotation after standby/range change
     // This ensures we only draw fresh data, not stale buffered spokes
@@ -193,6 +194,11 @@ class render_webgpu {
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });
 
+    // Create spoke processor if legend is available
+    if (this.legend) {
+      this.#createSpokeProcessor();
+    }
+
     this.#createBindGroup();
   }
 
@@ -243,10 +249,10 @@ class render_webgpu {
     if (this.data) {
       this.data.fill(0);
     }
-    // Reset rotation counter and tracking
-    this.rotationCount = 0;
-    this.lastSpokeAngle = -1;
-    this.firstSpokeAngle = -1;
+    // Reset spoke processor state
+    if (this.spokeProcessor) {
+      this.spokeProcessor.reset();
+    }
 
     // Wait for full rotation to flush any buffered stale spokes
     this.waitForRotation = true;
@@ -263,6 +269,30 @@ class render_webgpu {
       );
       this.render();
     }
+  }
+
+  /**
+   * Set the spoke processing mode
+   * @param {string} mode - "auto", "clean", or "smoothing"
+   */
+  setProcessingMode(mode) {
+    if (this.processingMode !== mode) {
+      this.processingMode = mode;
+      this.#createSpokeProcessor();
+      // Clear display when switching modes
+      this.clearRadarDisplay();
+    }
+  }
+
+  #createSpokeProcessor() {
+    if (!this.legend || !this.spokesPerRevolution) {
+      return;
+    }
+    this.spokeProcessor = SpokeProcessorFactory.create(
+      this.processingMode,
+      this.spokesPerRevolution,
+      this.legend
+    );
   }
 
   #convertServerLegend(serverLegend) {
@@ -346,6 +376,9 @@ class render_webgpu {
       { width: 256, height: 1 }
     );
 
+    // Create spoke processor now that we have legend
+    this.#createSpokeProcessor();
+
     if (this.polarTexture) {
       this.#createBindGroup();
     }
@@ -366,7 +399,7 @@ class render_webgpu {
   }
 
   drawSpoke(spoke) {
-    if (!this.data || !this.legend) return;
+    if (!this.data || !this.legend || !this.spokeProcessor) return;
 
     // Don't draw spokes in standby mode
     if (this.standbyMode) {
@@ -408,9 +441,9 @@ class render_webgpu {
       if (this.seenAngleWrap && spoke.angle >= this.waitStartAngle) {
         // Full rotation complete - start drawing fresh data
         this.waitForRotation = false;
-        this.rotationCount = 0;
-        this.lastSpokeAngle = -1;
-        this.firstSpokeAngle = -1;
+        if (this.spokeProcessor) {
+          this.spokeProcessor.reset();
+        }
         // Clear display before starting fresh
         if (this.data) this.data.fill(0);
         if (this.ready && this.polarTexture && this.data) {
@@ -434,10 +467,10 @@ class render_webgpu {
       this.actual_range = spoke.range;
       // Clear spoke data when range changes - old data is at wrong scale
       this.data.fill(0);
-      // Reset rotation counter on range change
-      this.rotationCount = 0;
-      this.lastSpokeAngle = -1;
-      this.firstSpokeAngle = -1;
+      // Reset spoke processor on range change
+      if (this.spokeProcessor) {
+        this.spokeProcessor.reset();
+      }
       this.redrawCanvas();
 
       // Only wait for full rotation on actual range CHANGE, not initial range setting
@@ -461,209 +494,19 @@ class render_webgpu {
       // For initial range, just continue drawing - no stale data to flush
     }
 
-    // Track first spoke angle after clear (for limiting backward spread)
-    if (this.firstSpokeAngle < 0) {
-      this.firstSpokeAngle = spoke.angle;
-    }
+    // Update rotation tracking in processor
+    this.spokeProcessor.updateRotationTracking(
+      spoke.angle,
+      this.spokesPerRevolution
+    );
 
-    // Track rotations: detect when we wrap around from high angle to low angle
-    if (
-      this.lastSpokeAngle >= 0 &&
-      spoke.angle < this.lastSpokeAngle - this.spokesPerRevolution / 2
-    ) {
-      this.rotationCount++;
-    }
-    this.lastSpokeAngle = spoke.angle;
-
-    let offset = spoke.angle * this.maxspokelength;
-
-    // Check if data fits in buffer
-    if (offset + spoke.data.length > this.data.length) {
-      console.error(
-        `Buffer overflow: offset=${offset}, data.len=${spoke.data.length}, buf.len=${this.data.length}, angle=${spoke.angle}, maxSpokeLen=${this.maxspokelength}, spokes=${this.spokesPerRevolution}`
-      );
-      return;
-    }
-
-    const spokeLen = spoke.data.length;
-    const maxLen = this.maxspokelength;
-
-    const strongReturn = this.legend.strongReturn; // 60 for furuno
-    const mediumReturn = this.legend.mediumReturn; // 25 for furuno
-    const weakReturn = this.legend.mediumReturn;
-    const specialStart = this.legend.specialStart;
-    const maxNormal = specialStart - 1;
-
-    // Only use neighbor enhancement during first few rotations to fill display quickly
-    if (this.rotationCount < this.fillRotations) {
-      // Write spoke data with neighbor enhancement
-      // Strong signals spread wider, weak signals spread less
-      const spokes = this.spokesPerRevolution;
-
-      for (let i = 0; i < spokeLen; i++) {
-        const val = spoke.data[i];
-        // Write current spoke at full value
-        this.data[offset + i] = val;
-
-        if (val >= specialStart) {
-          // Leave things like history, doppler etc as they are
-          continue;
-        }
-
-        if (val > 1) {
-          // Strong signals (>60): spread wide (±6 spokes) with higher intensity
-          // Medium signals (25-60): spread medium (±4 spokes)
-          // Weak signals (<25): spread narrow (±2 spokes) with lower intensity
-          let spreadWidth, blendFactors;
-
-          if (val > strongReturn) {
-            // Strong signal - spread wide and strong
-            spreadWidth = 6;
-            blendFactors = [0.95, 0.88, 0.78, 0.65, 0.5, 0.35];
-          } else if (val > mediumReturn) {
-            // Medium signal - normal spread
-            spreadWidth = 4;
-            blendFactors = [0.85, 0.65, 0.45, 0.25];
-          } else {
-            // Weak signal - narrow spread, lower intensity
-            spreadWidth = 2;
-            blendFactors = [0.6, 0.3];
-          }
-
-          // Spread to neighboring spokes (both directions)
-          for (let d = 1; d <= spreadWidth; d++) {
-            const prev = (spoke.angle + spokes - d) % spokes;
-            const next = (spoke.angle + d) % spokes;
-            const prevOffset = prev * maxLen;
-            const nextOffset = next * maxLen;
-            const blendVal = Math.floor(val * blendFactors[d - 1]);
-
-            if (this.data[prevOffset + i] < blendVal) {
-              this.data[prevOffset + i] = blendVal;
-            }
-            if (this.data[nextOffset + i] < blendVal) {
-              this.data[nextOffset + i] = blendVal;
-            }
-          }
-        }
-      }
-    } else {
-      // RUN mode: smart filtering
-      // - Strong signals with neighbor support get amplified aggressively (wide check ±4)
-      // - Isolated weak signals (scatter) get killed
-      const spokes = this.spokesPerRevolution;
-
-      // Wide neighbor check for strong signals: ±4 spokes
-      const prev1Offset = ((spoke.angle + spokes - 1) % spokes) * maxLen;
-      const prev2Offset = ((spoke.angle + spokes - 2) % spokes) * maxLen;
-      const prev3Offset = ((spoke.angle + spokes - 3) % spokes) * maxLen;
-      const prev4Offset = ((spoke.angle + spokes - 4) % spokes) * maxLen;
-      const next1Offset = ((spoke.angle + 1) % spokes) * maxLen;
-      const next2Offset = ((spoke.angle + 2) % spokes) * maxLen;
-      const next3Offset = ((spoke.angle + 3) % spokes) * maxLen;
-      const next4Offset = ((spoke.angle + 4) % spokes) * maxLen;
-
-      for (let i = 0; i < spokeLen; i++) {
-        const val = spoke.data[i];
-
-        // Check neighbor support (from previous rotation's data still in buffer)
-        const prev1 = this.data[prev1Offset + i];
-        const prev2 = this.data[prev2Offset + i];
-        const prev3 = this.data[prev3Offset + i];
-        const prev4 = this.data[prev4Offset + i];
-        const next1 = this.data[next1Offset + i];
-        const next2 = this.data[next2Offset + i];
-        const next3 = this.data[next3Offset + i];
-        const next4 = this.data[next4Offset + i];
-
-        // For strong signals: use wide sum (±4)
-        const wideSum =
-          prev1 + prev2 + prev3 + prev4 + next1 + next2 + next3 + next4;
-        const wideMax = Math.max(
-          prev1,
-          prev2,
-          prev3,
-          prev4,
-          next1,
-          next2,
-          next3,
-          next4
-        );
-        // For weak signals: use narrow sum (±2)
-        const narrowSum = prev1 + prev2 + next1 + next2;
-        const narrowMax = Math.max(prev1, prev2, next1, next2);
-
-        let outputVal;
-
-        if (val > strongReturn) {
-          // Strong signal: use wide neighbor check (±4)
-          if (wideSum > 3 * strongReturn) {
-            // Solid mass - boost hard and spread to neighbors
-            outputVal = Math.min(maxNormal, Math.floor(val * 1.35));
-            // Boost immediate neighbors to fill gaps
-            if (prev1 > mediumReturn)
-              this.data[prev1Offset + i] = Math.min(
-                maxNormal,
-                Math.floor(prev1 * 1.15)
-              );
-            if (next1 > mediumReturn)
-              this.data[next1Offset + i] = Math.min(
-                maxNormal,
-                Math.floor(next1 * 1.15)
-              );
-            if (prev2 > mediumReturn)
-              this.data[prev2Offset + i] = Math.min(
-                maxNormal,
-                Math.floor(prev2 * 1.1)
-              );
-            if (mediumReturn)
-              this.data[next2Offset + i] = Math.min(
-                maxNormal,
-                Math.floor(next2 * 1.1)
-              );
-          } else if (wideMax > mediumReturn) {
-            // Some support - moderate boost
-            outputVal = Math.min(maxNormal, Math.floor(val * 1.2));
-          } else {
-            // Strong but isolated - suspicious, reduce
-            outputVal = Math.floor(val * 0.8);
-          }
-        } else if (val > mediumReturn) {
-          // Medium signal: needs good neighbor support
-          if (narrowSum > 3 * mediumReturn) {
-            // Good support - boost it
-            outputVal = Math.min(maxNormal, Math.floor(val * 1.2));
-          } else if (narrowMax > 2 * mediumReturn) {
-            // Some support - keep
-            outputVal = val;
-          } else {
-            // Isolated medium - likely scatter, punish hard
-            outputVal = Math.floor(val * 0.4);
-          }
-        } else if (val > 1) {
-          // Weak signal: kill it unless very well supported
-          if (narrowSum > 3 * mediumReturn) {
-            // Strong neighbors - this might be edge of real target
-            outputVal = val;
-          } else if (narrowMax > strongReturn) {
-            // Next to something strong - keep faint
-            outputVal = Math.floor(val * 0.5);
-          } else {
-            // Isolated weak signal - kill it
-            outputVal = 0;
-          }
-        } else {
-          outputVal = val;
-        }
-
-        this.data[offset + i] = val; // outputVal;
-      }
-    }
-
-    // Clear remainder of spoke if data is shorter than max
-    if (spokeLen < maxLen) {
-      this.data.fill(0, offset + spokeLen, offset + maxLen);
-    }
+    // Process spoke using current strategy
+    this.spokeProcessor.processSpoke(
+      this.data,
+      spoke,
+      this.spokesPerRevolution,
+      this.maxspokelength
+    );
   }
 
   render() {

@@ -251,6 +251,14 @@ function buildControlsFromCapabilities() {
     van.add(controlsEl, baseSection);
   }
 
+  // Add internal smoothing control (not from server capabilities)
+  const smoothingSection = div(
+    { class: "myr_control_section myr_internal_section" },
+    div({ class: "myr_section_header" }, "Display Settings")
+  );
+  van.add(smoothingSection, buildSmoothingControl());
+  van.add(controlsEl, smoothingSection);
+
   // Build extended controls in a collapsible section
   if (extendedControls.length > 0) {
     const extSection = div(
@@ -302,6 +310,57 @@ function buildControlsFromCapabilities() {
 /**
  * Build a control widget based on its type and schema
  */
+/**
+ * Internal smoothing control - not from server capabilities
+ */
+function buildSmoothingControl() {
+  // Get current mode from renderer, default to "auto"
+  let currentMode = "auto";
+
+  const modes = {
+    auto: "Auto",
+    clean: "Clean",
+    smoothing: "Smoothing",
+  };
+
+  return div(
+    { class: "myr_control myr_enum_control" },
+    span({ class: "myr_control_label" }, "Spoke Processing"),
+    div(
+      { class: "myr_button_group", id: "myr_internalSmoothing_group" },
+      ...Object.entries(modes).map(([value, label]) => {
+        const isActive = currentMode === value;
+        return button(
+          {
+            type: "button",
+            class: `myr_enum_button ${isActive ? "myr_enum_active" : ""}`,
+            "data-value": value,
+            onclick: () => {
+              // Update renderer processing mode
+              const rendererModule = window.renderer;
+              if (rendererModule && rendererModule.setProcessingMode) {
+                rendererModule.setProcessingMode(value);
+              }
+              // Update UI
+              updateSmoothingUI(value);
+            },
+          },
+          label
+        );
+      })
+    )
+  );
+}
+
+function updateSmoothingUI(value) {
+  const group = document.getElementById("myr_internalSmoothing_group");
+  if (group) {
+    group.querySelectorAll(".myr_enum_button").forEach((btn) => {
+      btn.classList.toggle("myr_enum_active", btn.dataset.value === value);
+    });
+  }
+}
+
 function buildControl(control) {
   // Special case for dopplerMode - needs custom UI (enabled toggle + mode selector)
   if (control.controlId === "dopplerMode") {
