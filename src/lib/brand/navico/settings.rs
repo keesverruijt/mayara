@@ -154,8 +154,8 @@ pub fn update_when_model_known(
             AutomaticValue {
                 has_auto: true,
                 has_auto_adjustable: true,
-                auto_adjust_min_value: -50.,
-                auto_adjust_max_value: 50.,
+                auto_adjust_min_value: Some(-50.),
+                auto_adjust_max_value: Some(50.),
             },
         ));
     } else {

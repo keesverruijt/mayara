@@ -751,7 +751,6 @@ where
 struct ActiveSubscriptions {
     mode: Subscribe,
     timeout: Duration,
-    next_timeout: Duration,
     paths: HashMap<String, HashMap<ControlId, PathSubscribe>>,
 }
 
@@ -761,7 +760,6 @@ impl ActiveSubscriptions {
             mode,
             paths: HashMap::new(),
             timeout: Duration::from_secs(99999999),
-            next_timeout: Duration::from_secs(99999999),
         }
     }
 }
@@ -774,14 +772,10 @@ impl ActiveSubscriptions {
                 self.timeout = timeout;
             };
         }
-        self.next_timeout = Duration::from_secs(0);
     }
 
     fn get_timeout(&mut self) -> Duration {
-        let next = self.next_timeout;
-        self.next_timeout = self.timeout;
-
-        next
+        self.timeout
     }
 }
 
@@ -801,7 +795,7 @@ async fn handle_client_request(
     if let Ok(stream_request) = stream_request {
         let r = match stream_request {
             StreamRequest::Subscription(subscription) => {
-                handle_subscription(subscriptions, subscription)
+                handle_subscription(socket, radars, subscriptions, subscription).await
             }
             StreamRequest::Desubscription(desubscription) => {
                 handle_desubscription(subscriptions, desubscription)
@@ -850,7 +844,9 @@ async fn handle_control_request(
     }
 }
 
-fn handle_subscription(
+async fn handle_subscription(
+    socket: &mut WebSocket,
+    radars: &SharedRadars,
     subscriptions: &mut ActiveSubscriptions,
     subscription: Subscription,
 ) -> Result<(), RadarError> {
@@ -906,7 +902,7 @@ fn handle_subscription(
         }
     }
     subscriptions.set_timeout(period);
-
+    send_all_subscribed(socket, radars, subscriptions).await?;
     // Now send all current values of everything just subscribed
 
     Ok(())

@@ -995,15 +995,6 @@ impl CommonRadar {
         }
     }
 
-    pub(crate) fn set_control(
-        &mut self,
-        control_id: &ControlId,
-        value: f64,
-        auto: Option<bool>,
-    ) -> Result<Option<()>, ControlError> {
-        self.info.controls.set(control_id, value, auto)
-    }
-
     pub(crate) fn set<T>(
         &mut self,
         control_id: &ControlId,

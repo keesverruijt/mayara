@@ -12,7 +12,6 @@ import {
   loadRadar,
   registerRadarCallback,
   registerControlCallback,
-  setCurrentRange,
   getOperatingTime,
   hasTimeCapability,
 } from "./control.js";
@@ -711,18 +710,6 @@ function radarLoaded(r) {
           // The texture-based renderers handle sparse data well
           renderer.drawSpoke(spoke);
           prev_angle = spoke.angle;
-          // Update range from spoke data - this is the actual radar range
-          // Only update if spoke.range is valid (non-zero) and different from current
-          if (spoke.range > 0 && spoke.range !== renderer.range) {
-            console.log("Range update from spoke:", spoke.range, "m");
-            renderer.setRange(spoke.range);
-          }
-          // Also update control.js for range display and index tracking
-          // Kees: NO! Bad idea, on Navico this range is 1.1 .. 1.3 the radar's range
-          // and on others, it gives spurious data. Much safer to not update it!
-          // if (spoke.range > 0) {
-          //   setCurrentRange(spoke.range);
-          // }
         }
         renderer.render();
       }
@@ -749,6 +736,9 @@ function controlUpdate(controlId, value) {
         timeCap.hasTxTime
       );
     }
+  } else if (controlId == "range") {
+    const range = typeof value === "object" ? value.value : value; // this is always in meters
+    renderer.setRange(range);
   }
 }
 

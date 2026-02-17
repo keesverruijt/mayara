@@ -35,7 +35,7 @@ const { div, label, input, button, span } = van.tags;
 // State
 let radarId = null;
 let capabilities = null;
-let radarState = null;
+let radarState = {};
 let stateWebSocket = null;
 let radarCallbacks = [];
 let controlCallbacks = [];
@@ -48,9 +48,12 @@ let rangeUpdateCount = {}; // Track how often each range value is seen
 let userRequestedRangeIndex = -1; // Track user's position in range table
 let rangeFromSpokeData = false; // True once we've received range from spoke data
 
-// Track pending control changes to prevent polling from overwriting user input
-// Maps controlId -> { value, timestamp }
-let pendingControls = {};
+const control_prefix = "myr_control_";
+const control_auto_postfix = "_auto";
+
+function controlToId(controlId) {
+  return control_prefix + controlId;
+}
 
 /**
  * Normalize capabilities.controls to always be a HashMap
@@ -212,6 +215,33 @@ function buildControlsFromCapabilities() {
     // Ensure control has controlId field set
     const fullControl = { ...control, controlId };
 
+    if (fullControl.units) {
+      if (fullControl.minValue) {
+        const converted = convertToDisplayUnits(
+          fullControl.minValue,
+          fullControl.units
+        );
+        fullControl.minValue = converted.value;
+        fullControl.user_units = converted.units;
+      }
+      if (fullControl.maxValue) {
+        const converted = convertToDisplayUnits(
+          fullControl.maxValue,
+          fullControl.units
+        );
+        fullControl.maxValue = converted.value;
+        fullControl.user_units = converted.units;
+      }
+      if (fullControl.stepValue) {
+        const converted = convertToDisplayUnits(
+          fullControl.stepValue,
+          fullControl.units
+        );
+        fullControl.stepValue = converted.value;
+        fullControl.user_units = converted.units;
+      }
+    }
+
     if (fullControl.readOnly) {
       infoControls.push(fullControl);
     } else if (fullControl.category === "installation") {
@@ -299,11 +329,6 @@ function buildControlsFromCapabilities() {
     }
 
     van.add(controlsEl, infoSection);
-  }
-
-  // Apply initial state
-  if (radarState) {
-    applyStateToUI(radarState);
   }
 }
 
@@ -434,7 +459,7 @@ function buildBooleanControl(control) {
     button(
       {
         type: "button",
-        id: `myr_${control.controlId}`,
+        id: controlToId(control.controlId),
         class: `myr_toggle_button ${currentValue ? "myr_toggle_active" : ""}`,
         onclick: (e) => {
           const isActive = e.target.classList.contains("myr_toggle_active");
@@ -455,7 +480,7 @@ function buildButtonControl(control) {
     button(
       {
         type: "button",
-        id: `myr_${control.controlId}`,
+        id: `${control_prefix}${control.controlId}`,
         class: "myr_action_button",
         onclick: () => {
           sendControlValue(control.controlId, null);
@@ -475,7 +500,13 @@ function buildStringControl(control) {
   return div(
     { class: "myr_control myr_string_control myr_readonly" },
     span({ class: "myr_control_label" }, control.name),
-    span({ id: `myr_${control.controlId}`, class: "myr_string_value" }, value)
+    span(
+      {
+        id: controlToId(control.controlId),
+        class: "myr_string_value",
+      },
+      value
+    )
   );
 }
 
@@ -483,16 +514,17 @@ function buildStringControl(control) {
  * Number control - slider
  */
 function buildNumberControl(control) {
-  const range = control.range || { min: 0, max: 100 };
+  const minValue = control.minValue || 0;
+  const maxValue = control.maxValue || 100;
+  const stepValue = control.stepValue || 1;
   let currentValue = getControlValue(control.controlId);
 
-  // Handle compound values (objects with mode/value)
   if (typeof currentValue === "object" && currentValue !== null) {
     currentValue = currentValue.value;
   }
 
   const value =
-    currentValue !== undefined ? currentValue : control.default || range.min;
+    currentValue !== undefined ? currentValue : control.default || minValue;
 
   return div(
     { class: "myr_control myr_number_control" },
@@ -500,21 +532,24 @@ function buildNumberControl(control) {
       { class: "myr_control_header" },
       span({ class: "myr_control_label" }, control.name),
       span(
-        { id: `myr_${control.controlId}_value`, class: "myr_control_value" },
+        {
+          id: controlToId(control.controlId),
+          class: "myr_control_value",
+        },
         formatNumberValue(value, control)
       )
     ),
     input({
       type: "range",
-      id: `myr_${control.controlId}`,
+      id: controlToId(control.controlId) + "_slider",
       class: "myr_slider",
-      min: range.min,
-      max: range.max,
-      step: range.step || 1,
+      min: minValue,
+      max: maxValue,
+      step: stepValue,
       value: value,
       oninput: (e) => {
         // Update display while dragging
-        const valEl = document.getElementById(`myr_${control.controlId}_value`);
+        const valEl = document.getElementById(controlToId(control.controlId));
         if (valEl) {
           valEl.textContent = formatNumberValue(
             parseInt(e.target.value),
@@ -545,7 +580,7 @@ function buildEnumControl(control) {
     { class: "myr_control myr_enum_control" },
     span({ class: "myr_control_label" }, control.name),
     div(
-      { class: "myr_button_group", id: `myr_${control.controlId}_group` },
+      { class: "myr_button_group", id: controlToId(control.controlId) },
       ...valueEntries.map(([value, label]) => {
         return button(
           {
@@ -586,7 +621,7 @@ function buildCompoundControl(control) {
       { class: "myr_compound_header" },
       span({ class: "myr_control_label" }, control.name),
       span(
-        { id: `myr_${control.controlId}_value`, class: "myr_control_value" },
+        { id: controlToId(control.controlId), class: "myr_control_value" },
         isAuto ? "Auto" : currentValue
       )
     ),
@@ -686,7 +721,7 @@ function buildDopplerModeControl(control) {
           onclick: () =>
             sendControlValue(control.controlId, {
               enabled: false,
-              mode: "target",
+              mode: "off",
             }),
         },
         "Off"
@@ -775,7 +810,7 @@ function buildNoTransmitZonesControl(control) {
     const z2Start = z2.enabled ? z2.start : -1;
     const z2End = z2.enabled ? z2.end : -1;
 
-    // Send all four controls using sendControlValue to get pending tracking
+    // Send all four controls using sendControlValue
     sendControlValue("noTransmitStart1", z1Start);
     sendControlValue("noTransmitEnd1", z1End);
     sendControlValue("noTransmitStart2", z2Start);
@@ -866,7 +901,7 @@ function buildInfoControl(control) {
     { class: "myr_control myr_info_control" },
     span({ class: "myr_control_label" }, control.name),
     span(
-      { id: `myr_${control.controlId}`, class: "myr_info_value" },
+      { id: controlToId(control.controlId), class: "myr_info_value" },
       formatInfoValue(value, control)
     )
   );
@@ -1133,12 +1168,6 @@ async function sendControlValue(controlId, value, displayUnits) {
     }`
   );
 
-  // Mark as pending to prevent polling from overwriting
-  pendingControls[controlId] = { value, timestamp: Date.now() };
-
-  // Optimistic UI update immediately
-  updateControlUI(controlId, value);
-
   const success = await setControl(radarId, controlId, sendValue, sendUnits);
 
   if (success) {
@@ -1231,7 +1260,7 @@ function updateControlUI(controlId, value) {
 }
 
 function updateBooleanUI(controlId, value) {
-  const btn = document.getElementById(`myr_${controlId}`);
+  const btn = document.getElementById(controlToId(controlId));
   const boolValue = value.value;
   if (btn) {
     btn.classList.toggle("myr_toggle_active", boolValue);
@@ -1239,8 +1268,8 @@ function updateBooleanUI(controlId, value) {
   }
 }
 
-function updateStringUI(controlId, value, control) {
-  const valueEl = document.getElementById(`myr_${controlId}_value`);
+function updateStringUI(controlId, value) {
+  const valueEl = document.getElementById(controlToId(controlId));
 
   if (valueEl) {
     valueEl.textContent = value.value;
@@ -1248,8 +1277,15 @@ function updateStringUI(controlId, value, control) {
 }
 
 function updateNumberUI(controlId, value, control) {
-  const slider = document.getElementById(`myr_${controlId}`);
-  const valueEl = document.getElementById(`myr_${controlId}_value`);
+  console.log(
+    `updateNumberUI(${controlId},${JSON.stringify(value)},${JSON.stringify(
+      control
+    )}`
+  );
+  const slider = document.getElementById(
+    controlToId(control.controlId) + "_slider"
+  );
+  const valueEl = document.getElementById(controlToId(controlId));
 
   if (slider) {
     slider.value = value.value;
@@ -1372,12 +1408,10 @@ function updateNoTransmitZoneFromIndividual(controlId, value) {
   }
 
   // Check if both start and end are >= 0 to determine enabled state
-  // Use pending values if available, otherwise fall back to state
   const startId = `noTransmitStart${zoneNum}`;
   const endId = `noTransmitEnd${zoneNum}`;
-  const startVal =
-    pendingControls[startId]?.value ?? getControlValue(startId) ?? -1;
-  const endVal = pendingControls[endId]?.value ?? getControlValue(endId) ?? -1;
+  const startVal = getControlValue(startId) ?? -1;
+  const endVal = getControlValue(endId) ?? -1;
   const zoneEnabled = startVal >= 0 && endVal >= 0;
 
   // Update enabled checkbox and input disabled states
@@ -1388,41 +1422,6 @@ function updateNoTransmitZoneFromIndividual(controlId, value) {
   if (enabledEl) enabledEl.checked = zoneEnabled;
   if (startEl) startEl.disabled = !zoneEnabled;
   if (endEl) endEl.disabled = !zoneEnabled;
-}
-
-function applyStateToUI(state) {
-  if (!state) return;
-
-  for (const [controlId, value] of Object.entries(state)) {
-    // Skip controls with pending changes until server confirms the same value
-    const pending = pendingControls[controlId];
-    if (pending) {
-      // Check if server has confirmed our pending value
-      const serverValue = JSON.stringify(value);
-      const pendingValue = JSON.stringify(pending.value);
-      if (serverValue === pendingValue) {
-        // Server confirmed, clear pending
-        delete pendingControls[controlId];
-      } else {
-        // Server hasn't confirmed yet, keep user's value
-        continue;
-      }
-    }
-    updateControlUI(controlId, value);
-  }
-
-  // Update range display and initialize range index
-  // Skip if we already have range from spoke data (more accurate than state API)
-  if (state.range && !rangeFromSpokeData) {
-    currentRange = state.range;
-    // Initialize userRequestedRangeIndex from actual radar range
-    const ranges = capabilities?.supportedRanges || [];
-    userRequestedRangeIndex = ranges.findIndex(
-      (r) => Math.abs(r - currentRange) < 50
-    );
-    if (userRequestedRangeIndex < 0) userRequestedRangeIndex = 0;
-    updateRangeDisplay();
-  }
 }
 
 // ============================================================================
@@ -1485,10 +1484,6 @@ function connectStateStream(streamUrl, radarId) {
                 pathParts[2] === "controls"
               ) {
                 const controlId = pathParts[pathParts.length - 1];
-
-                // Update radarState
-                if (!radarState) radarState = {};
-                radarState[controlId] = item.value;
 
                 console.log(
                   `Receiving control: ${controlId} = ${JSON.stringify(
@@ -1561,19 +1556,6 @@ function disconnectStateStream() {
 
 // Apply a single control value to the UI
 function applyControlValueToUI(controlId, value) {
-  // Check if this is a pending control change from the user
-
-  const pending = pendingControls[controlId];
-  if (pending) {
-    // No no no, controls, come back from other devices as well!
-    //   const age = Date.now() - pending.timestamp;
-    //   if (age < 2000) {
-    //     // Ignore server update if we recently sent a change
-    //     return;
-    //   }
-    delete pendingControls[controlId];
-  }
-
   updateControlUI(controlId, value);
 
   // Notify control callbacks
@@ -1636,9 +1618,6 @@ async function loadRadar(id) {
     if (capabilities.controls) {
       capabilities.controls = normalizeControls(capabilities.controls);
     }
-
-    // Initialize empty state (will be populated by stream)
-    radarState = {};
 
     // Build UI
     buildControlsFromCapabilities();
@@ -1705,7 +1684,7 @@ function showError(message) {
  * @returns {number}
  */
 function getPowerState() {
-  return radarState?.power?.value || 1;
+  return radarState.power?.value || 0;
 }
 
 /**
@@ -1733,17 +1712,17 @@ function convertTimeToSeconds(value, units) {
 function getOperatingTime() {
   const controls = capabilities?.controls || {};
   const onTimeUnits =
-    radarState?.operatingTime?.units || controls?.operatingTime?.units || "s";
+    radarState.operatingTime?.units || controls?.operatingTime?.units || "s";
   const txTimeUnits =
-    radarState?.transmitTime?.units || controls?.transmitTime?.units || "s";
+    radarState.transmitTime?.units || controls?.transmitTime?.units || "s";
 
   return {
     onTime: convertTimeToSeconds(
-      radarState?.operatingTime?.value || 0,
+      radarState.operatingTime?.value || 0,
       onTimeUnits
     ),
     txTime: convertTimeToSeconds(
-      radarState?.transmitTime?.value || 0,
+      radarState.transmitTime?.value || 0,
       txTimeUnits
     ),
   };

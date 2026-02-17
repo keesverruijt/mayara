@@ -1235,6 +1235,7 @@ impl ControlBuilder {
         self
     }
 
+    #[allow(dead_code)]
     pub(crate) fn send_always(mut self) -> Self {
         self.control.item.is_send_always = true;
 
@@ -1753,15 +1754,17 @@ pub struct AutomaticValue {
     //#[serde(skip)]
     //pub(crate) auto_descriptions: Option<Vec<String>>,
     pub(crate) has_auto_adjustable: bool,
-    pub(crate) auto_adjust_min_value: f64,
-    pub(crate) auto_adjust_max_value: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) auto_adjust_min_value: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) auto_adjust_max_value: Option<f64>,
 }
 
 pub(crate) const HAS_AUTO_NOT_ADJUSTABLE: AutomaticValue = AutomaticValue {
     has_auto: true,
     has_auto_adjustable: false,
-    auto_adjust_min_value: 0.,
-    auto_adjust_max_value: 0.,
+    auto_adjust_min_value: None,
+    auto_adjust_max_value: None,
 };
 
 #[derive(Clone, Debug, Serialize, PartialEq)]

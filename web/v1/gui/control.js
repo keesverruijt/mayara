@@ -5,7 +5,7 @@ import { toUser } from "./units.js";
 
 const { div, label, input, button, select, option } = van.tags;
 
-const prefix = "myr_";
+const prefix = "myr_control_";
 const auto_postfix = "_auto";
 const enabled_postfix = "_enabled";
 
