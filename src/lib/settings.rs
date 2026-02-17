@@ -103,6 +103,9 @@ impl Controls {
         new_numeric(ControlId::Spokes, 0., 9999.)
             .read_only(true)
             .build(&mut controls);
+        new_numeric(ControlId::SpokeLength, 0., 9999.)
+            .read_only(true)
+            .build(&mut controls);
 
         if args.replay {
             controls.iter_mut().for_each(|(_k, v)| {
@@ -1974,6 +1977,7 @@ pub enum ControlId {
     FirmwareVersion,
     SerialNumber,
     Spokes,
+    SpokeLength,
     UserName,
 }
 
@@ -2041,7 +2045,9 @@ impl ControlId {
             | ControlId::MagnetronCurrent
             | ControlId::RotationSpeed
             | ControlId::SerialNumber
-            | ControlId::SignalStrength => Category::Info,
+            | ControlId::SignalStrength
+            | ControlId::Spokes
+            | ControlId::SpokeLength => Category::Info,
             _ => Category::Advanced,
         }
     }
@@ -2108,6 +2114,9 @@ impl ControlId {
             ControlId::TransmitTime => "How long the radar has been transmitting over its lifetime",
             ControlId::SerialNumber => "Manufacturer serial number of the radar",
             ControlId::Spokes => "How many spokes the radar transmitted last rotation",
+            ControlId::SpokeLength => {
+                "How long the spokes are that the radar transmitted last rotation"
+            }
             ControlId::UserName => "User defined name for the radar",
         }
     }
@@ -2177,6 +2186,7 @@ impl ControlId {
             ControlId::Tune => "Tune",
             // ControlId::TuneFine => "Fine tune",
             ControlId::Spokes => "Spokes",
+            ControlId::SpokeLength => "Spoke length",
             ControlId::UserName => "Custom name",
             ControlId::WarmupTime => "Warmup time",
         }
@@ -2236,6 +2246,7 @@ impl ControlId {
             ControlId::FirmwareVersion => ControlDestination::ReadOnly,
             ControlId::SerialNumber => ControlDestination::ReadOnly,
             ControlId::Spokes => ControlDestination::ReadOnly,
+            ControlId::SpokeLength => ControlDestination::ReadOnly,
             ControlId::UserName => ControlDestination::Internal,
         }
     }

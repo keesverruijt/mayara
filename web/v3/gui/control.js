@@ -13,6 +13,7 @@ export {
   registerControlCallback,
   setCurrentRange,
   getPowerState,
+  getControl,
   getOperatingTime,
   hasTimeCapability,
   isPlaybackMode,
@@ -1139,6 +1140,10 @@ function updateRangeDisplay() {
 // ============================================================================
 // Control Commands
 // ============================================================================
+
+function getControl(controlId) {
+  return capabilities?.controls[controlId];
+}
 
 async function sendControlValue(controlId, value, displayUnits) {
   if (!radarId) return;

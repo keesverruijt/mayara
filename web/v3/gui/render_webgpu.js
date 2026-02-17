@@ -23,6 +23,7 @@ class render_webgpu {
     this.drawBackgroundCallback = drawBackground;
 
     this.actual_range = 0;
+    this.lastHeading = null;
     this.ready = false;
     this.pendingLegend = null;
     this.pendingSpokes = null;
@@ -42,11 +43,9 @@ class render_webgpu {
     this.headingRotation = 0;
 
     // Standby mode state
-    this.standbyMode = false;
-    this.onTimeHours = 0;
-    this.txTimeHours = 0;
-    this.hasOnTimeCapability = false;
-    this.hasTxTimeCapability = false;
+    this.powerMode = "off";
+    this.onTimeSeconds = 0;
+    this.txTimeSeconds = 0;
 
     // Start async initialization
     this.initPromise = this.#initWebGPU();
@@ -211,26 +210,21 @@ class render_webgpu {
     this.redrawCanvas();
   }
 
-  setHeadingRotation(radians) {
-    this.headingRotation = radians;
-    if (this.ready) {
-      this.#updateUniforms();
+  setHeadingMode(mode) {
+    if (this.lastHeading || getTrueHeading()) {
+      this.headingMode = mode;
+      return mode;
+    } else {
+      return "headingUp";
     }
   }
 
-  setStandbyMode(
-    isStandby,
-    onTimeSeconds,
-    txTimeSeconds,
-    hasOnTimeCap,
-    hasTxTimeCap
-  ) {
-    const wasStandby = this.standbyMode;
-    this.standbyMode = isStandby;
+  setPowerMode(powerMode, onTimeSeconds, txTimeSeconds) {
+    const isStandby = powerMode != "transmit";
+    const wasStandby = this.powerMode != "transmit";
+    this.powerMode = powerMode;
     this.onTimeSeconds = onTimeSeconds || 0;
     this.txTimeSeconds = txTimeSeconds || 0;
-    this.hasOnTimeCapability = hasOnTimeCap || false;
-    this.hasTxTimeCapability = hasTxTimeCap || false;
 
     if (isStandby && !wasStandby) {
       // Entering standby - clear spoke data and force GPU texture update
@@ -405,8 +399,19 @@ class render_webgpu {
   drawSpoke(spoke) {
     if (!this.data || !this.legend || !this.spokeProcessor) return;
 
+    if (spoke.bearing && spoke.angle) {
+      // Bearing and Angle are in terms of [0..spoke_count>, compute the
+      // difference which is the heading
+      const heading =
+        (spoke.bearing + this.spokesPerRevolution - spoke.angle) %
+        this.spokesPerRevolution;
+      this.lastHeading = (spoke.heading * 360) / this.spokesPerRevolution; // Convert to degrees
+    } else {
+      this.lastHeading = null;
+    }
+
     // Don't draw spokes in standby mode
-    if (this.standbyMode) {
+    if (this.powerMode != "transmit") {
       // Prepare to wait for full rotation when we exit standby (if processor needs it)
       if (this.spokeProcessor.needsRotationWait()) {
         this.waitForRotation = true;
@@ -572,7 +577,6 @@ class render_webgpu {
       Math.max(this.center_x, this.center_y) * RANGE_SCALE
     );
 
-    this.drawBackgroundCallback(this, "MAYARA (WebGPU)");
     this.#drawOverlay();
 
     if (this.ready) {
@@ -603,7 +607,7 @@ class render_webgpu {
   }
 
   #drawStandbyOverlay(ctx) {
-    // Draw STANDBY text with ON-TIME and TX-Time in center of PPI
+    // Draw OFF, STANDBY or PREPARING text with ON-TIME and TX-Time in center of PPI
     ctx.save();
 
     // Large STANDBY text
@@ -619,27 +623,27 @@ class render_webgpu {
     ctx.shadowOffsetY = 2;
 
     // Calculate vertical position based on what we're showing
-    const hasAnyHours = this.hasOnTimeCapability || this.hasTxTimeCapability;
-    const standbyY = hasAnyHours ? this.center_y - 40 : this.center_y;
+    const standbyY =
+      this.onTimeSeconds > 0 || this.txTimeSeconds > 0
+        ? this.center_y - 40
+        : this.center_y;
 
-    ctx.fillText("STANDBY", this.center_x, standbyY);
+    ctx.fillText(this.powerMode.toUpperCase(), this.center_x, standbyY);
 
     // Only show hours if capability exists
-    if (hasAnyHours) {
-      ctx.font = "bold 20px/1 Verdana, Geneva, sans-serif";
+    ctx.font = "bold 20px/1 Verdana, Geneva, sans-serif";
 
-      let yOffset = this.center_y + 10;
+    let yOffset = this.center_y + 10;
 
-      if (this.hasOnTimeCapability) {
-        const onTimeStr = this.#formatSecondsAsTimeZero(this.onTimeSeconds);
-        ctx.fillText("ON-TIME: " + onTimeStr, this.center_x, yOffset);
-        yOffset += 30;
-      }
+    if (this.onTimeSeconds > 0) {
+      const onTimeStr = this.#formatSecondsAsTimeZero(this.onTimeSeconds);
+      ctx.fillText("ON-TIME: " + onTimeStr, this.center_x, yOffset);
+      yOffset += 30;
+    }
 
-      if (this.hasTxTimeCapability) {
-        const txTimeStr = this.#formatSecondsAsTimeZero(this.txTimeSeconds);
-        ctx.fillText("TX-TIME: " + txTimeStr, this.center_x, yOffset);
-      }
+    if (this.txTimeSeconds > 0) {
+      const txTimeStr = this.#formatSecondsAsTimeZero(this.txTimeSeconds);
+      ctx.fillText("TX-TIME: " + txTimeStr, this.center_x, yOffset);
     }
 
     ctx.restore();
@@ -654,8 +658,7 @@ class render_webgpu {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.width, this.height);
 
-    // Draw standby overlay if in standby mode
-    if (this.standbyMode) {
+    if (this.powerMode != "transmit") {
       this.#drawStandbyOverlay(ctx);
     }
 
@@ -690,9 +693,22 @@ class render_webgpu {
     ctx.textBaseline = "middle";
 
     // Get heading mode and true heading for compass rose rotation
-    const headingMode = getHeadingMode();
-    const trueHeadingRad = getTrueHeading();
-    const trueHeadingDeg = (trueHeadingRad * 180) / Math.PI;
+    let headingMode = getHeadingMode();
+
+    let trueHeadingDeg = this.lastHeading;
+    if (!trueHeadingDeg) {
+      const trueHeadingRad = getTrueHeading();
+
+      trueHeadingDeg = (trueHeadingRad * 180) / Math.PI;
+    }
+    if (!trueHeadingDeg) {
+      headingMode = "headingUp";
+    } else {
+      this.headingRotation = radians;
+      if (this.ready) {
+        this.#updateUniforms();
+      }
+    }
 
     // In Heading Up mode: compass rose rotates so heading is at top
     // In North Up mode: compass rose stays fixed with 0 (N) at top
@@ -767,29 +783,6 @@ class render_webgpu {
     ]);
 
     this.device.queue.writeBuffer(this.uniformBuffer, 0, uniforms);
-
-    this.background_ctx.fillStyle = "lightgreen";
-    this.background_ctx.fillText(
-      "Beam length: " + this.beam_length + " px",
-      5,
-      40
-    );
-    this.background_ctx.fillText(
-      "Display range: " + formatRangeValue(is_metric(range), range),
-      5,
-      60
-    );
-    this.background_ctx.fillText(
-      "Radar range: " +
-        formatRangeValue(is_metric(this.actual_range), this.actual_range),
-      5,
-      80
-    );
-    this.background_ctx.fillText(
-      "Spoke length: " + (this.maxspokelength || 0) + " px",
-      5,
-      100
-    );
   }
 }
 

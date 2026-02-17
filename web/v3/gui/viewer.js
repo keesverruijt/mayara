@@ -13,7 +13,6 @@ import {
   registerRadarCallback,
   registerControlCallback,
   getOperatingTime,
-  hasTimeCapability,
 } from "./control.js";
 import { isStandaloneMode, detectMode } from "./api.js";
 import "./protobuf/protobuf.min.js";
@@ -37,6 +36,7 @@ var webSocket;
 var headingSocket;
 var RadarMessage;
 var renderer;
+var capabilities;
 var noTransmitAngles = Array();
 
 // Heading mode: "headingUp" or "northUp"
@@ -223,15 +223,11 @@ function subscribeToHeading() {
 }
 
 // Update renderer with current heading based on mode
-function updateHeadingDisplay() {
+function updateHeadingDisplay(mode) {
   if (renderer) {
-    if (headingMode === "northUp") {
-      // North Up: rotate radar by -heading so north is at top
-      renderer.setHeadingRotation(-trueHeading);
-    } else {
-      // Heading Up: no rotation, heading is always at top
-      renderer.setHeadingRotation(0);
-    }
+    return renderer.setHeadingMode(mode);
+  } else {
+    return mode;
   }
 }
 
@@ -263,7 +259,14 @@ function createHeadingModeToggle() {
       headingMode = "headingUp";
       toggleBtn.innerHTML = "H Up";
     }
-    updateHeadingDisplay();
+    headingMode = updateHeadingDisplay(headingMode);
+    if (headingMode === "headingUp") {
+      headingMode = "northUp";
+      toggleBtn.innerHTML = "N Up";
+    } else {
+      headingMode = "headingUp";
+      toggleBtn.innerHTML = "H Up";
+    }
     renderer.redrawCanvas();
   });
 
@@ -610,13 +613,10 @@ var pendingRadarData = null;
 //
 // r contains id, name, capabilities and spokeDataUrl
 function radarLoaded(r) {
-  let maxSpokeLength = r.capabilities.maxSpokeLength;
-  let spokesPerRevolution = r.capabilities.spokesPerRevolution;
+  capabilities = r.capabilities;
+  let maxSpokeLength = capabilities.maxSpokeLength;
+  let spokesPerRevolution = capabilities.spokesPerRevolution;
   let prev_angle = -1;
-
-  if (r === undefined || r.capabilities.controls === undefined) {
-    return;
-  }
 
   // If renderer isn't ready yet, store data and return
   // It will be processed when renderer.initPromise resolves
@@ -625,37 +625,8 @@ function radarLoaded(r) {
     return;
   }
 
-  renderer.setLegend(r.capabilities.legend);
+  renderer.setLegend(capabilities.legend);
   renderer.setSpokes(spokesPerRevolution, maxSpokeLength);
-
-  // Check initial power state from capabilities (radarState not populated yet at this point)
-  // Power control values: 0 = off, 1 = standby, 2 = transmit
-  const powerControl = r.capabilities.controls?.power;
-  const initialPowerValue = powerControl?.value ?? 1; // Default to standby if not present
-  const isStandby = initialPowerValue === 1 || initialPowerValue === 0;
-
-  if (isStandby) {
-    // Get operating time from capabilities and convert to seconds
-    const operatingTimeControl = r.capabilities.controls?.operatingTime;
-    const transmitTimeControl = r.capabilities.controls?.transmitTime;
-
-    const onTimeSeconds = convertCapabilityTimeToSeconds(
-      operatingTimeControl?.value || 0,
-      operatingTimeControl?.units || "s"
-    );
-    const txTimeSeconds = convertCapabilityTimeToSeconds(
-      transmitTimeControl?.value || 0,
-      transmitTimeControl?.units || "s"
-    );
-
-    renderer.setStandbyMode(
-      true,
-      onTimeSeconds,
-      txTimeSeconds,
-      !!operatingTimeControl,
-      !!transmitTimeControl
-    );
-  }
 
   // Use provided spokeDataUrl or construct SignalK stream URL
   let spokeDataUrl = r.spokeDataUrl;
@@ -722,19 +693,14 @@ function radarLoaded(r) {
 function controlUpdate(controlId, value) {
   // Handle power state changes
   if (controlId === "power") {
-    const powerValue = typeof value === "object" ? value.value : value;
-    const isStandby = powerValue === 1 || powerValue === 0;
     if (renderer) {
+      const powerState =
+        capabilities.controls[controlId].descriptions[
+          value.value
+        ].toLowerCase();
       const time = getOperatingTime();
-      const timeCap = hasTimeCapability();
       // getOperatingTime() always returns values in seconds
-      renderer.setStandbyMode(
-        isStandby,
-        time.onTime,
-        time.txTime,
-        timeCap.hasOnTime,
-        timeCap.hasTxTime
-      );
+      renderer.setPowerMode(powerState, time.onTime, time.txTime);
     }
   } else if (controlId == "range") {
     const range = typeof value === "object" ? value.value : value; // this is always in meters

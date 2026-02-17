@@ -50,7 +50,7 @@ div.myr_error.myr_vanish {
 div.myr_warning {
   background-color: rgb(60, 50, 10);
   color: rgb(255, 200, 100);
-  padding: 10px;
+  padding: 5px 10px;
   border-radius: 5px;
   margin: 10px 0;
 }

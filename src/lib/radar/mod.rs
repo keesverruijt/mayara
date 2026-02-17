@@ -850,8 +850,9 @@ pub(crate) struct CommonRadar {
     trails: TrailBuffer,
     spoke_message: Option<RadarMessage>,
     spoke_time: u64,
-    prev_angle: u16,
-    spoke_count: u16,
+    prev_angle: SpokeBearing,
+    spoke_count: u32,
+    max_spoke_length: u32,
 }
 
 impl CommonRadar {
@@ -877,6 +878,7 @@ impl CommonRadar {
             spoke_time: 0,
             prev_angle: 0,
             spoke_count: 0,
+            max_spoke_length: 0,
         };
 
         common
@@ -958,6 +960,8 @@ impl CommonRadar {
                 Some(self.spoke_time),
                 generic_spoke,
             );
+            self.spoke_count += 1;
+            self.max_spoke_length = max(self.max_spoke_length, spoke.data.len() as u32);
             self.trails.update_trails(&mut spoke, &self.info.legend); // Add any pixels representing the trails
             message.spokes.push(spoke);
 
@@ -970,8 +974,15 @@ impl CommonRadar {
                     .controls
                     .set_value(&ControlId::Spokes, Value::Number(self.spoke_count.into()))
                     .unwrap();
-
+                self.info
+                    .controls
+                    .set_value(
+                        &ControlId::SpokeLength,
+                        Value::Number(self.max_spoke_length.into()),
+                    )
+                    .unwrap();
                 self.spoke_count = 0;
+                self.max_spoke_length = 0;
             }
             if ((self.prev_angle + 1) % self.info.spokes_per_revolution) != angle {
                 let missing_spokes =

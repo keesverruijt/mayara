@@ -52,7 +52,7 @@ div.myr_power_buttons {
 .myr_power_button {
   flex: 1;
   min-width: 0;
-  padding: 10px 6px;
+  padding: 4px 6px;
   font-size: 13px;
   font-weight: bold;
   border: 2px solid #444;
@@ -98,7 +98,7 @@ div.myr_range_buttons {
 .myr_range_button {
   flex: 1;
   min-width: 0;
-  padding: 10px 6px;
+  padding: 4px 6px;
   font-size: 13px;
   font-weight: bold;
   border: 2px solid #446;
@@ -198,7 +198,7 @@ div.myr_range_buttons {
   font-size: 13px;
   font-weight: bold;
   color: rgb(100, 200, 180);
-  padding: 8px 4px;
+  padding: 4px 6px;
   border-bottom: 1px solid rgba(100, 200, 180, 0.3);
   margin-bottom: 8px;
 }
@@ -297,7 +297,7 @@ div.myr_range_buttons {
 }
 
 .myr_toggle_button {
-  padding: 8px 16px;
+  padding: 4px 6px;
   font-size: 13px;
   font-weight: bold;
   border: 2px solid #444;
@@ -336,7 +336,7 @@ div.myr_range_buttons {
 .myr_enum_button {
   flex: 1;
   min-width: 50px;
-  padding: 8px 6px;
+  padding: 4px 6px;
   font-size: 12px;
   font-weight: bold;
   border: 2px solid #446;
@@ -395,7 +395,7 @@ div.myr_range_buttons {
 .myr_mode_button {
   flex: 1 1 auto;
   min-width: 60px;
-  padding: 8px 10px;
+  padding: 4px 6px;
   font-size: 12px;
   font-weight: bold;
   border: 2px solid #454;
@@ -523,7 +523,7 @@ div.myr_range_buttons {
 
 .myr_ntz_angle input[type="number"] {
   width: 100%;
-  padding: 6px 8px;
+  padding: 4px 6px;
   font-size: 14px;
   background-color: #224;
   border: 1px solid #446;
@@ -550,7 +550,7 @@ div.myr_range_buttons {
 
 .myr_playback_badge {
   display: inline-block;
-  padding: 4px 10px;
+  padding: 4px 6px;
   font-size: 11px;
   font-weight: bold;
   background-color: #4a3000;
