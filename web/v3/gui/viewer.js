@@ -10,9 +10,12 @@ export {
 
 import {
   loadRadar,
+  getControl,
   registerRadarCallback,
   registerControlCallback,
   getOperatingTime,
+  getUserName,
+  togglePower,
 } from "./control.js";
 import { isStandaloneMode, detectMode } from "./api.js";
 import "./protobuf/protobuf.min.js";
@@ -271,6 +274,62 @@ function createHeadingModeToggle() {
   });
 
   container.appendChild(toggleBtn);
+}
+
+// Create the power lozenge on the viewer
+function createPowerLozenge() {
+  const container = document.querySelector(".myr_ppi");
+  if (!container) return;
+
+  const lozenge = document.createElement("div");
+  lozenge.id = "myr_power_lozenge";
+  lozenge.className = "myr_power_lozenge myr_power_off";
+  lozenge.title = "Click power icon to toggle radar power";
+
+  // Power button with SVG icon
+  const powerBtn = document.createElement("button");
+  powerBtn.className = "myr_power_lozenge_button";
+  powerBtn.innerHTML = `<svg class="myr_power_icon" viewBox="0 0 24 24">
+    <path d="M12 3v9"/>
+    <path d="M18.4 6.6a9 9 0 1 1-12.8 0"/>
+  </svg>`;
+  powerBtn.addEventListener("click", () => {
+    togglePower();
+  });
+
+  // User name display
+  const nameDisplay = document.createElement("div");
+  nameDisplay.id = "myr_power_lozenge_name";
+  nameDisplay.className = "myr_power_lozenge_name";
+  nameDisplay.textContent = getUserName() || "Radar";
+
+  lozenge.appendChild(powerBtn);
+  lozenge.appendChild(nameDisplay);
+  container.appendChild(lozenge);
+}
+
+// Update the power lozenge state
+function updatePowerLozenge(powerState, userName) {
+  const lozenge = document.getElementById("myr_power_lozenge");
+  if (!lozenge) return;
+
+  // Update power state class
+  lozenge.classList.remove("myr_power_transmit", "myr_power_standby", "myr_power_off");
+  if (powerState === "transmit") {
+    lozenge.classList.add("myr_power_transmit");
+  } else if (powerState === "standby") {
+    lozenge.classList.add("myr_power_standby");
+  } else {
+    lozenge.classList.add("myr_power_off");
+  }
+
+  // Update user name if provided
+  if (userName !== undefined) {
+    const nameDisplay = document.getElementById("myr_power_lozenge_name");
+    if (nameDisplay) {
+      nameDisplay.textContent = userName || "Radar";
+    }
+  }
 }
 
 // Check WebGPU and show error if not available
@@ -695,9 +754,7 @@ function controlUpdate(controlId, value) {
   if (controlId === "power") {
     if (renderer) {
       const powerState =
-        capabilities.controls[controlId].descriptions[
-          value.value
-        ].toLowerCase();
+        getControl(controlId).descriptions[value.value].toLowerCase();
       const time = getOperatingTime();
       // getOperatingTime() always returns values in seconds
       renderer.setPowerMode(powerState, time.onTime, time.txTime);

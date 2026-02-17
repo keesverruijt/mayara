@@ -208,20 +208,16 @@ function mapPowerValue(value) {
  *
  * @param {string} radarId - The radar ID
  * @param {string} controlId - The control ID (e.g., "power", "gain", "range")
- * @param {any} value - The value to set (type depends on control)
- * @param {string} [units] - Optional units string (e.g., "kn", "deg", "h")
+ * @param {any} body - The value to set (type depends on control)
  * @returns {Promise<boolean>} True if successful
  */
-export async function setControl(radarId, controlId, value, units) {
+export async function setControl(radarId, controlId, body) {
   await detectMode();
 
   const url = `${getRadarsUrl()}/${radarId}/controls/${controlId}`;
-  const body = { value };
-  if (units) {
-    body.units = units;
-  }
+  const bodyStr = JSON.stringify(body);
 
-  console.log(`Setting control: PUT ${url}`, body);
+  console.log(`Setting control: PUT ${url}`, bodyStr);
 
   try {
     const response = await fetch(url, {
@@ -229,7 +225,7 @@ export async function setControl(radarId, controlId, value, units) {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(body),
+      body: bodyStr,
     });
 
     if (response.ok) {

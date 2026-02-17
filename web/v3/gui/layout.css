@@ -85,3 +85,89 @@ div.myr_ppi {
 .myr_heading_toggle:active {
   transform: scale(0.95);
 }
+
+/* ============================================
+   Power Lozenge - Status indicator on viewer
+   ============================================ */
+
+.myr_power_lozenge {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  display: flex;
+  align-items: stretch;
+  height: 36px;
+  background: rgba(0, 0, 0, 0.7);
+  border: 2px solid #446;
+  border-radius: 18px;
+  font-family: Verdana, Geneva, sans-serif;
+  font-size: 13px;
+  font-weight: bold;
+  z-index: 100;
+  overflow: hidden;
+  user-select: none;
+}
+
+.myr_power_lozenge_button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  padding: 0;
+  background: #222;
+  border: none;
+  border-right: 1px solid #446;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.myr_power_lozenge_button:hover {
+  background: #333;
+}
+
+.myr_power_lozenge_button:active {
+  transform: scale(0.95);
+}
+
+/* Power icon SVG */
+.myr_power_icon {
+  width: 20px;
+  height: 20px;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  fill: none;
+}
+
+/* Power states */
+.myr_power_lozenge.myr_power_transmit .myr_power_lozenge_button {
+  background: #1a4d1a;
+}
+
+.myr_power_lozenge.myr_power_transmit .myr_power_icon {
+  stroke: #4dff4d;
+}
+
+.myr_power_lozenge.myr_power_standby .myr_power_lozenge_button {
+  background: #4d4d1a;
+}
+
+.myr_power_lozenge.myr_power_standby .myr_power_icon {
+  stroke: #ffff4d;
+}
+
+.myr_power_lozenge.myr_power_off .myr_power_lozenge_button {
+  background: #2a2a2a;
+}
+
+.myr_power_lozenge.myr_power_off .myr_power_icon {
+  stroke: #666;
+}
+
+/* User name display */
+.myr_power_lozenge_name {
+  display: flex;
+  align-items: center;
+  padding: 0 14px 0 10px;
+  color: #8cf;
+  white-space: nowrap;
+}

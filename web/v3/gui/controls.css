@@ -430,6 +430,20 @@ div.myr_range_buttons {
   border-color: #334;
 }
 
+/* Stacked info control - value below name */
+.myr_info_stacked {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background-color: #0a0a12;
+  border-color: #334;
+}
+
+.myr_info_stacked .myr_control_label {
+  font-size: 11px;
+  color: #888;
+}
+
 .myr_info_value {
   font-size: 13px;
   color: rgb(124, 124, 237);
