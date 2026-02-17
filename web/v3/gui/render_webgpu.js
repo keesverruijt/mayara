@@ -220,15 +220,15 @@ class render_webgpu {
 
   setStandbyMode(
     isStandby,
-    onTimeHours,
-    txTimeHours,
+    onTimeSeconds,
+    txTimeSeconds,
     hasOnTimeCap,
     hasTxTimeCap
   ) {
     const wasStandby = this.standbyMode;
     this.standbyMode = isStandby;
-    this.onTimeHours = onTimeHours || 0;
-    this.txTimeHours = txTimeHours || 0;
+    this.onTimeSeconds = onTimeSeconds || 0;
+    this.txTimeSeconds = txTimeSeconds || 0;
     this.hasOnTimeCapability = hasOnTimeCap || false;
     this.hasTxTimeCapability = hasTxTimeCap || false;
 
@@ -585,9 +585,10 @@ class render_webgpu {
     }
   }
 
-  // Format hours as TimeZero-style DAYS.HH:MM:SS
-  #formatHoursAsTimeZero(totalHours) {
-    const totalSeconds = Math.floor(totalHours * 3600);
+  // Format time as TimeZero-style DAYS.HH:MM:SS
+  // Accepts value in seconds
+  #formatSecondsAsTimeZero(totalSeconds) {
+    totalSeconds = Math.floor(totalSeconds);
     const days = Math.floor(totalSeconds / 86400);
     const remainingAfterDays = totalSeconds % 86400;
     const hours = Math.floor(remainingAfterDays / 3600);
@@ -630,13 +631,13 @@ class render_webgpu {
       let yOffset = this.center_y + 10;
 
       if (this.hasOnTimeCapability) {
-        const onTimeStr = this.#formatHoursAsTimeZero(this.onTimeHours);
+        const onTimeStr = this.#formatSecondsAsTimeZero(this.onTimeSeconds);
         ctx.fillText("ON-TIME: " + onTimeStr, this.center_x, yOffset);
         yOffset += 30;
       }
 
       if (this.hasTxTimeCapability) {
-        const txTimeStr = this.#formatHoursAsTimeZero(this.txTimeHours);
+        const txTimeStr = this.#formatSecondsAsTimeZero(this.txTimeSeconds);
         ctx.fillText("TX-TIME: " + txTimeStr, this.center_x, yOffset);
       }
     }

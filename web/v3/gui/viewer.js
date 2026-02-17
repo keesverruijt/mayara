@@ -21,6 +21,19 @@ import "./protobuf/protobuf.min.js";
 
 import { render_webgpu } from "./render_webgpu.js";
 
+// Convert capability time value to seconds
+function convertCapabilityTimeToSeconds(value, units) {
+  switch (units) {
+    case "h":
+      return value * 3600;
+    case "min":
+      return value * 60;
+    case "s":
+    default:
+      return value;
+  }
+}
+
 var webSocket;
 var headingSocket;
 var RadarMessage;
@@ -623,14 +636,23 @@ function radarLoaded(r) {
   const isStandby = initialPowerValue === 1 || initialPowerValue === 0;
 
   if (isStandby) {
-    // Get operating time from capabilities
+    // Get operating time from capabilities and convert to seconds
     const operatingTimeControl = r.capabilities.controls?.operatingTime;
     const transmitTimeControl = r.capabilities.controls?.transmitTime;
 
+    const onTimeSeconds = convertCapabilityTimeToSeconds(
+      operatingTimeControl?.value || 0,
+      operatingTimeControl?.units || "s"
+    );
+    const txTimeSeconds = convertCapabilityTimeToSeconds(
+      transmitTimeControl?.value || 0,
+      transmitTimeControl?.units || "s"
+    );
+
     renderer.setStandbyMode(
       true,
-      operatingTimeControl?.value || 0,
-      transmitTimeControl?.value || 0,
+      onTimeSeconds,
+      txTimeSeconds,
       !!operatingTimeControl,
       !!transmitTimeControl
     );
@@ -718,6 +740,7 @@ function controlUpdate(controlId, value) {
     if (renderer) {
       const time = getOperatingTime();
       const timeCap = hasTimeCapability();
+      // getOperatingTime() always returns values in seconds
       renderer.setStandbyMode(
         isStandby,
         time.onTime,

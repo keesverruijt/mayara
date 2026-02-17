@@ -880,6 +880,157 @@ function getControlValue(controlId) {
   return radarState[controlId];
 }
 
+// Unit conversion constants (SI to user-friendly units)
+const UNIT_CONVERSIONS = {
+  // Speed: m/s to knots
+  "m/s": { displayUnit: "kn", factor: 1.94384, decimals: 1 },
+  // Angle: radians to degrees
+  rad: { displayUnit: "°", factor: 180 / Math.PI, decimals: 1 },
+  // Angular velocity: rad/s to degrees/s
+  "rad/s": { displayUnit: "°/s", factor: 180 / Math.PI, decimals: 1 },
+};
+
+// Preferred display units for the GUI (pass-through)
+const DISPLAY_UNITS = {
+  kn: "kn",
+  deg: "°",
+  "°": "°",
+  "°/s": "°/s",
+  rpm: "rpm",
+  h: "h",
+  min: "min",
+  s: "s",
+  m: "m",
+  km: "km",
+  nm: "nm",
+};
+
+/**
+ * Convert time value to best display unit (h, min, or s)
+ * @param {number} value - Time value
+ * @param {string} units - Original unit (s, min, h)
+ * @returns {{ value: number, units: string, originalUnits: string }}
+ */
+function convertTimeToDisplayUnits(value, units) {
+  // Convert to seconds first
+  let totalSeconds;
+  switch (units) {
+    case "h":
+      totalSeconds = value * 3600;
+      break;
+    case "min":
+      totalSeconds = value * 60;
+      break;
+    case "s":
+    default:
+      totalSeconds = value;
+      break;
+  }
+
+  // Choose best display unit
+  if (totalSeconds % 3600 === 0 && totalSeconds >= 3600) {
+    return { value: totalSeconds / 3600, units: "h", originalUnits: units };
+  } else if (totalSeconds % 60 === 0 && totalSeconds >= 60) {
+    return { value: totalSeconds / 60, units: "min", originalUnits: units };
+  } else {
+    return { value: totalSeconds, units: "s", originalUnits: units };
+  }
+}
+
+/**
+ * Convert a value from SI units to user-friendly display units
+ * @param {number} value - The value to convert
+ * @param {string} units - The SI unit string from the server
+ * @returns {{ value: number, units: string, originalUnits: string }} - Converted value and display unit
+ */
+function convertToDisplayUnits(value, units) {
+  if (!units || value === null || value === undefined) {
+    return { value, units: units || "", originalUnits: units || "" };
+  }
+
+  // Handle time units specially
+  if (units === "s" || units === "min" || units === "h") {
+    return convertTimeToDisplayUnits(value, units);
+  }
+
+  const conversion = UNIT_CONVERSIONS[units];
+  if (conversion) {
+    const convertedValue =
+      Math.round(
+        value * conversion.factor * Math.pow(10, conversion.decimals)
+      ) / Math.pow(10, conversion.decimals);
+    return {
+      value: convertedValue,
+      units: conversion.displayUnit,
+      originalUnits: units,
+    };
+  }
+
+  // No conversion needed, return as-is
+  return { value, units: DISPLAY_UNITS[units] || units, originalUnits: units };
+}
+
+/**
+ * Convert a value from display units back to server units
+ * @param {number} value - The display value
+ * @param {string} displayUnits - The display unit string
+ * @param {string} serverUnits - The original server unit string
+ * @returns {{ value: number, units: string }} - Value and units to send to server
+ */
+function convertToServerUnits(value, displayUnits, serverUnits) {
+  if (!serverUnits || value === null || value === undefined) {
+    return { value, units: displayUnits };
+  }
+
+  // For time: send in display units with units field
+  if (displayUnits === "h" || displayUnits === "min" || displayUnits === "s") {
+    return { value, units: displayUnits };
+  }
+
+  // For other converted units, send in display units with units field
+  const conversion = UNIT_CONVERSIONS[serverUnits];
+  if (conversion && conversion.displayUnit === displayUnits) {
+    return { value, units: displayUnits };
+  }
+
+  return { value, units: displayUnits || serverUnits };
+}
+
+/**
+ * Format time value for display (DAYS.HH:MM:SS format)
+ * @param {number} value - Time value
+ * @param {string} units - Unit string (s, min, h)
+ * @returns {string} - Formatted time string
+ */
+function formatTimeValue(value, units) {
+  // Convert to seconds first
+  let totalSeconds;
+  switch (units) {
+    case "h":
+      totalSeconds = Math.floor(value * 3600);
+      break;
+    case "min":
+      totalSeconds = Math.floor(value * 60);
+      break;
+    case "s":
+    default:
+      totalSeconds = Math.floor(value);
+      break;
+  }
+
+  const days = Math.floor(totalSeconds / 86400);
+  const remainingAfterDays = totalSeconds % 86400;
+  const hours = Math.floor(remainingAfterDays / 3600);
+  const minutes = Math.floor((remainingAfterDays % 3600) / 60);
+  const seconds = remainingAfterDays % 60;
+
+  const hh = hours.toString().padStart(2, "0");
+  const mm = minutes.toString().padStart(2, "0");
+  const ss = seconds.toString().padStart(2, "0");
+
+  return `${days}.${hh}:${mm}:${ss}`;
+}
+
 function formatNumberValue(value, control) {
   // Handle compound values (objects with mode/value)
   let numValue = value;
@@ -890,20 +1041,39 @@ function formatNumberValue(value, control) {
     numValue = value.value !== undefined ? value.value : 0;
   }
 
-  const unit = control?.range?.unit || "";
-  if (unit === "percent") {
-    return `${numValue}%`;
+  // Check for units in control definition
+  const units = control?.units || control?.range?.unit || "";
+
+  // Skip range control - it has its own formatting
+  if (control?.controlId === "range") {
+    return formatRange(numValue);
   }
-  return unit ? `${numValue} ${unit}` : String(numValue);
+
+  // Convert to display units if needed
+  const converted = convertToDisplayUnits(numValue, units);
+
+  if (units === "percent" || converted.units === "percent") {
+    return `${converted.value}%`;
+  }
+
+  return converted.units
+    ? `${converted.value} ${converted.units}`
+    : String(converted.value);
 }
 
 function formatInfoValue(value, control) {
-  if (control.units && control.units === "s") {
-    if (value % 3600 == 0) {
-      return String(value / 3600) + " h";
-    }
+  const units = control?.units || "";
+
+  // Time values get special formatting
+  if (units === "s" || units === "min" || units === "h") {
+    return formatTimeValue(value, units);
   }
-  return String(value);
+
+  // Convert other units
+  const converted = convertToDisplayUnits(value, units);
+  return converted.units
+    ? `${converted.value} ${converted.units}`
+    : String(converted.value);
 }
 
 function formatRange(meters) {
@@ -935,7 +1105,7 @@ function updateRangeDisplay() {
 // Control Commands
 // ============================================================================
 
-async function sendControlValue(controlId, value) {
+async function sendControlValue(controlId, value, displayUnits) {
   if (!radarId) return;
 
   // Don't send control commands to playback radars
@@ -944,7 +1114,24 @@ async function sendControlValue(controlId, value) {
     return;
   }
 
-  console.log(`Sending control: ${controlId} = ${JSON.stringify(value)}`);
+  // Get control definition to check if it has units
+  const control = capabilities?.controls?.[controlId];
+  const serverUnits = control?.units;
+
+  // Convert to server units if control has units defined
+  let sendValue = value;
+  let sendUnits = undefined;
+  if (serverUnits && displayUnits) {
+    const converted = convertToServerUnits(value, displayUnits, serverUnits);
+    sendValue = converted.value;
+    sendUnits = converted.units;
+  }
+
+  console.log(
+    `Sending control: ${controlId} = ${JSON.stringify(sendValue)}${
+      sendUnits ? ` (${sendUnits})` : ""
+    }`
+  );
 
   // Mark as pending to prevent polling from overwriting
   pendingControls[controlId] = { value, timestamp: Date.now() };
@@ -952,7 +1139,7 @@ async function sendControlValue(controlId, value) {
   // Optimistic UI update immediately
   updateControlUI(controlId, value);
 
-  const success = await setControl(radarId, controlId, value);
+  const success = await setControl(radarId, controlId, sendValue, sendUnits);
 
   if (success) {
     // Notify callbacks (capabilities.controls is a HashMap)
@@ -1522,13 +1709,43 @@ function getPowerState() {
 }
 
 /**
- * Get operating time from radar state
- * @returns {{ onTime: number, txTime: number }} time in seconds
+ * Convert time value to seconds
+ * @param {number} value - Time value
+ * @param {string} units - Unit string (s, min, h)
+ * @returns {number} - Value in seconds
+ */
+function convertTimeToSeconds(value, units) {
+  switch (units) {
+    case "h":
+      return value * 3600;
+    case "min":
+      return value * 60;
+    case "s":
+    default:
+      return value;
+  }
+}
+
+/**
+ * Get operating time from radar state (always in seconds)
+ * @returns {{ onTime: number, txTime: number }}
  */
 function getOperatingTime() {
+  const controls = capabilities?.controls || {};
+  const onTimeUnits =
+    radarState?.operatingTime?.units || controls?.operatingTime?.units || "s";
+  const txTimeUnits =
+    radarState?.transmitTime?.units || controls?.transmitTime?.units || "s";
+
   return {
-    onTime: radarState?.operatingTime?.value || 0,
-    txTime: radarState?.transmitTime?.value || 0,
+    onTime: convertTimeToSeconds(
+      radarState?.operatingTime?.value || 0,
+      onTimeUnits
+    ),
+    txTime: convertTimeToSeconds(
+      radarState?.transmitTime?.value || 0,
+      txTimeUnits
+    ),
   };
 }
 

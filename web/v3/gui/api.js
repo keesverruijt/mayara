@@ -204,18 +204,22 @@ function mapPowerValue(value) {
  *
  * SignalK Radar API v5 format:
  *   PUT /signalk/v2/api/vessels/self/radars/{radarId}/controls/{controlId}
- *   Body: { value: ... }
+ *   Body: { value: ..., units: ... }
  *
  * @param {string} radarId - The radar ID
  * @param {string} controlId - The control ID (e.g., "power", "gain", "range")
  * @param {any} value - The value to set (type depends on control)
+ * @param {string} [units] - Optional units string (e.g., "kn", "deg", "h")
  * @returns {Promise<boolean>} True if successful
  */
-export async function setControl(radarId, controlId, value) {
+export async function setControl(radarId, controlId, value, units) {
   await detectMode();
 
   const url = `${getRadarsUrl()}/${radarId}/controls/${controlId}`;
   const body = { value };
+  if (units) {
+    body.units = units;
+  }
 
   console.log(`Setting control: PUT ${url}`, body);
 
