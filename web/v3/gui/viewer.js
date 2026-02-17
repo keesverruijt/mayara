@@ -13,7 +13,6 @@ import {
   registerRadarCallback,
   registerControlCallback,
   setCurrentRange,
-  getPowerState,
   getOperatingTime,
   hasTimeCapability,
 } from "./control.js";
@@ -617,18 +616,23 @@ function radarLoaded(r) {
   renderer.setLegend(r.capabilities.legend);
   renderer.setSpokes(spokesPerRevolution, maxSpokeLength);
 
-  // Check initial power state and set standby mode if needed
-  const initialPowerState = getPowerState();
-  const isStandby = initialPowerState === 1 || initialPowerState === 0;
+  // Check initial power state from capabilities (radarState not populated yet at this point)
+  // Power control values: 0 = off, 1 = standby, 2 = transmit
+  const powerControl = r.capabilities.controls?.power;
+  const initialPowerValue = powerControl?.value ?? 1; // Default to standby if not present
+  const isStandby = initialPowerValue === 1 || initialPowerValue === 0;
+
   if (isStandby) {
-    const time = getOperatingTime();
-    const timeCap = hasTimeCapability();
+    // Get operating time from capabilities
+    const operatingTimeControl = r.capabilities.controls?.operatingTime;
+    const transmitTimeControl = r.capabilities.controls?.transmitTime;
+
     renderer.setStandbyMode(
       true,
-      time.onTime,
-      time.txTime,
-      timeCap.hasOnTime,
-      timeCap.hasTxTime
+      operatingTimeControl?.value || 0,
+      transmitTimeControl?.value || 0,
+      !!operatingTimeControl,
+      !!transmitTimeControl
     );
   }
 
@@ -706,26 +710,11 @@ function radarLoaded(r) {
   };
 }
 
-function controlUpdate(control, controlValue) {
-  if (control && control.name == "Range") {
-    let range = parseFloat(controlValue.value);
-    if (renderer && renderer.setRange) {
-      renderer.setRange(range);
-    }
-  }
-  if (control && control.name && control.name.startsWith("No Transmit")) {
-    let value = parseFloat(controlValue.value);
-    let idx = extractNoTxZone(control.name);
-    let start_or_end = extractStartOrEnd(control.name);
-    if (controlValue.enabled) {
-      noTransmitAngles[idx][start_or_end] = value;
-    } else {
-      noTransmitAngles[idx] = null;
-    }
-  }
+function controlUpdate(controlId, value) {
   // Handle power state changes
-  if (controlValue && controlValue.id === "power") {
-    const isStandby = controlValue.value === 1 || controlValue.value === 0;
+  if (controlId === "power") {
+    const powerValue = typeof value === "object" ? value.value : value;
+    const isStandby = powerValue === 1 || powerValue === 0;
     if (renderer) {
       const time = getOperatingTime();
       const timeCap = hasTimeCapability();
@@ -738,19 +727,6 @@ function controlUpdate(control, controlValue) {
       );
     }
   }
-}
-
-function extractNoTxZone(name) {
-  const re = /(\d+)/;
-  let match = name.match(re);
-  if (match) {
-    return parseInt(match[1]);
-  }
-  return 0;
-}
-
-function extractStartOrEnd(name) {
-  return name.includes("start") ? 0 : 1;
 }
 
 function drawBackground(obj, txt) {

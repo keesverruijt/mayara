@@ -254,10 +254,14 @@ class render_webgpu {
       this.spokeProcessor.reset();
     }
 
-    // Wait for full rotation to flush any buffered stale spokes
-    this.waitForRotation = true;
-    this.waitStartAngle = -1;
-    this.seenAngleWrap = false;
+    // Wait for full rotation to flush any buffered stale spokes (if processor needs it)
+    if (this.spokeProcessor && this.spokeProcessor.needsRotationWait()) {
+      this.waitForRotation = true;
+      this.waitStartAngle = -1;
+      this.seenAngleWrap = false;
+    } else {
+      this.waitForRotation = false;
+    }
 
     // Upload cleared data to GPU and render
     if (this.ready && this.polarTexture && this.data) {
@@ -403,10 +407,12 @@ class render_webgpu {
 
     // Don't draw spokes in standby mode
     if (this.standbyMode) {
-      // Prepare to wait for full rotation when we exit standby
-      this.waitForRotation = true;
-      this.waitStartAngle = -1;
-      this.seenAngleWrap = false;
+      // Prepare to wait for full rotation when we exit standby (if processor needs it)
+      if (this.spokeProcessor.needsRotationWait()) {
+        this.waitForRotation = true;
+        this.waitStartAngle = -1;
+        this.seenAngleWrap = false;
+      }
       return;
     }
 
@@ -475,7 +481,7 @@ class render_webgpu {
 
       // Only wait for full rotation on actual range CHANGE, not initial range setting
       // This prevents ghost spokes from buffered old-range data
-      if (!wasInitialRange) {
+      if (!wasInitialRange && this.spokeProcessor.needsRotationWait()) {
         this.waitForRotation = true;
         this.waitStartAngle = -1;
         this.seenAngleWrap = false;

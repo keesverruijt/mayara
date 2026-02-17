@@ -45,11 +45,12 @@ class SpokeProcessor {
   }
 
   /**
-   * Check if processor is ready to display data
+   * Check if processor needs to wait for a full rotation before displaying
+   * after standby/range change (to flush stale buffered spokes)
    * @returns {boolean}
    */
-  isReadyToDisplay() {
-    return true; // Override in subclasses if needed
+  needsRotationWait() {
+    return false; // Override in subclasses if needed
   }
 
   /**
@@ -102,8 +103,8 @@ class SmoothingSpokeProcessor extends SpokeProcessor {
     this.fillRotations = 4; // Number of rotations to use neighbor enhancement
   }
 
-  isReadyToDisplay() {
-    // Can display immediately, but filtering improves after fillRotations
+  needsRotationWait() {
+    // Smoothing needs to wait for a full rotation to flush stale buffered spokes
     return true;
   }
 
