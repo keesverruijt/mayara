@@ -153,14 +153,14 @@ window.onload = async function () {
     loadRadar(id);
   }
 
-  // Ensure mode is detected before checking isStandaloneMode()
-  await detectMode();
-
   // Subscribe to SignalK heading delta (only in SignalK mode)
   subscribeToHeading();
 
   // Create heading mode toggle button
   createHeadingModeToggle();
+
+  // Create power lozenge
+  createPowerLozenge();
 
   window.onresize = function () {
     renderer.redrawCanvas();
@@ -314,7 +314,11 @@ function updatePowerLozenge(powerState, userName) {
   if (!lozenge) return;
 
   // Update power state class
-  lozenge.classList.remove("myr_power_transmit", "myr_power_standby", "myr_power_off");
+  lozenge.classList.remove(
+    "myr_power_transmit",
+    "myr_power_standby",
+    "myr_power_off"
+  );
   if (powerState === "transmit") {
     lozenge.classList.add("myr_power_transmit");
   } else if (powerState === "standby") {
@@ -752,14 +756,19 @@ function radarLoaded(r) {
 function controlUpdate(controlId, value) {
   // Handle power state changes
   if (controlId === "power") {
+    const powerState =
+      getControl(controlId).descriptions[value.value].toLowerCase();
     if (renderer) {
-      const powerState =
-        getControl(controlId).descriptions[value.value].toLowerCase();
       const time = getOperatingTime();
       // getOperatingTime() always returns values in seconds
       renderer.setPowerMode(powerState, time.onTime, time.txTime);
     }
-  } else if (controlId == "range") {
+    // Update power lozenge
+    updatePowerLozenge(powerState);
+  } else if (controlId === "userName") {
+    // Update power lozenge with new user name
+    updatePowerLozenge(undefined, value.value);
+  } else if (controlId === "range") {
     const range = typeof value === "object" ? value.value : value; // this is always in meters
     renderer.setRange(range);
   }

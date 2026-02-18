@@ -546,13 +546,13 @@ impl SharedControls {
         let control = {
             let mut locked = self.controls.write().unwrap();
             if let Some(control) = locked.controls.get_mut(control_id) {
-                Ok(control
+                control
                     .set(value.into(), None, auto, enabled)?
-                    .map(|_| control.clone()))
+                    .map(|_| control.clone())
             } else {
-                Err(ControlError::NotSupported(*control_id))
+                return Err(ControlError::NotSupported(*control_id));
             }
-        }?;
+        };
 
         // If the control changed, control.set returned Some(control)
         if let Some(control) = control {
@@ -914,7 +914,7 @@ pub struct ControlValue {
     pub id: ControlId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing)]
     pub units: Option<Units>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto: Option<bool>,
@@ -1047,7 +1047,7 @@ pub struct RadarControlValue {
     pub path: String, // "radars.{id}.controls.{control_id}"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing)]
     pub units: Option<Units>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto: Option<bool>,
@@ -1599,7 +1599,7 @@ impl Control {
             .wire_units
             .map(|u| u.to_si(value).1)
             .unwrap_or(value);
-        log::info!(
+        log::trace!(
             "value {} {} -> {} {}",
             wire_value,
             self.item.wire_units.unwrap_or(Units::None),
@@ -1649,7 +1649,7 @@ impl Control {
 
         if let Some(av) = auto_value {
             let si = self.item.wire_units.map(|u| u.to_si(av).1).unwrap_or(av);
-            log::info!(
+            log::trace!(
                 "auto value {} {} -> {} {}",
                 av,
                 self.item.wire_units.unwrap_or(Units::None),

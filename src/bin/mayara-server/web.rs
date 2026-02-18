@@ -32,8 +32,8 @@ use tokio_graceful_shutdown::SubsystemHandle;
 use utoipa::ToSchema;
 
 mod axum_fix;
+mod signalk_v1;
 mod v1;
-mod v3;
 
 use axum_fix::{Message, WebSocket, WebSocketUpgrade};
 use mayara::{
@@ -91,7 +91,7 @@ impl Web {
 
         let router = Router::new().route("/", get(endpoints));
         let router = v1::routes(router); //.route_service("/v1", generated_assets_v1);
-        let router = v3::routes(router); //.route_service("/v3", generated_assets_v3);
+        let router = signalk_v1::routes(router); //.route_service("/v3", generated_assets_v3);
 
         let app = router
             .fallback_service(serve_assets)
@@ -158,7 +158,7 @@ struct Server {
 }
 
 async fn endpoints(State(state): State<Web>, headers: hyper::header::HeaderMap) -> Json<Endpoints> {
-    log::debug!("endpoints: headers: {:?}", headers);
+    log::info!("endpoints: headers: {:?}", headers);
     let host: String = match headers.get(axum::http::header::HOST) {
         Some(host) => host.to_str().unwrap_or("localhost").to_string(),
         None => "localhost".to_string(),
@@ -182,17 +182,9 @@ async fn endpoints(State(state): State<Web>, headers: hyper::header::HeaderMap) 
     endpoints.endpoints.insert(
         "v1".to_string(),
         Endpoint {
-            version: "1.0.0".to_string(),
-            http: format!("http://{}/v1/api/", host),
-            ws: format!("ws://{}/v1/api/stream", host),
-        },
-    );
-    endpoints.endpoints.insert(
-        "v3".to_string(),
-        Endpoint {
             version: "3.0.0".to_string(),
-            http: format!("http://{}/v3/api/", host),
-            ws: format!("ws://{}/v3/api/stream", host),
+            http: format!("http://{}/signalk/v1/api/", host),
+            ws: format!("ws://{}/signalk/v1/api/stream", host),
         },
     );
 
@@ -201,7 +193,7 @@ async fn endpoints(State(state): State<Web>, headers: hyper::header::HeaderMap) 
 
 #[endpoint(
     method = "GET",
-    path = "/v3/api/resource/openapi.json",
+    path = "/signalk/v1/api/resource/openapi.json",
     description = "OpenAPI spec"
 )]
 async fn openapi(State(_state): State<Web>) -> impl IntoResponse {

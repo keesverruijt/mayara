@@ -100,7 +100,7 @@ impl Command {
             if let Some(value) = control.value {
                 let deg = Units::Degrees.from_si(Units::Radians, value);
                 let deg = (deg * 10.) as i32;
-                log::info!(
+                log::trace!(
                     "Convert other angle from {} rad to {} decidegrees",
                     value,
                     deg
@@ -147,7 +147,7 @@ impl CommandSender for Command {
     ) -> Result<(), RadarError> {
         let mut cmd = Vec::with_capacity(12);
 
-        log::info!("Command handling request {:?}", cv);
+        log::debug!("Command handling request {:?}", cv);
 
         let control = controls.get(&cv.id).unwrap();
         let auto: u8 = if cv.auto.unwrap_or(false) { 1 } else { 0 };

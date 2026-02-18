@@ -47,6 +47,13 @@ mpi:
 	cargo build --release --target aarch64-unknown-linux-musl
 	ssh merrimac-pi killall -9 mayara-server || :
 	scp target/aarch64-unknown-linux-musl/release/mayara-server merrimac-pi:
+	ssh merrimac-pi RUST_BACKTRACE=full ./mayara-server 
+
+mpid: 
+	@echo "Building and running on merrimac-pi..."
+	cargo build --release --target aarch64-unknown-linux-musl
+	ssh merrimac-pi killall -9 mayara-server || :
+	scp target/aarch64-unknown-linux-musl/release/mayara-server merrimac-pi:
 	ssh merrimac-pi RUST_BACKTRACE=full ./mayara-server -v
 
 # Build debug with dev feature (GUI served from filesystem, no embedding)

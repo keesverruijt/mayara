@@ -38,7 +38,9 @@ use super::{Message, Web, WebSocket, WebSocketUpgrade};
 use mayara::{
     VERSION,
     radar::{Legend, RadarError, RadarInfo, SharedRadars},
-    settings::{BareControlValue, Control, ControlId, ControlValue, RadarControlValue},
+    settings::{
+        BareControlValue, Control, ControlDefinition, ControlId, ControlValue, RadarControlValue,
+    },
 };
 
 pub(super) fn routes(axum: axum::Router<Web>) -> axum::Router<Web> {
@@ -48,13 +50,13 @@ pub(super) fn routes(axum: axum::Router<Web>) -> axum::Router<Web> {
         .add(get_control_values())
         .add(get_control_value())
         .add(set_control_value())
-        .route("/v3/api/stream", get(stream_handler))
+        .route("/signalk/v1/stream", get(stream_handler))
         .add(openapi())
 }
 
 #[endpoint(
     method = "GET",
-    path = "/v3/api/resources/openapi.json",
+    path = "/signalk/v1/api/resources/openapi.json",
     description = "OpenAPI spec"
 )]
 async fn openapi(State(_state): State<Web>) -> impl IntoResponse {
@@ -80,7 +82,7 @@ struct RadarApiV3 {
 
 #[endpoint(
     method = "GET",
-    path = "/v3/api/radars",
+    path = "/signalk/v1/api/radars",
     description = "Get all radars that have been detected and are online"
 )]
 async fn get_radars(
@@ -113,7 +115,7 @@ async fn get_radars(
             brand: info.brand.to_string(),
             model: info.controls.model_name(),
             spoke_data_url: format!("ws://{}{}{}", host, super::v1::SPOKES_URI, info.key()),
-            stream_url: format!("ws://{}/v3/api/stream", host),
+            stream_url: format!("ws://{}/signalk/v1/stream", host),
             radar_ip_address: *info.addr.ip(),
         };
 
@@ -124,7 +126,7 @@ async fn get_radars(
 
 #[endpoint(
     method = "GET",
-    path = "/v3/api/interfaces",
+    path = "/signalk/v1/api/interfaces",
     description = "Get information which network interfaces are usable by which radar brand"
 )]
 async fn get_interfaces(
@@ -201,7 +203,7 @@ impl Capabilities {
 
 #[endpoint(
     method = "GET",
-    path = "/v3/api/radars/{radar_id}/capabilities",
+    path = "/signalk/v1/api/radars/{radar_id}/capabilities",
     description = "Get all static information about a specific radar"
 )]
 async fn get_radar(
@@ -254,7 +256,7 @@ struct RadarControlIdParam {
 /// Sets a control value on the radar
 #[endpoint(
     method = "PUT",
-    path = "/v3/api/radars/{radar_id}/controls/{control_id}",
+    path = "/signalk/v1/api/radars/{radar_id}/controls/{control_id}",
     description = "Set the value of a radar control"
 )]
 async fn set_control_value(
@@ -328,7 +330,7 @@ async fn set_control_value(
 
 #[endpoint(
     method = "GET",
-    path = "/v3/api/radars/{radar_id}/controls/{control_id}",
+    path = "/signalk/v1/api/radars/{radar_id}/controls/{control_id}",
     description = "Get the value of a radar control"
 )]
 async fn get_control_value(
@@ -395,7 +397,7 @@ struct FullSignalKResponse {
 
 #[endpoint(
     method = "GET",
-    path = "/v3/api/radars/{radar_id}/controls",
+    path = "/signalk/v1/api/radars/{radar_id}/controls",
     description = "Get the value of a radar control"
 )]
 #[axum::debug_handler]
@@ -462,7 +464,11 @@ async fn stream_handler(
     Query(params): Query<SignalKWebSocket>,
     ws: WebSocketUpgrade,
 ) -> Response {
-    log::info!("stream request from {} params={:?}", addr, params);
+    log::info!(
+        "stream request for \"/signalk/v1/api/stream\" from {} params={:?}",
+        addr,
+        params
+    );
 
     let subscribe = match params.subscribe.as_deref() {
         None | Some("self") | Some("all") => Subscribe::All,
@@ -546,9 +552,10 @@ async fn ws_signalk_delta(
 ) -> Result<(), RadarError> {
     let mut broadcast_control_rx = radars.new_sk_client_subscription();
     let (reply_tx, mut reply_rx) = tokio::sync::mpsc::channel::<ControlValue>(ControlId::COUNT);
+    let mut meta_radar_data_sent = Vec::new();
 
     log::info!(
-        "Starting /stream v3 websocket subscribe={:?} send_cached_values={:?}",
+        "Starting /signalk/v1/api/stream websocket subscribe={:?} send_cached_values={:?}",
         subscribe,
         send_cached_values
     );
@@ -556,6 +563,10 @@ async fn ws_signalk_delta(
     send_hello(&mut socket).await?;
 
     let mut subscriptions = ActiveSubscriptions::new(subscribe.clone());
+
+    if let Some(sk_delta_meta) = get_meta_delta(&radars, &mut meta_radar_data_sent) {
+        send_message(socket, sk_delta_meta).await?;
+    }
 
     if send_cached_values && subscribe == Subscribe::All {
         for radar in radars.get_active() {
@@ -567,11 +578,7 @@ async fn ws_signalk_delta(
             );
 
             let message: SignalKDelta = rcvs.into();
-            let message: String = serde_json::to_string(&message).unwrap();
-            socket
-                .send(Message::Text(message.into()))
-                .await
-                .map_err(|e| RadarError::Axum(e))?;
+            send_message(socket, message).await?;
         }
     }
 
@@ -590,11 +597,7 @@ async fn ws_signalk_delta(
             r = reply_rx.recv() => {
                 match r {
                     Some(message) => {
-                        let str_message: String = serde_json::to_string(&message).unwrap();
-                        log::debug!("/control serialize {:?} as {}", message, str_message);
-                        let ws_message = Message::Text(str_message.into());
-
-                        if let Err(e) = socket.send(ws_message).await {
+                        if let Err(e) = send_message(socket, &message).await {
                             log::error!("send to websocket client: {e}");
                             break Err(e.into());
                         }
@@ -609,13 +612,20 @@ async fn ws_signalk_delta(
             r = broadcast_control_rx.recv() => {
                 match r {
                     Ok(rcv) => {
+                        // Check if we haven't sent the meta data for this radar yet
+                        if let Some(radar_id) = &rcv.radar_id {
+                            if !meta_radar_data_sent.iter().any(|x| x == radar_id) {
+                                let message = get_meta_delta(&radars, &mut meta_radar_data_sent);
+                                if let Err(e) = send_message(socket, &message).await {
+                                    log::error!("send to websocket client: {e}");
+                                    break Err(e.into());
+                                }
+                            }
+                        }
                         if is_subscribed(&rcv, &mut subscriptions, false) {
                             let rcv = vec![rcv];
                             let message: SignalKDelta = rcv.into();
-                            let message: String = serde_json::to_string(&message).unwrap();
-                            let ws_message = Message::Text(message.into());
-
-                            if let Err(e) = socket.send(ws_message).await {
+                            if let Err(e) = send_message(socket, &message).await {
                                 log::error!("send to websocket client: {e}");
                                 break Err(e.into());
                             }
@@ -638,7 +648,6 @@ async fn ws_signalk_delta(
                         match message {
                             Message::Text(message) => {
                                 handle_client_request(&mut socket, message.as_str(), &mut subscriptions, &radars, reply_tx.clone()).await;
-
                             },
                             _ => {
                                 log::debug!("Dropping unexpected message {:?}", message);
@@ -667,6 +676,18 @@ async fn ws_signalk_delta(
             }
         }
     }
+}
+
+async fn send_message<T>(socket: &mut WebSocket, message: T) -> Result<(), RadarError>
+where
+    T: Serialize,
+{
+    let message: String = serde_json::to_string(&message).unwrap();
+    socket
+        .send(Message::Text(message.into()))
+        .await
+        .map_err(|e| RadarError::Axum(e))?;
+    Ok(())
 }
 
 #[derive(Deserialize, Debug)]
@@ -1109,13 +1130,16 @@ async fn send_hello(socket: &mut WebSocket) -> Result<(), Error> {
 
 #[derive(Serialize)]
 struct SignalKDelta {
-    context: &'static str,
     updates: Vec<DeltaUpdate>,
 }
 
 #[derive(Serialize)]
 struct DeltaUpdate {
-    source: Source,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<Source>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    meta: Vec<DeltaMeta>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     values: Vec<DeltaValue>,
 }
 
@@ -1144,19 +1168,51 @@ impl From<Vec<RadarControlValue>> for SignalKDelta {
             values.push(DeltaValue { path, value });
         }
 
-        let context = "self";
         let delta_update = DeltaUpdate {
-            source: Source {
+            source: Some(Source {
                 label: radar_id,
                 src: "mayara",
                 r#type: "radar",
-            },
+            }),
+            meta: Vec::new(),
             values,
         };
 
         let updates = vec![delta_update];
-        SignalKDelta { context, updates }
+        SignalKDelta { updates }
     }
+}
+
+#[derive(Serialize)]
+struct DeltaMeta {
+    path: String,
+    value: ControlDefinition,
+}
+
+fn get_meta_delta(radars: &SharedRadars, meta_sent: &mut Vec<String>) -> Option<SignalKDelta> {
+    let mut meta = Vec::new();
+
+    for radar in radars.get_active() {
+        let controls = radar.controls.get_controls();
+
+        for (k, v) in controls.iter() {
+            let path = format!("radars.{}.controls.{}", radar.key(), k);
+            let value = v.item().clone();
+            meta.push(DeltaMeta { path, value });
+        }
+        meta_sent.push(radar.key());
+    }
+
+    if meta.len() == 0 {
+        return None;
+    }
+    let delta_update = DeltaUpdate {
+        source: None,
+        meta,
+        values: Vec::new(),
+    };
+    let updates = vec![delta_update];
+    Some(SignalKDelta { updates })
 }
 
 #[cfg(test)]

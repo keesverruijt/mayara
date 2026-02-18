@@ -1,17 +1,13 @@
 extern crate tokio;
 
 use clap::Parser;
-//use env_logger::Env;
 use locator::Locator;
-//use log::{info, warn};
 use miette::Result;
-//use once_cell::sync::Lazy;
 use radar::SharedRadars;
 use serde::{Serialize, Serializer};
 use std::{
     collections::{HashMap, HashSet},
     net::Ipv4Addr,
-    //    time::Duration,
 };
 use tokio::sync::{broadcast, mpsc};
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
