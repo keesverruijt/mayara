@@ -237,6 +237,62 @@ const RangeValue = (id, name, min, max, def) =>
     })
   );
 
+// Discrete slider with tick marks showing possible values
+const DiscreteSliderValue = (id, name, min, max, def) => {
+  const numSteps = max - min;
+  const ticks = [];
+  for (let i = 0; i <= numSteps; i++) {
+    ticks.push(
+      div({
+        class: "myr_tick",
+        "data-index": i,
+      })
+    );
+  }
+
+  return div(
+    { class: "myr_control myr_number_control" },
+    div(
+      { class: "myr_control_header" },
+      span({ class: "myr_control_label" }, name),
+      span({
+        class: "myr_control_value myr_description",
+        id: control_prefix + id + "_desc",
+      })
+    ),
+    div(
+      { class: "myr_discrete_slider", id: control_prefix + id + "_container" },
+      div({ class: "myr_slider_track" }),
+      div({ class: "myr_tick_container" }, ...ticks),
+      input({
+        type: "range",
+        class: "myr_slider myr_slider_discrete",
+        id: control_prefix + id,
+        min,
+        max,
+        value: def,
+        onchange: (e) => do_change(e.target),
+        oninput: (e) => updateTickMarks(e.target),
+      })
+    )
+  );
+};
+
+function updateTickMarks(slider) {
+  const container = slider.closest(".myr_discrete_slider");
+  if (!container) return;
+
+  const min = parseInt(slider.min);
+  const max = parseInt(slider.max);
+  const value = parseInt(slider.value);
+
+  const ticks = container.querySelectorAll(".myr_tick");
+  ticks.forEach((tick, i) => {
+    const tickValue = min + i;
+    tick.classList.toggle("myr_tick_active", tickValue === value);
+  });
+}
+
 const ButtonValue = (id, name) =>
   div(
     { class: "myr_control myr_button_control" },
@@ -472,7 +528,14 @@ function buildSingleControl(k, v) {
     v.maxValue <= 100 &&
     (!v.units || v.units !== "m/s")
   ) {
-    return RangeValue(k, v.name, v.minValue || 0, v.maxValue, 0);
+    const min = v.minValue || 0;
+    const max = v.maxValue;
+    const numSteps = max - min;
+    // Use discrete slider with tick marks for controls with few values (2-10)
+    if (numSteps >= 1 && numSteps <= 9) {
+      return DiscreteSliderValue(k, v.name, min, max, 0);
+    }
+    return RangeValue(k, v.name, min, max, 0);
   } else {
     return NumericValue(k, v.name);
   }
@@ -618,6 +681,11 @@ function setControlValue(cv) {
 
       // Set input value after setting min/max
       i.value = value;
+
+      // Update tick marks for discrete sliders
+      if (i.classList.contains("myr_slider_discrete")) {
+        updateTickMarks(i);
+      }
 
       // Handle auto checkbox
       if (control.hasAuto && "auto" in cv) {
