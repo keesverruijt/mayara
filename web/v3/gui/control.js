@@ -332,6 +332,9 @@ function buildControls() {
   const infoControls = [];
 
   for (const [k, v] of Object.entries(myr_capabilities.controls)) {
+    // Skip power control - it's handled by the power lozenge on the viewer
+    if (k === "power") continue;
+
     const control = { ...v, controlId: k };
     if (control.isReadOnly || control.readOnly) {
       infoControls.push(control);
@@ -547,6 +550,7 @@ function setControlValue(cv) {
   let units = undefined;
   var value;
 
+  // Update DOM elements if they exist
   if (i && control) {
     if (control.hasAutoAdjustable && cv.auto) {
       value = cv.autoValue;
@@ -568,120 +572,115 @@ function setControlValue(cv) {
       } else {
         i.innerHTML = value;
       }
-      // Notify control callbacks and return early
-      controlCallbacks.forEach((cb) => {
-        cb(cv.id, cv);
-      });
-      return;
-    }
-
-    // Update numeric display
-    let n = document.getElementById(control_prefix + cv.id + "_display");
-    if (!n) {
-      n = i.parentNode.querySelector(".myr_numeric");
-    }
-    if (n) {
-      if (units) {
-        n.innerHTML = value + " " + units;
-      } else {
-        n.innerHTML = value;
+    } else {
+      // Update numeric display
+      let n = document.getElementById(control_prefix + cv.id + "_display");
+      if (!n) {
+        n = i.parentNode.querySelector(".myr_numeric");
       }
-    }
-
-    // Update description display
-    let d = document.getElementById(control_prefix + cv.id + "_desc");
-    if (!d) {
-      d = i.parentNode.querySelector(".myr_description");
-    }
-    if (d) {
-      let description = control.descriptions
-        ? control.descriptions[value]
-        : undefined;
-      if (!description && control.hasAutoAdjustable) {
-        if (cv.auto) {
-          description =
-            "A" + (value > 0 ? "+" + value : "") + (value < 0 ? value : "");
-          i.min = control.autoAdjustMinValue;
-          i.max = control.autoAdjustMaxValue;
+      if (n) {
+        if (units) {
+          n.innerHTML = value + " " + units;
         } else {
-          i.min = control.minValue;
-          i.max = control.maxValue;
+          n.innerHTML = value;
         }
       }
-      if (!description) description = value;
-      d.innerHTML = description;
-    }
 
-    // Set input value after setting min/max
-    i.value = value;
-
-    // Handle auto checkbox
-    if (control.hasAuto && "auto" in cv) {
-      let checkbox = i.parentNode.querySelector(".myr_auto");
-      if (checkbox) {
-        checkbox.checked = cv.auto;
+      // Update description display
+      let d = document.getElementById(control_prefix + cv.id + "_desc");
+      if (!d) {
+        d = i.parentNode.querySelector(".myr_description");
       }
-      let display = cv.auto && !control.hasAutoAdjustable ? "none" : "block";
-      if (n) n.style.display = display;
-      if (d) d.style.display = display;
-      i.style.display = display;
-    }
-
-    // Handle enabled checkbox
-    if ("enabled" in cv) {
-      let checkbox = i.parentNode.querySelector(".myr_enabled");
-      if (checkbox) {
-        checkbox.checked = cv.enabled;
+      if (d) {
+        let description = control.descriptions
+          ? control.descriptions[value]
+          : undefined;
+        if (!description && control.hasAutoAdjustable) {
+          if (cv.auto) {
+            description =
+              "A" + (value > 0 ? "+" + value : "") + (value < 0 ? value : "");
+            i.min = control.autoAdjustMinValue;
+            i.max = control.autoAdjustMaxValue;
+          } else {
+            i.min = control.minValue;
+            i.max = control.maxValue;
+          }
+        }
+        if (!description) description = value;
+        d.innerHTML = description;
       }
-      let display = cv.enabled ? "block" : "none";
-      if (n) n.style.display = display;
-      if (d) d.style.display = display;
-      i.style.display = display;
-    }
 
-    // Special handling for Range control
-    if (control.name === "Range") {
-      myr_range_control_id = cv.id;
+      // Set input value after setting min/max
+      i.value = value;
 
-      let r = parseFloat(cv.value);
-      if (control.descriptions && control.descriptions[r]) {
-        let unitsArr = control.descriptions[r].split(/(\s+)/);
-        if (unitsArr.length === 3) {
-          let units_el = get_element_by_server_id(RANGE_UNIT_SELECT_ID);
-          if (units_el) {
-            let new_value = unitsArr[2] === "nm" ? 1 : 0;
-            if (units_el.value != new_value) {
-              units_el.value = new_value;
-              handle_range_unit_change(new_value);
-              i.value = cv.value;
+      // Handle auto checkbox
+      if (control.hasAuto && "auto" in cv) {
+        let checkbox = i.parentNode.querySelector(".myr_auto");
+        if (checkbox) {
+          checkbox.checked = cv.auto;
+        }
+        let display = cv.auto && !control.hasAutoAdjustable ? "none" : "block";
+        if (n) n.style.display = display;
+        if (d) d.style.display = display;
+        i.style.display = display;
+      }
+
+      // Handle enabled checkbox
+      if ("enabled" in cv) {
+        let checkbox = i.parentNode.querySelector(".myr_enabled");
+        if (checkbox) {
+          checkbox.checked = cv.enabled;
+        }
+        let display = cv.enabled ? "block" : "none";
+        if (n) n.style.display = display;
+        if (d) d.style.display = display;
+        i.style.display = display;
+      }
+
+      // Special handling for Range control
+      if (control.name === "Range") {
+        myr_range_control_id = cv.id;
+
+        let r = parseFloat(cv.value);
+        if (control.descriptions && control.descriptions[r]) {
+          let unitsArr = control.descriptions[r].split(/(\s+)/);
+          if (unitsArr.length === 3) {
+            let units_el = get_element_by_server_id(RANGE_UNIT_SELECT_ID);
+            if (units_el) {
+              let new_value = unitsArr[2] === "nm" ? 1 : 0;
+              if (units_el.value != new_value) {
+                units_el.value = new_value;
+                handle_range_unit_change(new_value);
+                i.value = cv.value;
+              }
             }
           }
         }
       }
-    }
 
-    // Handle allowed/disallowed state
-    if (cv.hasOwnProperty("allowed")) {
-      let p = i.parentNode;
-      if (!cv.allowed) {
-        p.classList.add("myr_readonly");
-        i.disabled = true;
-      } else {
-        p.classList.remove("myr_readonly");
-        i.disabled = false;
+      // Handle allowed/disallowed state
+      if (cv.hasOwnProperty("allowed")) {
+        let p = i.parentNode;
+        if (!cv.allowed) {
+          p.classList.add("myr_readonly");
+          i.disabled = true;
+        } else {
+          p.classList.remove("myr_readonly");
+          i.disabled = false;
+        }
       }
     }
-
-    // Notify control callbacks
-    controlCallbacks.forEach((cb) => {
-      cb(cv.id, cv);
-    });
 
     // Show error if present
     if (cv.error && myr_error_message) {
       myr_error_message.raise(cv.error);
     }
   }
+
+  // Always notify control callbacks (even if no DOM element exists)
+  controlCallbacks.forEach((cb) => {
+    cb(cv.id, cv);
+  });
 }
 
 // ============================================================================
@@ -1083,19 +1082,43 @@ function getUserName() {
   return myr_control_values.userName?.value || "";
 }
 
+function nextValidValue(controlId, currentValue) {
+  const control = getControl(controlId);
+  if (!control) return currentValue;
+
+  // If control has explicit validValues, cycle through those
+  if (control.validValues && control.validValues.length > 0) {
+    const validValues = control.validValues;
+
+    // Find the index of current value in validValues (handle type mismatch by comparing as numbers)
+    const currentIndex = validValues.findIndex(
+      (v) => Number(v) === Number(currentValue)
+    );
+
+    // Cycle to next value in validValues
+    // If current value is not in validValues, start at first valid value
+    const nextIndex =
+      currentIndex < 0 ? 0 : (currentIndex + 1) % validValues.length;
+
+    return validValues[nextIndex];
+  }
+
+  // Otherwise use minValue/maxValue/stepValue
+  const min = control.minValue ?? 0;
+  const max = control.maxValue ?? 1;
+  const step = control.stepValue ?? 1;
+
+  let nextValue = Number(currentValue) + step;
+  if (nextValue > max) {
+    nextValue = min;
+  }
+
+  return nextValue;
+}
+
 function togglePower() {
-  const powerControl = getControl("power");
-  if (!powerControl || !powerControl.validValues) return;
-
   const currentValue = myr_control_values.power?.value ?? 0;
-  const validValues = powerControl.validValues;
-
-  // Find the index of current value
-  const currentIndex = validValues.indexOf(currentValue);
-
-  // Cycle to next value
-  const nextIndex = (currentIndex + 1) % validValues.length;
-  const nextValue = validValues[nextIndex];
+  const nextValue = nextValidValue("power", currentValue);
 
   // Send the control update
   sendControlToServer("power", { value: nextValue });
