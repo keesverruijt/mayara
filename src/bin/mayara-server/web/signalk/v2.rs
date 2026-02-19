@@ -261,11 +261,11 @@ struct RadarControlIdParam {
     control_id: String,
 }
 
-/// PUT /v2/api/radars/{radar_id}/controls/{control_id}
+/// PUT /v2/api/vessels/self/radars/{radar_id}/controls/{control_id}
 /// Sets a control value on the radar
 #[endpoint(
     method = "PUT",
-    path = "/signalk/v2/api/vessel/self/radars/{radar_id}/controls/{control_id}",
+    path = "/signalk/v2/api/vessels/self/radars/{radar_id}/controls/{control_id}",
     description = "Set the value of a radar control"
 )]
 async fn set_control_value(
@@ -339,7 +339,7 @@ async fn set_control_value(
 
 #[endpoint(
     method = "GET",
-    path = "/signalk/v2/api/vessel/self/radars/{radar_id}/controls/{control_id}",
+    path = "/signalk/v2/api/vessels/self/radars/{radar_id}/controls/{control_id}",
     description = "Get the value of a radar control"
 )]
 async fn get_control_value(
