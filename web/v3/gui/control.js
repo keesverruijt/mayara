@@ -287,8 +287,14 @@ const EnabledButton = (id) =>
 const SelectValue = (id, name, validValues, descriptions) => {
   return div(
     { class: "myr_control myr_enum_control" },
-    span({ class: "myr_control_label" }, name),
-    span({ class: "myr_description", id: control_prefix + id + "_desc" }),
+    div(
+      { class: "myr_control_header" },
+      span({ class: "myr_control_label" }, name),
+      span({
+        class: "myr_control_value",
+        id: control_prefix + id + "_desc",
+      })
+    ),
     select(
       {
         class: "myr_select",
