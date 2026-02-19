@@ -699,7 +699,9 @@ function radarLoaded(r) {
     spokeDataUrl === "null"
   ) {
     const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    spokeDataUrl = `${wsProtocol}//${window.location.host}/signalk/v2/api/vessels/self/radars/${r.id}/spoke_stream`;
+    spokeDataUrl = `${wsProtocol}//${window.location.host}/signalk/v2/api/vessels/self/radars/${r.id}/stream`;
+  } else {
+    spokeDataUrl = spokeDataUrl.replace("{id}", r.id);
   }
   console.log("Connecting to radar stream:", spokeDataUrl);
   webSocket = new WebSocket(spokeDataUrl);

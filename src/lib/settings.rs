@@ -18,6 +18,7 @@ use thiserror::Error;
 use utoipa::ToSchema;
 
 use crate::Cli;
+use crate::stream::SignalKDelta;
 use crate::{
     TargetMode,
     radar::{Power, RadarError, range::Ranges},
@@ -74,7 +75,7 @@ pub struct Controls {
     #[serde(skip)]
     all_clients_tx: tokio::sync::broadcast::Sender<ControlValue>,
     #[serde(skip)]
-    sk_client_tx: Option<tokio::sync::broadcast::Sender<RadarControlValue>>,
+    sk_client_tx: Option<tokio::sync::broadcast::Sender<SignalKDelta>>,
     #[serde(skip)]
     control_update_tx: tokio::sync::broadcast::Sender<ControlUpdate>,
 }
@@ -218,7 +219,7 @@ impl SharedControls {
 
     pub(crate) fn set_radar_info(
         &mut self,
-        sk_client_tx: tokio::sync::broadcast::Sender<RadarControlValue>,
+        sk_client_tx: tokio::sync::broadcast::Sender<SignalKDelta>,
         radar_label: String,
     ) {
         let mut locked = self.controls.write().unwrap();
@@ -437,11 +438,12 @@ impl SharedControls {
         if let (Some(label), Some(sk_client_tx)) = (&locked.key, &locked.sk_client_tx) {
             let radar_control_value = RadarControlValue::new(label, control, None);
 
-            log::debug!("Sending control to SK client: {:?}", radar_control_value);
-            match sk_client_tx.send(radar_control_value) {
+            let mut sk_delta = SignalKDelta::new();
+            sk_delta.add_updates(vec![radar_control_value]);
+            match sk_client_tx.send(sk_delta.build().unwrap()) {
                 Err(_e) => {}
                 Ok(cnt) => {
-                    log::trace!(
+                    log::debug!(
                         "Sent control value {} to {} SK clients",
                         control.item().control_id,
                         cnt
@@ -1115,7 +1117,7 @@ impl From<RadarControlValue> for ControlValue {
 pub struct BareControlValue {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing)]
     pub units: Option<Units>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto: Option<bool>,

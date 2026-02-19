@@ -1553,6 +1553,7 @@ dependencies = [
  "tokio-tungstenite 0.26.2",
  "tokio-util",
  "tower",
+ "tower-http",
  "tungstenite 0.26.2",
  "unicase",
  "utoipa",
@@ -3236,6 +3237,7 @@ dependencies = [
  "tower",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]

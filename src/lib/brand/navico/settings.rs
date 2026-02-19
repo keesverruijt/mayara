@@ -25,7 +25,7 @@ pub fn new(args: &Cli, model: Option<&str>) -> SharedControls {
 
     new_numeric(ControlId::AntennaHeight, 0., 99.)
         .wire_scale_factor(1000., false)
-        .wire_scale_step(100.) // Allow control in decimeters
+        .wire_scale_step(0.1) // Allow control in decimeters
         .wire_units(Units::Meters)
         .build(&mut controls);
     new_numeric(ControlId::BearingAlignment, -180., 180.)

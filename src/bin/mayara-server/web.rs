@@ -29,10 +29,11 @@ use tokio::{
     sync::{broadcast, mpsc},
 };
 use tokio_graceful_shutdown::SubsystemHandle;
+use tower_http::trace::TraceLayer;
 use utoipa::ToSchema;
 
 mod axum_fix;
-mod signalk_v1;
+mod signalk;
 mod v1;
 
 use axum_fix::{Message, WebSocket, WebSocketUpgrade};
@@ -91,10 +92,11 @@ impl Web {
 
         let router = Router::new().route("/", get(endpoints));
         let router = v1::routes(router); //.route_service("/v1", generated_assets_v1);
-        let router = signalk_v1::routes(router); //.route_service("/v3", generated_assets_v3);
+        let router = signalk::v2::routes(router); //.route_service("/v3", generated_assets_v3);
 
         let app = router
             .fallback_service(serve_assets)
+            .layer(TraceLayer::new_for_http())
             .with_state(self)
             .into_make_service_with_connect_info::<SocketAddr>();
 
@@ -180,11 +182,19 @@ async fn endpoints(State(state): State<Web>, headers: hyper::header::HeaderMap) 
         },
     };
     endpoints.endpoints.insert(
-        "v1".to_string(),
+        "mayara_v1".to_string(),
         Endpoint {
-            version: "3.0.0".to_string(),
-            http: format!("http://{}/signalk/v1/api/", host),
-            ws: format!("ws://{}/signalk/v1/api/stream", host),
+            version: "v1".to_string(),
+            http: format!("http://{}{}", host, v1::RADAR_URI),
+            ws: format!("ws://{}{}", host, v1::CONTROL_URI),
+        },
+    );
+    endpoints.endpoints.insert(
+        "v2".to_string(),
+        Endpoint {
+            version: "v2".to_string(),
+            http: format!("http://{}{}", host, signalk::v2::BASE_URI),
+            ws: format!("ws://{}{}", host, signalk::v2::CONTROL_URI),
         },
     );
 
@@ -193,7 +203,7 @@ async fn endpoints(State(state): State<Web>, headers: hyper::header::HeaderMap) 
 
 #[endpoint(
     method = "GET",
-    path = "/signalk/v1/api/resource/openapi.json",
+    path = "/signalk/v2/api/vessels/self/radars/resource/openapi.json",
     description = "OpenAPI spec"
 )]
 async fn openapi(State(_state): State<Web>) -> impl IntoResponse {
@@ -204,9 +214,10 @@ async fn openapi(State(_state): State<Web>) -> impl IntoResponse {
 
     Json(openapi)
 }
+
 #[derive(Deserialize)]
 struct WebSocketHandlerParameters {
-    key: String,
+    id: String,
 }
 
 #[debug_handler]
@@ -216,11 +227,11 @@ async fn spokes_handler(
     Path(params): Path<WebSocketHandlerParameters>,
     ws: WebSocketUpgrade,
 ) -> Response {
-    debug!("stream request from {} for {}", addr, params.key);
+    debug!("stream request from {} for {}", addr, params.id);
 
     let ws = ws.accept_compression(true);
 
-    match state.radars.get_by_key(&params.key) {
+    match state.radars.get_by_key(&params.id) {
         Some(radar) => {
             let shutdown_rx = state.shutdown_tx.subscribe();
             let radar_message_rx = radar.message_tx.subscribe();
@@ -228,7 +239,7 @@ async fn spokes_handler(
             // we can customize the callback by sending additional info such as address.
             ws.on_upgrade(move |socket| spokes_stream(socket, radar_message_rx, shutdown_rx))
         }
-        None => RadarError::NoSuchRadar(params.key).into_response(),
+        None => RadarError::NoSuchRadar(params.id).into_response(),
     }
 }
 

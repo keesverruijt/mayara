@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 
 use super::{
     Message, Path, RadarInfo, Web, WebSocket, WebSocketHandlerParameters, WebSocketUpgrade,
-    set_api_version, spokes_handler,
+    set_api_version,
 };
 
 use mayara::{
@@ -23,16 +23,15 @@ use mayara::{
     settings::{ApiVersion, Control, ControlId, ControlValue},
 };
 
-const RADAR_URI: &str = "/v1/api/radars";
+pub(super) const RADAR_URI: &str = "/v1/api/radars";
 const INTERFACE_URI: &str = "/v1/api/interfaces";
-pub(super) const SPOKES_URI: &str = "/v1/api/spokes/";
-const CONTROL_URI: &str = "/v1/api/control/";
+pub(super) const SPOKES_URI: &str = "/v1/api/spokes/{id}";
+pub(super) const CONTROL_URI: &str = "/v1/api/control/{id}";
 
 pub(super) fn routes(axum: axum::Router<Web>) -> axum::Router<Web> {
-    axum.route(&format!("{}{}", SPOKES_URI, "{key}"), get(spokes_handler))
-        .route(RADAR_URI, get(get_radars))
+    axum.route(RADAR_URI, get(get_radars))
         .route(INTERFACE_URI, get(get_interfaces))
-        .route(&format!("{}{}", CONTROL_URI, "{key}"), get(control_handler))
+        .route(CONTROL_URI, get(control_handler))
 }
 
 #[derive(Serialize)]
@@ -99,8 +98,10 @@ async fn get_radars(
     for info in state.radars.get_active().clone() {
         let legend = info.get_legend();
         let id = info.key();
-        let stream_url = format!("ws://{}{}{}", host, SPOKES_URI, id);
-        let control_url = format!("ws://{}{}{}", host, CONTROL_URI, id);
+        let spoke_data_uri = SPOKES_URI.replace("{id}", &id);
+        let control_uri = CONTROL_URI.replace("{id}", &id);
+        let stream_url = format!("ws://{}{}", host, spoke_data_uri);
+        let control_url = format!("ws://{}{}", host, control_uri);
         let name = info.controls.user_name();
 
         let controls = info.controls.get_controls();
@@ -155,11 +156,11 @@ async fn control_handler(
     Path(params): Path<WebSocketHandlerParameters>,
     ws: WebSocketUpgrade,
 ) -> Response {
-    debug!("control request from {} for {}", addr, params.key);
+    debug!("control request from {} for {}", addr, params.id);
 
     let ws = ws.accept_compression(true);
 
-    match state.radars.get_by_key(&params.key) {
+    match state.radars.get_by_key(&params.id) {
         Some(radar) => {
             let shutdown_rx = state.shutdown_tx.subscribe();
 
@@ -167,7 +168,7 @@ async fn control_handler(
             // we can customize the callback by sending additional info such as address.
             ws.on_upgrade(move |socket| control_stream(socket, radar, ApiVersion::V1, shutdown_rx))
         }
-        None => RadarError::NoSuchRadar(params.key).into_response(),
+        None => RadarError::NoSuchRadar(params.id).into_response(),
     }
 }
 

@@ -22,6 +22,7 @@ async fn main() -> Result<()> {
         // Only log mayara and mayara_server modules at the selected level
         .filter_module("mayara_server", log_level)
         .filter_module("mayara", log_level)
+        .filter_module("tower_http", log_level)
         .init();
 
     network::set_replay(args.replay);

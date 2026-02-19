@@ -996,7 +996,7 @@ async function loadRadar(id) {
       if (isStandaloneMode()) {
         controlStreamUrl = `${wsProtocol}//${window.location.host}/v3/api/stream`;
       } else {
-        controlStreamUrl = `${wsProtocol}//${window.location.host}/signalk/v1/stream`;
+        controlStreamUrl = `${wsProtocol}//${window.location.host}/signalk/v2/api/vessels/self/radar/stream`;
       }
     }
     connectStateStream(controlStreamUrl, radarId);
@@ -1005,11 +1005,7 @@ async function loadRadar(id) {
     let spokeDataUrl = radarInfo?.spokeDataUrl;
     if (!spokeDataUrl) {
       const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      if (isStandaloneMode()) {
-        spokeDataUrl = `${wsProtocol}//${window.location.host}/v1/api/spokes/${radarId}`;
-      } else {
-        spokeDataUrl = `${wsProtocol}//${window.location.host}/signalk/v2/api/vessels/self/radars/${radarId}/stream`;
-      }
+      spokeDataUrl = `${wsProtocol}//${window.location.host}/signalk/v2/api/vessels/self/radars/${radarId}/stream`;
     }
 
     // Notify callbacks

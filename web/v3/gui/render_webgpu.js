@@ -301,29 +301,21 @@ class render_webgpu {
       colors[i] = [255, 0, 0, 255];
     }
 
-    let normal = 0;
-
-    // serverLegend is a HashMap where keys are string indices (e.g., "0", "1", ...)
-    // and values are objects with a "color" field containing "#rrggbbaa"
-    for (const [indexStr, entry] of Object.entries(serverLegend)) {
-      const index = parseInt(indexStr, 10);
-      if (index >= 0 && index < 256 && entry.color) {
-        colors[index] = this.#hexToRGBA(entry.color);
-      }
-      if (entry.type === "Normal") {
-        normal++;
+    // serverLegend.pixels is an array of {type, color} objects
+    // type is camelCase: "normal", "targetBorder", "dopplerApproaching", "dopplerReceding", "history"
+    for (let i = 0; i < serverLegend.pixels.length && i < 256; i++) {
+      const entry = serverLegend.pixels[i];
+      if (entry.color) {
+        colors[i] = this.#hexToRGBA(entry.color);
       }
     }
 
-    const oneThird = Math.round(normal / 3);
-    const oneNinth = Math.round(normal / 9);
-
     const legend = {
       colors: colors,
-      weakReturn: Math.max(1, oneNinth),
-      mediumReturn: oneThird,
-      strongReturn: 2 * oneThird,
-      specialStart: normal,
+      lowReturn: serverLegend.lowReturn,
+      mediumReturn: serverLegend.mediumReturn,
+      strongReturn: serverLegend.strongReturn,
+      specialStart: serverLegend.pixelColors,
     };
 
     return legend;

@@ -1399,13 +1399,13 @@ impl TargetBuffer {
                 }
             }
 
-            if spoke.data[radius] == legend.doppler_approaching {
+            if Some(spoke.data[radius]) == legend.doppler_approaching {
                 //  approaching doppler target (255)
                 // and add 1 if above threshold and set bit 2, used for ARPA
                 self.history.spokes[angle].sweep[radius].insert(HistoryPixel::APPROACHING);
             }
 
-            if spoke.data[radius] == legend.doppler_receding {
+            if Some(spoke.data[radius]) == legend.doppler_receding {
                 //  receding doppler target (254)
                 // and add 1 if above threshold and set bit 3, used for ARPA
                 self.history.spokes[angle].sweep[radius].insert(HistoryPixel::RECEDING);
@@ -1413,7 +1413,7 @@ impl TargetBuffer {
 
             // Draw the contour
             if self.history.spokes[angle].sweep[radius].contains(HistoryPixel::CONTOUR) {
-                spoke.data[radius] = legend.border;
+                spoke.data[radius] = legend.target_border;
             }
         }
 

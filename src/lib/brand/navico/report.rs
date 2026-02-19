@@ -138,27 +138,33 @@ fn pixel_to_blob(legend: &Legend) -> [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_DOPPLER_L
         let high: u8 = ((j as u8) >> 4) & 0x0f;
 
         lookup[LookupDoppler::LowNormal as usize][j] = low;
-        lookup[LookupDoppler::LowBoth as usize][j] = match low {
-            0x0f => legend.doppler_approaching,
-            0x0e => legend.doppler_receding,
-            0x08..=0x0d => low + 2,
-            _ => low + 1,
-        };
-        lookup[LookupDoppler::LowApproaching as usize][j] = match low {
-            0x0f => legend.doppler_approaching,
-            _ => low + 1,
-        };
         lookup[LookupDoppler::HighNormal as usize][j] = high;
-        lookup[LookupDoppler::HighBoth as usize][j] = match high {
-            0x0f => legend.doppler_approaching,
-            0x0e => legend.doppler_receding,
-            0x08..=0x0d => low + 2,
-            _ => high + 1,
-        };
-        lookup[LookupDoppler::HighApproaching as usize][j] = match high {
-            0x0f => legend.doppler_approaching,
-            _ => high + 1,
-        };
+
+        if let Some(doppler_approaching) = legend.doppler_approaching {
+            if let Some(doppler_receding) = legend.doppler_receding {
+                lookup[LookupDoppler::LowBoth as usize][j] = match low {
+                    0x0f => doppler_approaching,
+                    0x0e => doppler_receding,
+                    0x08..=0x0d => low + 2,
+                    _ => low + 1,
+                };
+                lookup[LookupDoppler::HighBoth as usize][j] = match high {
+                    0x0f => doppler_approaching,
+                    0x0e => doppler_receding,
+                    0x08..=0x0d => low + 2,
+                    _ => high + 1,
+                };
+            }
+            lookup[LookupDoppler::LowApproaching as usize][j] = match low {
+                0x0f => legend.doppler_approaching.unwrap(),
+                _ => low + 1,
+            };
+
+            lookup[LookupDoppler::HighApproaching as usize][j] = match high {
+                0x0f => doppler_approaching,
+                _ => high + 1,
+            };
+        }
         j += 1;
     }
     lookup

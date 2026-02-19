@@ -20,6 +20,7 @@ pub mod network;
 pub mod protos;
 pub mod radar;
 pub mod settings;
+pub mod stream;
 pub mod util;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

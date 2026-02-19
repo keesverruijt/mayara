@@ -3,7 +3,7 @@ use axum::response::{IntoResponse, Response};
 use enum_primitive_derive::Primitive;
 use protobuf::Message;
 use serde::Serialize;
-use serde::ser::{SerializeMap, Serializer};
+use serde::ser::Serializer;
 use serde_json::Value;
 use std::cmp::{max, min};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -28,9 +28,9 @@ use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::spoke::{GenericSpoke, to_protobuf_spoke};
 use crate::radar::trail::TrailBuffer;
 use crate::settings::{
-    ControlDestination, ControlError, ControlId, ControlUpdate, ControlValue, RadarControlValue,
-    SharedControls, Units,
+    ControlDestination, ControlError, ControlId, ControlUpdate, ControlValue, SharedControls, Units,
 };
+use crate::stream::SignalKDelta;
 use crate::{Brand, Cli, TargetMode};
 use range::{RangeDetection, Ranges};
 
@@ -102,6 +102,7 @@ impl IntoResponse for RadarError {
 // This order of pixeltypes is also how they are stored in the legend.
 //
 #[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 enum PixelType {
     Normal,
     TargetBorder,
@@ -143,31 +144,18 @@ pub struct Lookup {
     color: Color,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Legend {
-    pub pixels: Vec<Lookup>,
-    pub target_colors: u8,
-    pub border: u8,
-    pub doppler_approaching: u8,
-    pub doppler_receding: u8,
+    pub doppler_approaching: Option<u8>,
+    pub doppler_receding: Option<u8>,
     pub history_start: u8,
-    pub strong_return: u8,
-    pub medium_return: u8,
     pub low_return: u8,
-}
-
-impl Serialize for Legend {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut state = serializer.serialize_map(Some(self.pixels.len()))?;
-        for (n, value) in self.pixels.iter().enumerate() {
-            let key = n.to_string();
-            state.serialize_entry(&key, value)?;
-        }
-        state.end()
-    }
+    pub medium_return: u8,
+    pub strong_return: u8,
+    pub target_border: u8,
+    pub pixel_colors: u8,
+    pub pixels: Vec<Lookup>,
 }
 
 /// A geographic position expressed in degrees latitude and longitude.
@@ -609,9 +597,7 @@ impl SharedRadars {
         false
     }
 
-    pub fn new_sk_client_subscription(
-        &self,
-    ) -> tokio::sync::broadcast::Receiver<RadarControlValue> {
+    pub fn new_sk_client_subscription(&self) -> tokio::sync::broadcast::Receiver<SignalKDelta> {
         self.radars.read().unwrap().sk_client_tx.subscribe()
     }
 }
@@ -620,7 +606,7 @@ impl SharedRadars {
 struct Radars {
     pub info: HashMap<String, RadarInfo>,
     pub persistent_data: Persistence,
-    sk_client_tx: tokio::sync::broadcast::Sender<RadarControlValue>,
+    sk_client_tx: tokio::sync::broadcast::Sender<SignalKDelta>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -688,11 +674,11 @@ const OPAQUE: u8 = 255;
 fn default_legend(targets: &TargetMode, doppler: bool, pixel_values: u8) -> Legend {
     let mut legend = Legend {
         pixels: Vec::new(),
-        target_colors: 0,
+        pixel_colors: 0,
         history_start: 0,
-        border: 0,
-        doppler_approaching: 0,
-        doppler_receding: 0,
+        target_border: 0,
+        doppler_approaching: None,
+        doppler_receding: None,
         strong_return: 0,
         medium_return: 0,
         low_return: 0,
@@ -720,7 +706,7 @@ fn default_legend(targets: &TargetMode, doppler: bool, pixel_values: u8) -> Lege
             a: TRANSPARENT,
         },
     });
-    legend.target_colors = pixel_values;
+    legend.pixel_colors = pixel_values;
     if pixel_values == 0 {
         return legend;
     }
@@ -764,7 +750,7 @@ fn default_legend(targets: &TargetMode, doppler: bool, pixel_values: u8) -> Lege
     }
 
     if *targets == TargetMode::Arpa {
-        legend.border = legend.pixels.len() as u8;
+        legend.target_border = legend.pixels.len() as u8;
         legend.pixels.push(Lookup {
             r#type: PixelType::TargetBorder,
             color: Color {
@@ -777,7 +763,7 @@ fn default_legend(targets: &TargetMode, doppler: bool, pixel_values: u8) -> Lege
     }
 
     if doppler {
-        legend.doppler_approaching = legend.pixels.len() as u8;
+        legend.doppler_approaching = Some(legend.pixels.len() as u8);
         legend.pixels.push(Lookup {
             r#type: PixelType::DopplerApproaching,
             color: Color {
@@ -788,7 +774,7 @@ fn default_legend(targets: &TargetMode, doppler: bool, pixel_values: u8) -> Lege
                 a: OPAQUE,
             },
         });
-        legend.doppler_receding = legend.pixels.len() as u8;
+        legend.doppler_receding = Some(legend.pixels.len() as u8);
         legend.pixels.push(Lookup {
             r#type: PixelType::DopplerReceding,
             color: Color {

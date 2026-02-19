@@ -34,12 +34,15 @@ pub(super) fn pixel_to_blob(legend: &Legend) -> PixelToBlobType {
     let mut lookup: [[u8; BYTE_LOOKUP_LENGTH]; LOOKUP_DOPPLER_LENGTH] =
         [[0; BYTE_LOOKUP_LENGTH]; LOOKUP_DOPPLER_LENGTH];
 
-    if legend.target_colors >= 128 {
+    let doppler_approaching = legend.doppler_approaching.unwrap_or(0);
+    let doppler_receding = legend.doppler_receding.unwrap_or(0);
+
+    if legend.pixel_colors >= 128 {
         for j in 0..BYTE_LOOKUP_LENGTH {
             lookup[LookupDoppler::Normal as usize][j] = j as u8 / 2;
             lookup[LookupDoppler::Doppler as usize][j] = match j {
-                0xff => legend.doppler_approaching,
-                0xfe => legend.doppler_receding,
+                0xff => doppler_approaching,
+                0xfe => doppler_receding,
                 _ => j as u8 / 2,
             };
         }
@@ -47,8 +50,8 @@ pub(super) fn pixel_to_blob(legend: &Legend) -> PixelToBlobType {
         for j in 0..BYTE_LOOKUP_LENGTH {
             lookup[LookupDoppler::Normal as usize][j] = j as u8;
             lookup[LookupDoppler::Doppler as usize][j] = match j {
-                0xff => legend.doppler_approaching,
-                0xfe => legend.doppler_receding,
+                0xff => doppler_approaching,
+                0xfe => doppler_receding,
                 _ => j as u8,
             };
         }

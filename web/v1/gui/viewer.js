@@ -150,8 +150,10 @@ function radarLoaded(r) {
 
 function expandLegend(legend) {
   let a = Array();
-  for (let i = 0; i < Object.keys(legend).length; i++) {
-    let color = legend[i].color;
+  // legend.pixels is an array of {type, color} objects
+  // type is camelCase: "normal", "targetBorder", "dopplerApproaching", "dopplerReceding", "history"
+  for (let i = 0; i < legend.pixels.length; i++) {
+    let color = legend.pixels[i].color;
     a.push(hexToRGBA(color));
   }
   a[0][3] = 255;

@@ -7,8 +7,9 @@
 
 // API endpoints for different modes
 const SIGNALK_RADARS_API = "/signalk/v2/api/vessels/self/radars";
-const STANDALONE_RADARS_API = "/v3/api/radars";
-const STANDALONE_INTERFACES_API = "/v3/api/interfaces";
+const STANDALONE_INTERFACES_API =
+  "/signalk/v2/api/vessels/self/radars/_interfaces";
+const ENDPOINT_API = "/";
 
 // Application Data API path - aligned with WASM SignalK plugin
 // Uses same path so settings are shared between standalone and SignalK modes
@@ -29,10 +30,13 @@ export async function detectMode() {
     return detectedMode;
   }
 
-  // Try standalone first - check if /v3/api/radars returns 200
+  // Try standalone first - check if / returns server mayara
   try {
-    const response = await fetch(STANDALONE_RADARS_API, { method: "HEAD" });
-    if (response.ok) {
+    const response = await fetch(ENDPOINT_API, {
+      headers: { Accept: "application/json" },
+    });
+    const data = await response.json();
+    if (data?.server?.id === "mayara") {
       detectedMode = "standalone";
       console.log("Detected standalone mode");
       return detectedMode;
@@ -63,10 +67,8 @@ export async function detectMode() {
  * Get the radars API URL for current mode
  * @returns {string} API URL
  */
-export function getRadarsUrl() {
-  return detectedMode === "signalk"
-    ? SIGNALK_RADARS_API
-    : STANDALONE_RADARS_API;
+export function getRadarsPath() {
+  return SIGNALK_RADARS_API;
 }
 
 /**
@@ -84,7 +86,7 @@ export function getInterfacesUrl() {
 export async function fetchRadarIds() {
   await detectMode();
 
-  const response = await fetch(getRadarsUrl());
+  const response = await fetch(getRadarsPath());
   const data = await response.json();
 
   // SignalK v5 returns array of IDs: ["Furuno-RD003212", "Navico-HALO"]
@@ -108,7 +110,7 @@ export async function fetchRadarIds() {
 export async function fetchRadars() {
   await detectMode();
 
-  const response = await fetch(getRadarsUrl());
+  const response = await fetch(getRadarsPath());
   const data = await response.json();
 
   // SignalK returns an array, standalone returns an object
@@ -140,7 +142,7 @@ export async function fetchCapabilities(radarId) {
   // The radar model is identified via TCP $N96 response, which happens after
   // initial discovery. Caching would return stale "Unknown" model.
 
-  const url = `${getRadarsUrl()}/${radarId}/capabilities`;
+  const url = `${getRadarsPath()}/${radarId}/capabilities`;
   console.log(`Fetching capabilities: GET ${url}`);
 
   const response = await fetch(url);
@@ -214,7 +216,7 @@ function mapPowerValue(value) {
 export async function setControl(radarId, controlId, body) {
   await detectMode();
 
-  const url = `${getRadarsUrl()}/${radarId}/controls/${controlId}`;
+  const url = `${getRadarsPath()}/${radarId}/controls/${controlId}`;
   const bodyStr = JSON.stringify(body);
 
   console.log(`Setting control: PUT ${url}`, bodyStr);
@@ -613,77 +615,4 @@ export async function getPlaybackStatus() {
     throw new Error(`Failed to get playback status: ${response.status}`);
   }
   return response.json();
-}
-
-// ============================================================================
-// Legacy Control API
-// ============================================================================
-
-export async function sendControlCommand(radarId, controlData, controls) {
-  await detectMode();
-
-  // Map control id to control name for the endpoint
-  // controlData.id is the control key (e.g., "1" for Power)
-  const controlDef = controls ? controls[controlData.id] : null;
-  const controlName = controlDef
-    ? controlDef.name.toLowerCase()
-    : `control-${controlData.id}`;
-
-  const url = `${getRadarsUrl()}/${radarId}/${controlName}`;
-
-  // Build the request body based on controlData and control type
-  let body;
-  if (controlName === "power") {
-    // Power expects RadarStatus string
-    body = { value: mapPowerValue(controlData.value) };
-  } else if (controlName === "range") {
-    // Range expects number in meters
-    body = { value: parseFloat(controlData.value) };
-  } else if (
-    controlName === "gain" ||
-    controlName === "sea" ||
-    controlName === "rain"
-  ) {
-    // Gain/sea/rain expect { auto: boolean, value?: number }
-    body = {};
-    if ("auto" in controlData) {
-      body.auto = controlData.auto;
-    }
-    if (controlData.value !== undefined) {
-      body.value = parseFloat(controlData.value);
-    }
-  } else {
-    // Generic control
-    body = { value: controlData.value };
-    if ("auto" in controlData) {
-      body.auto = controlData.auto;
-    }
-  }
-
-  console.log(`Sending control: PUT ${url}`, body);
-
-  try {
-    const response = await fetch(url, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (response.ok) {
-      console.log(`Control command sent successfully: PUT ${url}`);
-      return true;
-    } else {
-      const errorText = await response.text();
-      console.error(
-        `Control command failed: ${response.status} ${response.statusText} for ${url}`,
-        errorText
-      );
-      return false;
-    }
-  } catch (e) {
-    console.error(`Control command error: ${e}`);
-    return false;
-  }
 }

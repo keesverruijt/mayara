@@ -18,51 +18,55 @@ use chrono::{DateTime, Utc};
 use futures::SinkExt;
 use http::StatusCode;
 use hyper;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    cmp::min,
     collections::HashMap,
     net::{Ipv4Addr, SocketAddr},
     str::FromStr,
-    time::{Duration, SystemTime},
 };
-use strum::{EnumCount, EnumString, IntoEnumIterator, VariantNames};
+use strum::EnumCount;
 use tokio::sync::{
     broadcast::{self},
     mpsc,
 };
-use wildmatch::WildMatch;
 
-use super::{Message, Web, WebSocket, WebSocketUpgrade};
+use crate::web::spokes_handler;
+
+use super::super::{Message, Web, WebSocket, WebSocketUpgrade};
 use mayara::{
-    VERSION,
     radar::{Legend, RadarError, RadarInfo, SharedRadars},
-    settings::{
-        BareControlValue, Control, ControlDefinition, ControlId, ControlValue, RadarControlValue,
-    },
+    settings::{BareControlValue, Control, ControlId, ControlValue, RadarControlValue},
+    stream::{ActiveSubscriptions, Desubscription, SignalKDelta, Subscribe, Subscription},
 };
 
-pub(super) fn routes(axum: axum::Router<Web>) -> axum::Router<Web> {
+const PROVIDER: &str = mayara::PACKAGE;
+const VERSION: &str = mayara::VERSION;
+pub(crate) const BASE_URI: &str = "/signalk/v2/api/vessels/self/radars";
+pub(crate) const CONTROL_URI: &str = "/signalk/v2/api/vessels/self/radars/stream";
+pub(crate) const SPOKES_URI: &str = "/signalk/v2/api/vessels/self/radars/{id}/spokes"; // plus radar_id
+
+pub(crate) fn routes(axum: axum::Router<Web>) -> axum::Router<Web> {
     axum.add(get_radars())
         .add(get_interfaces())
+        .route(CONTROL_URI, get(control_stream_handler))
+        .route(SPOKES_URI, get(spokes_handler))
         .add(get_radar())
         .add(get_control_values())
         .add(get_control_value())
         .add(set_control_value())
-        .route("/signalk/v1/stream", get(stream_handler))
         .add(openapi())
 }
 
 #[endpoint(
     method = "GET",
-    path = "/signalk/v1/api/resources/openapi.json",
+    path = "/signalk/v2/api/vessels/self/radars/resources/openapi.json",
     description = "OpenAPI spec"
 )]
 async fn openapi(State(_state): State<Web>) -> impl IntoResponse {
     // `build_openapi` caches the openapi spec, so it's not necessary to call it every time
     let openapi = build_openapi(|| {
-        OpenApiBuilder::new().info(InfoBuilder::new().title("My Webserver").version("0.1.0"))
+        OpenApiBuilder::new().info(InfoBuilder::new().title(PROVIDER).version(VERSION))
     });
 
     Json(openapi)
@@ -82,7 +86,7 @@ struct RadarApiV3 {
 
 #[endpoint(
     method = "GET",
-    path = "/signalk/v1/api/radars",
+    path = "/signalk/v2/api/vessels/self/radars",
     description = "Get all radars that have been detected and are online"
 )]
 async fn get_radars(
@@ -110,12 +114,13 @@ async fn get_radars(
 
     let mut api: HashMap<String, RadarApiV3> = HashMap::new();
     for info in state.radars.get_active().clone() {
+        let spoke_data_uri = SPOKES_URI.replace("{id}", &info.key());
         let v = RadarApiV3 {
             name: info.controls.user_name(),
             brand: info.brand.to_string(),
             model: info.controls.model_name(),
-            spoke_data_url: format!("ws://{}{}{}", host, super::v1::SPOKES_URI, info.key()),
-            stream_url: format!("ws://{}/signalk/v1/stream", host),
+            spoke_data_url: format!("ws://{}{}", host, spoke_data_uri),
+            stream_url: format!("ws://{}{}", host, CONTROL_URI),
             radar_ip_address: *info.addr.ip(),
         };
 
@@ -126,7 +131,7 @@ async fn get_radars(
 
 #[endpoint(
     method = "GET",
-    path = "/signalk/v1/api/interfaces",
+    path = "/signalk/v2/api/vessels/self/radars/interfaces",
     description = "Get information which network interfaces are usable by which radar brand"
 )]
 async fn get_interfaces(
@@ -203,7 +208,7 @@ impl Capabilities {
 
 #[endpoint(
     method = "GET",
-    path = "/signalk/v1/api/radars/{radar_id}/capabilities",
+    path = "/signalk/v2/api/vessels/self/radars/{radar_id}/capabilities",
     description = "Get all static information about a specific radar"
 )]
 async fn get_radar(
@@ -217,7 +222,11 @@ async fn get_radar(
         None => "localhost".to_string(),
     };
 
-    log::debug!("Radar state request from {} for host '{}'", addr, host);
+    log::debug!(
+        "Radar capabilities request from {} for host '{}'",
+        addr,
+        host
+    );
 
     let host = format!(
         "{}:{}",
@@ -256,7 +265,7 @@ struct RadarControlIdParam {
 /// Sets a control value on the radar
 #[endpoint(
     method = "PUT",
-    path = "/signalk/v1/api/radars/{radar_id}/controls/{control_id}",
+    path = "/signalk/v2/api/vessel/self/radars/{radar_id}/controls/{control_id}",
     description = "Set the value of a radar control"
 )]
 async fn set_control_value(
@@ -330,7 +339,7 @@ async fn set_control_value(
 
 #[endpoint(
     method = "GET",
-    path = "/signalk/v1/api/radars/{radar_id}/controls/{control_id}",
+    path = "/signalk/v2/api/vessel/self/radars/{radar_id}/controls/{control_id}",
     description = "Get the value of a radar control"
 )]
 async fn get_control_value(
@@ -397,8 +406,8 @@ struct FullSignalKResponse {
 
 #[endpoint(
     method = "GET",
-    path = "/signalk/v1/api/radars/{radar_id}/controls",
-    description = "Get the value of a radar control"
+    path = "/signalk/v2/api/vessels/self/radars/{radar_id}/controls",
+    description = "Get the value of all radar controls for a radar"
 )]
 #[axum::debug_handler]
 async fn get_control_values(
@@ -458,14 +467,14 @@ struct SignalKWebSocket {
     send_cached_values: Option<String>,
 }
 
-async fn stream_handler(
+async fn control_stream_handler(
     State(state): State<Web>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Query(params): Query<SignalKWebSocket>,
     ws: WebSocketUpgrade,
 ) -> Response {
     log::info!(
-        "stream request for \"/signalk/v1/api/stream\" from {} params={:?}",
+        "stream request for \"/signalk/v2/api/vessels/self/radars/stream\" from {} params={:?}",
         addr,
         params
     );
@@ -532,13 +541,6 @@ async fn ws_signalk_delta_shim(
     let _ = socket.close().await;
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
-enum Subscribe {
-    None,
-    Some,
-    All,
-}
-
 /// Actual websocket statemachine (one will be spawned per connection)
 /// This needs to handle the (complex) Signal K state, which can request data from multiple
 /// radars using a single websocket
@@ -555,7 +557,7 @@ async fn ws_signalk_delta(
     let mut meta_radar_data_sent = Vec::new();
 
     log::info!(
-        "Starting /signalk/v1/api/stream websocket subscribe={:?} send_cached_values={:?}",
+        "Starting /signalk/v2/api/vessels/self/radars/stream websocket subscribe={:?} send_cached_values={:?}",
         subscribe,
         send_cached_values
     );
@@ -564,9 +566,8 @@ async fn ws_signalk_delta(
 
     let mut subscriptions = ActiveSubscriptions::new(subscribe.clone());
 
-    if let Some(sk_delta_meta) = get_meta_delta(&radars, &mut meta_radar_data_sent) {
-        send_message(socket, sk_delta_meta).await?;
-    }
+    let mut sk_delta = SignalKDelta::new();
+    sk_delta.add_meta_updates(&radars, &mut meta_radar_data_sent);
 
     if send_cached_values && subscribe == Subscribe::All {
         for radar in radars.get_active() {
@@ -577,9 +578,12 @@ async fn ws_signalk_delta(
                 radar.key()
             );
 
-            let message: SignalKDelta = rcvs.into();
-            send_message(socket, message).await?;
+            sk_delta.add_updates(rcvs);
         }
+    }
+
+    if let Some(sk_delta) = sk_delta.build() {
+        send_message(socket, sk_delta).await?;
     }
 
     loop {
@@ -611,26 +615,12 @@ async fn ws_signalk_delta(
             },
             r = broadcast_control_rx.recv() => {
                 match r {
-                    Ok(rcv) => {
-                        // Check if we haven't sent the meta data for this radar yet
-                        if let Some(radar_id) = &rcv.radar_id {
-                            if !meta_radar_data_sent.iter().any(|x| x == radar_id) {
-                                let message = get_meta_delta(&radars, &mut meta_radar_data_sent);
-                                if let Err(e) = send_message(socket, &message).await {
-                                    log::error!("send to websocket client: {e}");
-                                    break Err(e.into());
-                                }
-                            }
-                        }
-                        if is_subscribed(&rcv, &mut subscriptions, false) {
-                            let rcv = vec![rcv];
-                            let message: SignalKDelta = rcv.into();
-                            if let Err(e) = send_message(socket, &message).await {
-                                log::error!("send to websocket client: {e}");
-                                break Err(e.into());
-                            }
-                        } else {
-                            log::debug!("Skipping not subscribed value: {:?}", rcv);
+                    Ok(mut delta) => {
+                        delta.apply_subscriptions(&mut subscriptions);
+                        delta.add_meta_from_updates(&radars, &mut meta_radar_data_sent);
+
+                        if let Some(sk_delta) = delta.build() {
+                            send_message(socket, sk_delta).await?;
                         }
                     },
                     Err(e) => {
@@ -656,8 +646,7 @@ async fn ws_signalk_delta(
 
                     },
                     Some(Err(e)) => {
-                        log::error!("Error reading websocket: {:?}", e);
-                        break Err(e.into());
+                        break map_axum_error(e);
                     },
                     None => {
                         // Stream has closed
@@ -676,6 +665,17 @@ async fn ws_signalk_delta(
             }
         }
     }
+}
+
+fn map_axum_error(e: axum::Error) -> Result<(), RadarError> {
+    let msg = &format!("{:?}", e);
+    log::debug!("Error reading websocket: {}", msg);
+    if msg == "Protocol(ResetWithoutClosingHandshake)" {
+        // Somebody pressed Ctrl-C in websocat, or client is likewise
+        // careless in closing websocket
+        return Ok(());
+    }
+    return Err(e.into());
 }
 
 async fn send_message<T>(socket: &mut WebSocket, message: T) -> Result<(), RadarError>
@@ -724,81 +724,6 @@ enum StreamRequest {
 //   ]
 // }
 //
-#[derive(Deserialize, Debug, Serialize)]
-struct Subscription {
-    subscribe: Vec<PathSubscribe>,
-}
-
-#[derive(Deserialize, Debug)]
-struct Desubscription {
-    desubscribe: Vec<PathSubscribe>,
-}
-
-#[derive(Deserialize, Debug, Clone, Serialize)]
-#[serde(rename = "camelCase")]
-struct PathSubscribe {
-    path: String,
-    period: Option<u64>,
-    #[serde(default, deserialize_with = "deserialize_policy")]
-    policy: Option<Policy>,
-    min_period: Option<u64>,
-    #[serde(skip)]
-    last_sent: Option<SystemTime>,
-}
-
-#[derive(Clone, Serialize, PartialEq, Debug, EnumString, VariantNames)]
-#[strum(serialize_all = "camelCase")]
-enum Policy {
-    Instant,
-    Ideal,
-    Fixed,
-}
-
-fn deserialize_policy<'de, D>(deserializer: D) -> Result<Option<Policy>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    // Try to read an Option<String>.  If the key is absent we get None.
-    let opt = Option::<String>::deserialize(deserializer)?;
-
-    match opt {
-        Some(s) => Policy::from_str(&s.to_ascii_lowercase())
-            .map(Some)
-            .map_err(|_| serde::de::Error::unknown_variant(&s, &Policy::VARIANTS)),
-        None => Ok(None), // field missing → None
-    }
-}
-
-struct ActiveSubscriptions {
-    mode: Subscribe,
-    timeout: Duration,
-    paths: HashMap<String, HashMap<ControlId, PathSubscribe>>,
-}
-
-impl ActiveSubscriptions {
-    fn new(mode: Subscribe) -> ActiveSubscriptions {
-        ActiveSubscriptions {
-            mode,
-            paths: HashMap::new(),
-            timeout: Duration::from_secs(99999999),
-        }
-    }
-}
-
-impl ActiveSubscriptions {
-    fn set_timeout(&mut self, timeout: u64) {
-        if timeout < u64::MAX {
-            let timeout = Duration::from_millis(timeout);
-            if self.timeout < timeout {
-                self.timeout = timeout;
-            };
-        }
-    }
-
-    fn get_timeout(&mut self) -> Duration {
-        self.timeout
-    }
-}
 
 async fn handle_client_request(
     socket: &mut WebSocket,
@@ -819,7 +744,7 @@ async fn handle_client_request(
                 handle_subscription(socket, radars, subscriptions, subscription).await
             }
             StreamRequest::Desubscription(desubscription) => {
-                handle_desubscription(subscriptions, desubscription)
+                subscriptions.desubscribe(desubscription)
             }
             StreamRequest::RadarControlValue(rcv) => {
                 handle_control_request(message, radars, reply_tx, rcv).await
@@ -871,179 +796,8 @@ async fn handle_subscription(
     subscriptions: &mut ActiveSubscriptions,
     subscription: Subscription,
 ) -> Result<(), RadarError> {
-    subscriptions.mode = Subscribe::Some;
-
-    let mut period = u64::MAX;
-    for path_subscription in subscription.subscribe {
-        let (radar_id, control_id) = extract_path(&path_subscription.path);
-        let mut paths = subscriptions.paths.get_mut(radar_id);
-        if paths.is_none() {
-            log::info!("Creating radar '{}' subscriptions", radar_id);
-            subscriptions
-                .paths
-                .insert(radar_id.to_string(), HashMap::new());
-            paths = subscriptions.paths.get_mut(radar_id);
-        }
-        let paths = paths.unwrap();
-
-        if control_id.contains("*") {
-            for id in ControlId::iter() {
-                let matcher = WildMatch::new(control_id);
-                if matcher.matches(&id.to_string()) {
-                    log::info!("{} matches {}", id, control_id);
-                    paths.insert(id, path_subscription.clone());
-                }
-            }
-            if let Some(p) = path_subscription.min_period {
-                period = min(p, period);
-            }
-            if let Some(p) = path_subscription.period {
-                period = min(p, period);
-            }
-        } else {
-            match ControlId::from_str(control_id) {
-                Ok(control_id) => {
-                    if let Some(p) = path_subscription.min_period {
-                        period = min(p, period);
-                    }
-                    if let Some(p) = path_subscription.period {
-                        period = min(p, period);
-                    }
-                    paths.insert(control_id, path_subscription);
-                }
-                Err(_e) => {
-                    log::warn!(
-                        "Cannot subscribe radar '{}' path '{}': does not exist",
-                        radar_id,
-                        control_id,
-                    );
-                    return Err(RadarError::CannotParseControlId(control_id.to_string()));
-                }
-            }
-        }
-    }
-    subscriptions.set_timeout(period);
-    send_all_subscribed(socket, radars, subscriptions).await?;
-    // Now send all current values of everything just subscribed
-
-    Ok(())
-}
-
-fn handle_desubscription(
-    subscriptions: &mut ActiveSubscriptions,
-    subscription: Desubscription,
-) -> Result<(), RadarError> {
-    subscriptions.mode = Subscribe::Some;
-    for path_desubscription in subscription.desubscribe {
-        let (radar_id, control_id) = extract_path(&path_desubscription.path);
-        let paths = subscriptions.paths.get_mut(radar_id);
-        if paths.is_none() {
-            continue;
-        }
-        let paths = paths.unwrap();
-
-        if control_id.contains("*") {
-            for id in ControlId::iter() {
-                let matcher = WildMatch::new(control_id);
-                if matcher.matches(&id.to_string()) {
-                    paths.remove(&id);
-                }
-            }
-        } else {
-            match ControlId::from_str(&control_id) {
-                Ok(id) => {
-                    paths.remove(&id);
-                }
-                Err(_e) => {
-                    log::warn!(
-                        "Cannot desubscribe context '{}' path '{}': does not exist",
-                        radar_id,
-                        path_desubscription.path
-                    );
-                    return Err(RadarError::CannotParseControlId(control_id.to_string()));
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn extract_path(mut path: &str) -> (&str, &str) {
-    if path.starts_with("radars.") {
-        path = &path["radars.".len()..];
-    }
-    if path == "*" {
-        return ("*", "*");
-    }
-    if let Some((radar, mut control)) = path.split_once('.') {
-        if control.starts_with("controls.") {
-            control = &control["controls.".len()..];
-        }
-        return (radar, control);
-    }
-
-    ("*", path)
-}
-
-//
-// This is called with a RadarControlValue generated internally, with a fixed path and no wildcards
-// and a control_id filled in.
-fn is_subscribed(
-    rcv: &RadarControlValue,
-    subscriptions: &mut ActiveSubscriptions,
-    full: bool,
-) -> bool {
-    match subscriptions.mode {
-        Subscribe::All => {
-            return true;
-        }
-        Subscribe::None => {
-            return false;
-        }
-        Subscribe::Some => {}
-    }
-    if let (Some(radar_id), Some(control_id)) = (rcv.radar_id.as_deref(), &rcv.control_id) {
-        for key in [radar_id, "*"] {
-            if let Some(paths) = subscriptions.paths.get_mut(key) {
-                if let Some(path) = paths.get_mut(control_id) {
-                    let policy = path.policy.as_ref().unwrap_or(&Policy::Instant);
-
-                    if *policy == Policy::Fixed {
-                        if !full {
-                            return false;
-                        }
-                        if let Some(period) = path.period {
-                            let now = SystemTime::now();
-
-                            if path.last_sent.is_none()
-                                || path.last_sent.unwrap() + Duration::from_micros(period) > now
-                            {
-                                path.last_sent = Some(now);
-                                return false;
-                            }
-                        }
-                    }
-
-                    if let Some(min_period) = path.min_period {
-                        let now = SystemTime::now();
-
-                        if path.last_sent.is_none()
-                            || path.last_sent.unwrap() + Duration::from_micros(min_period) > now
-                        {
-                            path.last_sent = Some(now);
-                            return false;
-                        }
-                    }
-                    return true;
-                }
-            }
-        }
-    } else {
-        panic!("Invalid use of is_subscribed(), can only be done on internal RCV");
-    }
-
-    return false;
+    subscriptions.subscribe(subscription)?;
+    send_all_subscribed(socket, radars, subscriptions).await
 }
 
 async fn send_all_subscribed(
@@ -1057,16 +811,13 @@ async fn send_all_subscribed(
         rcvs.append(&mut radar.controls.get_radar_control_values());
     }
     if subscriptions.mode == Subscribe::Some {
-        rcvs.retain(|x| is_subscribed(x, subscriptions, true));
+        rcvs.retain(|x| subscriptions.is_subscribed(x, true));
     }
     log::info!("Sending {} subscribed controls", rcvs.len());
     if rcvs.len() > 0 {
-        let message: SignalKDelta = rcvs.into();
-        let message: String = serde_json::to_string(&message).unwrap();
-        socket
-            .send(Message::Text(message.into()))
-            .await
-            .map_err(|e| RadarError::Axum(e))?;
+        let mut delta: SignalKDelta = SignalKDelta::new();
+        delta.add_updates(rcvs);
+        send_message(socket, delta.build().unwrap()).await?;
     }
 
     Ok(())
@@ -1091,8 +842,8 @@ where
 
 async fn send_hello(socket: &mut WebSocket) -> Result<(), Error> {
     let message = SignalKHello {
-        name: "Marine Yacht Radar",
-        version: crate::mayara::VERSION,
+        name: PROVIDER,
+        version: VERSION,
         timestamp: Utc::now(),
         roles: vec!["master"],
     };
@@ -1100,218 +851,4 @@ async fn send_hello(socket: &mut WebSocket) -> Result<(), Error> {
     let ws_message = Message::Text(message.into());
 
     socket.send(ws_message).await
-}
-
-// A typical delta from SK:
-//
-// {
-//   "context": "vessels.urn:mrn:imo:mmsi:234567890",
-//   "updates": [
-//     {
-//       "source": {
-//         "label": "N2000-01",
-//         "type": "NMEA2000",
-//         "src": "115",
-//         "pgn": 128275
-//       },
-//       "values": [
-//         {
-//           "path": "navigation.trip.log",
-//           "value": 43374
-//         },
-//         {
-//           "path": "navigation.log",
-//           "value": 17404540
-//         }
-//       ]
-//     }
-//   ]
-// }
-
-#[derive(Serialize)]
-struct SignalKDelta {
-    updates: Vec<DeltaUpdate>,
-}
-
-#[derive(Serialize)]
-struct DeltaUpdate {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    source: Option<Source>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    meta: Vec<DeltaMeta>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    values: Vec<DeltaValue>,
-}
-
-#[derive(Serialize)]
-struct Source {
-    label: String,
-    src: &'static str,
-    r#type: &'static str,
-}
-
-#[derive(Serialize)]
-struct DeltaValue {
-    path: String,
-    value: BareControlValue,
-}
-
-impl From<Vec<RadarControlValue>> for SignalKDelta {
-    fn from(radar_control_values: Vec<RadarControlValue>) -> Self {
-        let radar_id = radar_control_values[0].radar_id.clone().unwrap();
-
-        let mut values = Vec::new();
-        for radar_control_value in radar_control_values {
-            let path = radar_control_value.path.to_string();
-
-            let value = BareControlValue::from(radar_control_value);
-            values.push(DeltaValue { path, value });
-        }
-
-        let delta_update = DeltaUpdate {
-            source: Some(Source {
-                label: radar_id,
-                src: "mayara",
-                r#type: "radar",
-            }),
-            meta: Vec::new(),
-            values,
-        };
-
-        let updates = vec![delta_update];
-        SignalKDelta { updates }
-    }
-}
-
-#[derive(Serialize)]
-struct DeltaMeta {
-    path: String,
-    value: ControlDefinition,
-}
-
-fn get_meta_delta(radars: &SharedRadars, meta_sent: &mut Vec<String>) -> Option<SignalKDelta> {
-    let mut meta = Vec::new();
-
-    for radar in radars.get_active() {
-        let controls = radar.controls.get_controls();
-
-        for (k, v) in controls.iter() {
-            let path = format!("radars.{}.controls.{}", radar.key(), k);
-            let value = v.item().clone();
-            meta.push(DeltaMeta { path, value });
-        }
-        meta_sent.push(radar.key());
-    }
-
-    if meta.len() == 0 {
-        return None;
-    }
-    let delta_update = DeltaUpdate {
-        source: None,
-        meta,
-        values: Vec::new(),
-    };
-    let updates = vec![delta_update];
-    Some(SignalKDelta { updates })
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn deserialize_subscription() {
-        let s = Subscription {
-            subscribe: vec![
-                PathSubscribe {
-                    path: "radars.1.gain".to_string(),
-                    period: None,
-                    policy: Some(Policy::Ideal),
-                    min_period: Some(50),
-                    last_sent: None,
-                },
-                PathSubscribe {
-                    path: "radars.2.gain".to_string(),
-                    period: Some(1000),
-                    policy: Some(Policy::Instant),
-                    min_period: None,
-                    last_sent: None,
-                },
-            ],
-        };
-        let r = serde_json::to_string(&s);
-        assert!(r.is_ok());
-        let r = r.unwrap();
-        println!("r = {}", r);
-
-        match serde_json::from_str::<Subscription>(&r) {
-            Ok(r) => {
-                assert_eq!(r.subscribe.len(), 2);
-                assert_eq!(r.subscribe[0].path, "radars.1.gain");
-                assert_eq!(r.subscribe[0].policy, Some(Policy::Ideal));
-            }
-            Err(e) => {
-                panic!("{}", e);
-            }
-        }
-
-        let s = r#"{"subscribe":[{"path":"radars.1.gain","period":null,"policy":"ideal","min_period":null}]}"#;
-        match serde_json::from_str::<Subscription>(s) {
-            Ok(r) => {
-                assert_eq!(r.subscribe.len(), 1);
-                assert_eq!(r.subscribe[0].path, "radars.1.gain");
-                assert_eq!(r.subscribe[0].policy, Some(Policy::Ideal));
-            }
-            Err(e) => {
-                panic!("{}", e);
-            }
-        }
-
-        let s = r#"{ "subscribe": [ { "path": "*.gain" } ] }"#;
-        match serde_json::from_str::<Subscription>(s) {
-            Ok(r) => {
-                assert_eq!(r.subscribe.len(), 1);
-                assert_eq!(r.subscribe[0].path, "*.gain");
-                assert_eq!(r.subscribe[0].policy, None);
-            }
-            Err(e) => {
-                panic!("{}", e);
-            }
-        }
-
-        let s = r#"{ "subscribe": [ { "path": "*" } ] }"#;
-        match serde_json::from_str::<Subscription>(s) {
-            Ok(r) => {
-                assert_eq!(r.subscribe.len(), 1);
-                assert_eq!(r.subscribe[0].path, "*");
-            }
-            Err(e) => {
-                panic!("{}", e);
-            }
-        }
-
-        let s = r#"{ "subscribe": [ { "path": "radars.*.gain" }, { "path": "radars.*.power" } ] }"#;
-        match serde_json::from_str::<Subscription>(s) {
-            Ok(r) => {
-                assert_eq!(r.subscribe.len(), 2);
-                assert_eq!(r.subscribe[0].path, "radars.*.gain");
-                assert_eq!(r.subscribe[1].path, "radars.*.power");
-            }
-            Err(e) => {
-                panic!("{}", e);
-            }
-        }
-
-        let s = r#"{ "subscribe": [ { "path": "radars.*.gain", "policy": "instant", "period": 1000 }, { "path": "radars.*.power", "period": 1000 } ] }"#;
-        match serde_json::from_str::<Subscription>(s) {
-            Ok(r) => {
-                assert_eq!(r.subscribe.len(), 2);
-                assert_eq!(r.subscribe[0].path, "radars.*.gain");
-                assert_eq!(r.subscribe[0].policy, Some(Policy::Instant));
-            }
-            Err(e) => {
-                panic!("{}", e);
-            }
-        }
-    }
 }

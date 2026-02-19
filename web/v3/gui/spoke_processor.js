@@ -122,7 +122,7 @@ class SmoothingSpokeProcessor extends SpokeProcessor {
 
     const strongReturn = this.legend.strongReturn;
     const mediumReturn = this.legend.mediumReturn;
-    const weakReturn = this.legend.weakReturn;
+    const lowReturn = this.legend.lowReturn;
     const specialStart = this.legend.specialStart;
     const maxNormal = specialStart - 1;
 
@@ -149,7 +149,7 @@ class SmoothingSpokeProcessor extends SpokeProcessor {
         spokeLen,
         strongReturn,
         mediumReturn,
-        weakReturn,
+        lowReturn,
         specialStart,
         maxNormal
       );
@@ -230,7 +230,7 @@ class SmoothingSpokeProcessor extends SpokeProcessor {
     spokeLen,
     strongReturn,
     mediumReturn,
-    weakReturn,
+    lowReturn,
     specialStart,
     maxNormal
   ) {
