@@ -38,6 +38,31 @@ label.myr_auto_label,label.myr_enabled_label,input.myr_auto,input.myr_enabled {
   float: left;
 }
 
+/* Auto toggle button */
+.myr_auto_toggle {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: bold;
+  border: 2px solid #558;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background-color: #223;
+  color: #88a;
+  margin-left: 8px;
+}
+
+.myr_auto_toggle:hover {
+  border-color: #77a;
+  background-color: #334;
+}
+
+.myr_auto_toggle.myr_auto_active {
+  background-color: #4a8;
+  border-color: #4a8;
+  color: #fff;
+}
+
 /* Power buttons container */
 div.myr_power_buttons {
   display: flex;
