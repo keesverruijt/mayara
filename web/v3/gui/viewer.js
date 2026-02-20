@@ -16,6 +16,9 @@ import {
   getOperatingTime,
   getUserName,
   togglePower,
+  zoomIn,
+  zoomOut,
+  getCurrentRangeDisplay,
 } from "./control.js";
 import { isStandaloneMode, detectMode } from "./api.js";
 import "./protobuf/protobuf.min.js";
@@ -161,6 +164,9 @@ window.onload = async function () {
 
   // Create power lozenge
   createPowerLozenge();
+
+  // Create range lozenge
+  createRangeLozenge();
 
   window.onresize = function () {
     renderer.redrawCanvas();
@@ -313,18 +319,20 @@ function updatePowerLozenge(powerState, userName) {
   const lozenge = document.getElementById("myr_power_lozenge");
   if (!lozenge) return;
 
-  // Update power state class
-  lozenge.classList.remove(
-    "myr_power_transmit",
-    "myr_power_standby",
-    "myr_power_off"
-  );
-  if (powerState === "transmit") {
-    lozenge.classList.add("myr_power_transmit");
-  } else if (powerState === "standby") {
-    lozenge.classList.add("myr_power_standby");
-  } else {
-    lozenge.classList.add("myr_power_off");
+  if (powerState !== undefined) {
+    // Update power state class
+    lozenge.classList.remove(
+      "myr_power_transmit",
+      "myr_power_standby",
+      "myr_power_off"
+    );
+    if (powerState === "transmit") {
+      lozenge.classList.add("myr_power_transmit");
+    } else if (powerState === "standby") {
+      lozenge.classList.add("myr_power_standby");
+    } else {
+      lozenge.classList.add("myr_power_off");
+    }
   }
 
   // Update user name if provided
@@ -333,6 +341,52 @@ function updatePowerLozenge(powerState, userName) {
     if (nameDisplay) {
       nameDisplay.textContent = userName || "Radar";
     }
+  }
+}
+
+// Create the range lozenge on the viewer (left side, vertically centered)
+function createRangeLozenge() {
+  const container = document.querySelector(".myr_ppi");
+  if (!container) return;
+
+  const lozenge = document.createElement("div");
+  lozenge.id = "myr_range_lozenge";
+  lozenge.className = "myr_range_lozenge";
+  lozenge.title = "Click + to zoom in, - to zoom out";
+
+  // Zoom in button (shorter range) - on top
+  const zoomInBtn = document.createElement("div");
+  zoomInBtn.className = "myr_range_zoom";
+  zoomInBtn.innerHTML = "+";
+  zoomInBtn.addEventListener("click", () => {
+    zoomIn();
+  });
+
+  // Range display - in the middle
+  const rangeDisplay = document.createElement("div");
+  rangeDisplay.id = "myr_range_display";
+  rangeDisplay.className = "myr_range_display";
+  rangeDisplay.textContent = "";
+
+  // Zoom out button (longer range) - on bottom
+  const zoomOutBtn = document.createElement("div");
+  zoomOutBtn.className = "myr_range_zoom";
+  zoomOutBtn.innerHTML = "−"; // Using minus sign character
+  zoomOutBtn.addEventListener("click", () => {
+    zoomOut();
+  });
+
+  lozenge.appendChild(zoomInBtn);
+  lozenge.appendChild(rangeDisplay);
+  lozenge.appendChild(zoomOutBtn);
+  container.appendChild(lozenge);
+}
+
+// Update the range display
+function updateRangeDisplay() {
+  const rangeDisplay = document.getElementById("myr_range_display");
+  if (rangeDisplay) {
+    rangeDisplay.textContent = getCurrentRangeDisplay();
   }
 }
 
@@ -770,9 +824,14 @@ function controlUpdate(controlId, value) {
   } else if (controlId === "userName") {
     // Update power lozenge with new user name
     updatePowerLozenge(undefined, value.value);
-  } else if (controlId === "range") {
-    const range = typeof value === "object" ? value.value : value; // this is always in meters
-    renderer.setRange(range);
+  } else {
+    // Check if this is a range control (by name)
+    const control = getControl(controlId);
+    if (control?.name === "Range") {
+      const range = typeof value === "object" ? value.value : value; // this is always in meters
+      renderer.setRange(range);
+      updateRangeDisplay();
+    }
   }
 }
 

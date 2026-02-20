@@ -4,8 +4,8 @@ use tokio::net::UdpSocket;
 
 use crate::brand::CommandSender;
 use crate::network::create_multicast_send;
+use crate::radar::settings::{ControlId, ControlValue, SharedControls, Units};
 use crate::radar::{Power, RadarError, RadarInfo};
-use crate::settings::{ControlId, ControlValue, SharedControls, Units};
 
 use super::Model;
 

@@ -39,8 +39,8 @@ mod v1;
 use axum_fix::{Message, WebSocket, WebSocketUpgrade};
 use mayara::{
     Cli, InterfaceApi, PACKAGE, VERSION,
+    radar::settings::set_api_version,
     radar::{RadarError, RadarInfo, SharedRadars},
-    settings::set_api_version,
     start_session,
 };
 

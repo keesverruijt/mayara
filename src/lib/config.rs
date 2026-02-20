@@ -11,17 +11,24 @@ use std::time::SystemTime;
 
 use crate::radar::RadarInfo;
 use crate::radar::range::Ranges;
-use crate::settings::ControlId;
 
 pub fn get_project_dirs() -> ProjectDirs {
     directories::ProjectDirs::from("net", "verruijt", "mayara")
         .expect("Cannot find project directories")
 }
 
+fn default_range_units() -> i32 {
+    0 // Nautical (default)
+}
+
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct Radar {
     pub id: usize,
     pub user_name: String,
+    #[serde(default)]
+    pub spoke_processing: i32, // 0 = Clean, 1 = Smoothing
+    #[serde(default = "default_range_units")]
+    pub range_units: i32, // 0 = Nautical, 1 = Metric, 2 = Mixed
 
     // Data that is computed and not immediately known when starting
     pub model_name: Option<String>, // Descriptive model name (4G, HALO)
@@ -153,14 +160,20 @@ impl Persistence {
             radar.user_name = user_name;
             modified = true;
         }
-        if let Some(cv) = radar_info.controls.get(&ControlId::Range) {
-            if let Some(ranges) = &cv.item().valid_values {
-                let ranges = Some(ranges.clone());
-                if radar.ranges != ranges {
-                    radar.ranges = ranges;
-                    modified = true;
-                }
-            }
+        let spoke_processing = radar_info.controls.spoke_processing();
+        if radar.spoke_processing != spoke_processing {
+            radar.spoke_processing = spoke_processing;
+            modified = true;
+        }
+        let range_units = radar_info.controls.range_units();
+        if radar.range_units != range_units {
+            radar.range_units = range_units;
+            modified = true;
+        }
+        let ranges = Some(radar_info.ranges.all.iter().map(|r| r.distance()).collect());
+        if radar.ranges != ranges {
+            radar.ranges = ranges;
+            modified = true;
         }
 
         let model_name = radar_info.controls.model_name();
@@ -180,12 +193,14 @@ impl Persistence {
                 info.controls
                     .set_model_name(p.model_name.as_ref().unwrap().clone());
             }
+            info.controls.set_user_name(p.user_name.clone());
+            info.controls.set_spoke_processing(p.spoke_processing);
+            info.controls.set_range_units(p.range_units);
             if let Some(ranges) = &p.ranges {
                 if ranges.len() > 0 {
-                    info.ranges = Ranges::new_by_distance(ranges);
+                    info.set_ranges(Ranges::new_by_distance(ranges));
                 }
             }
-            info.controls.set_user_name(p.user_name.clone());
         }
     }
 }

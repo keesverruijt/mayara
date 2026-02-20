@@ -21,8 +21,8 @@ use crate::network::{create_udp_listen, create_udp_multicast_listen};
 use crate::radar::CommonRadar;
 use crate::radar::SharedRadars;
 use crate::radar::SpokeBearing;
+use crate::radar::settings::ControlId;
 use crate::radar::{Power, RadarError, RadarInfo};
-use crate::settings::ControlId;
 use crate::util::PrintableSpoke;
 
 #[derive(Debug, Clone, Copy, PartialEq)]

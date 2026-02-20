@@ -9,6 +9,7 @@ use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 use crate::brand::RadarLocator;
 use crate::locator::LocatorAddress;
 use crate::network::LittleEndianSocketAddrV4;
+use crate::radar::settings::ControlId;
 use crate::radar::{RadarInfo, SharedRadars};
 use crate::util::{PrintableSlice, c_string};
 use crate::{Brand, Cli};
@@ -228,6 +229,7 @@ impl RaymarineLocator {
         &mut self,
         report: &[u8],
         from: &Ipv4Addr,
+        radars: &SharedRadars,
     ) -> Result<Option<RadarInfo>, Error> {
         match deserialize::<RaymarineBeacon36>(report) {
             Ok(data) => {
@@ -295,6 +297,7 @@ impl RaymarineLocator {
                     let radar_addr: SocketAddrV4 = data.report.into();
                     let radar_send: SocketAddrV4 = data.command.into();
                     let location_info: RadarInfo = RadarInfo::new(
+                        radars,
                         &self.args,
                         Brand::Raymarine,
                         None,
@@ -307,7 +310,7 @@ impl RaymarineLocator {
                         radar_addr.into(),
                         radar_addr.into(),
                         radar_send.into(),
-                        settings::new(&self.args, info.model),
+                        |id, tx| settings::new(id, tx, &self.args, info.model),
                         doppler,
                     );
 
@@ -433,7 +436,7 @@ impl RaymarineLocator {
 
     fn found(&self, info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
         info.controls
-            .set_string(&crate::settings::ControlId::UserName, info.key())
+            .set_string(&ControlId::UserName, info.key())
             .unwrap();
 
         if let Some(mut info) = radars.located(info) {
@@ -478,7 +481,7 @@ impl RadarLocator for RaymarineLocator {
             36 => {
                 // Common Raymarine message
 
-                match Self::process_beacon_36_report(self, report, nic_addr) {
+                match Self::process_beacon_36_report(self, report, nic_addr, radars) {
                     Ok(Some(info)) => {
                         self.found(info, radars, subsys);
                     }
@@ -561,7 +564,7 @@ mod tests {
 
     use clap::Parser;
 
-    use crate::{Cli, brand::raymarine::RaymarineLocator};
+    use crate::{Cli, brand::raymarine::RaymarineLocator, radar::SharedRadars};
 
     #[test]
     fn decode_raymarine_locator_beacon() {
@@ -637,14 +640,15 @@ mod tests {
             0x33, 0xc0, 0x13, 0x2, 0x0, 0x1, 0x0,
         ];
 
+        let radars = &SharedRadars::new();
         let mut state = RaymarineLocator::new(args.clone());
-        let r = state.process_beacon_36_report(&DATA1_36, &VIA);
+        let r = state.process_beacon_36_report(&DATA1_36, &VIA, radars);
         assert!(r.is_ok());
         let r = r.unwrap();
         assert!(r.is_none());
         let r = state.process_beacon_56_report(&DATA1_56, &VIA);
         assert!(r.is_ok());
-        let r = state.process_beacon_36_report(&DATA1_36, &VIA);
+        let r = state.process_beacon_36_report(&DATA1_36, &VIA, radars);
         assert!(r.is_ok());
         let r = r.unwrap();
         assert!(r.is_some());
@@ -666,13 +670,13 @@ mod tests {
         );
 
         let mut state = RaymarineLocator::new(args.clone());
-        let r = state.process_beacon_36_report(&DATA2_36, &VIA);
+        let r = state.process_beacon_36_report(&DATA2_36, &VIA, radars);
         assert!(r.is_ok());
         let r = r.unwrap();
         assert!(r.is_none());
         let r = state.process_beacon_56_report(&DATA2_56, &VIA);
         assert!(r.is_ok());
-        let r = state.process_beacon_36_report(&DATA2_36, &VIA);
+        let r = state.process_beacon_36_report(&DATA2_36, &VIA, radars);
         assert!(r.is_ok());
         let r = r.unwrap();
         assert!(r.is_some());
@@ -694,13 +698,13 @@ mod tests {
         );
 
         let mut state = RaymarineLocator::new(args.clone());
-        let r = state.process_beacon_36_report(&DATA3_36, &VIA);
+        let r = state.process_beacon_36_report(&DATA3_36, &VIA, radars);
         assert!(r.is_ok());
         let r = r.unwrap();
         assert!(r.is_none());
         let r = state.process_beacon_56_report(&DATA3_56, &VIA);
         assert!(r.is_ok());
-        let r = state.process_beacon_36_report(&DATA3_36, &VIA);
+        let r = state.process_beacon_36_report(&DATA3_36, &VIA, radars);
         assert!(r.is_ok());
         let r = r.unwrap();
         assert!(r.is_some());

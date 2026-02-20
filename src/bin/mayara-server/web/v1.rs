@@ -19,8 +19,8 @@ use super::{
 };
 
 use mayara::{
+    radar::settings::{ApiVersion, Control, ControlId, ControlValue},
     radar::{Legend, RadarError},
-    settings::{ApiVersion, Control, ControlId, ControlValue},
 };
 
 pub(super) const RADAR_URI: &str = "/v1/api/radars";

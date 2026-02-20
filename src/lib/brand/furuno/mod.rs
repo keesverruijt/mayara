@@ -9,6 +9,7 @@ use std::time::Duration;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
 use crate::locator::LocatorAddress;
+use crate::radar::settings::ControlId;
 use crate::radar::{RadarInfo, SharedRadars};
 use crate::util::{PrintableSlice, c_string};
 use crate::{Brand, Cli};
@@ -234,7 +235,7 @@ impl FurunoLocator {
 
     fn found(&self, info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
         info.controls
-            .set_string(&crate::settings::ControlId::UserName, info.key())
+            .set_string(&ControlId::UserName, info.key())
             .unwrap();
 
         if let Some(mut info) = radars.located(info) {
@@ -307,7 +308,7 @@ impl FurunoLocator {
             && report[16] == b'R'
             && report[0..11] == FURUNO_RADAR_REPORT_HEADER
         {
-            self.process_beacon_report(report, from, via)
+            self.process_beacon_report(report, from, via, radars)
         } else if report.len() == 170 {
             self.process_beacon_model_report(report, from, via, radars, subsys)
         } else {
@@ -320,6 +321,7 @@ impl FurunoLocator {
         report: &[u8],
         from: &SocketAddrV4,
         nic_addr: &Ipv4Addr,
+        radars: &SharedRadars,
     ) -> Result<(), io::Error> {
         match deserialize::<FurunoRadarReport>(report) {
             Ok(data) => {
@@ -346,6 +348,7 @@ impl FurunoLocator {
                     let report_addr: SocketAddrV4 = SocketAddrV4::new(*from.ip(), 0); // Port is set in login_to_radar
                     let send_command_addr: SocketAddrV4 = report_addr.clone();
                     let location_info: RadarInfo = RadarInfo::new(
+                        radars,
                         &self.args,
                         Brand::Furuno,
                         None,
@@ -358,7 +361,7 @@ impl FurunoLocator {
                         spoke_data_addr,
                         report_addr,
                         send_command_addr,
-                        settings::new(&self.args),
+                        |id, tx| settings::new(id, tx, &self.args),
                         true,
                     );
                     self.half_found.insert(*from, location_info);

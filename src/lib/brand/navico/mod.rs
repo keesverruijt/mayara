@@ -8,8 +8,8 @@ use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
 use crate::locator::LocatorAddress;
 use crate::network::NetworkSocketAddrV4;
+use crate::radar::settings::ControlId;
 use crate::radar::{RadarInfo, SharedRadars};
-use crate::settings::ControlId;
 use crate::util::PrintableSlice;
 use crate::util::c_string;
 use crate::{Brand, Cli};
@@ -303,6 +303,7 @@ impl NavicoLocator {
                         let radar_report: SocketAddrV4 = data.a.report.into();
                         let radar_send: SocketAddrV4 = data.a.send.into();
                         let location_info: RadarInfo = RadarInfo::new(
+                            radars,
                             &self.args,
                             Brand::Navico,
                             Some(serial_no),
@@ -315,7 +316,7 @@ impl NavicoLocator {
                             radar_data.into(),
                             radar_report.into(),
                             radar_send.into(),
-                            settings::new(&self.args, None),
+                            |id, tx| settings::new(id, tx, &self.args, None),
                             true,
                         );
                         self.found(location_info, radars, subsys);
@@ -324,6 +325,7 @@ impl NavicoLocator {
                         let radar_report: SocketAddrV4 = data.b.report.into();
                         let radar_send: SocketAddrV4 = data.b.send.into();
                         let location_info: RadarInfo = RadarInfo::new(
+                            radars,
                             &self.args,
                             Brand::Navico,
                             Some(serial_no),
@@ -336,7 +338,7 @@ impl NavicoLocator {
                             radar_data.into(),
                             radar_report.into(),
                             radar_send.into(),
-                            settings::new(&self.args, None),
+                            |id, tx| settings::new(id, tx, &self.args, None),
                             true,
                         );
                         self.found(location_info, radars, subsys);
@@ -368,6 +370,7 @@ impl NavicoLocator {
                         let radar_report: SocketAddrV4 = data.a.report.into();
                         let radar_send: SocketAddrV4 = data.a.send.into();
                         let location_info: RadarInfo = RadarInfo::new(
+                            radars,
                             &self.args,
                             Brand::Navico,
                             Some(serial_no),
@@ -380,7 +383,7 @@ impl NavicoLocator {
                             radar_data.into(),
                             radar_report.into(),
                             radar_send.into(),
-                            settings::new(&self.args, None),
+                            |id, tx| settings::new(id, tx, &self.args, None),
                             false,
                         );
                         self.found(location_info, radars, subsys);
@@ -408,6 +411,7 @@ impl NavicoLocator {
                         let radar_report: SocketAddrV4 = data.report.into();
                         let radar_send: SocketAddrV4 = data.send.into();
                         let location_info: RadarInfo = RadarInfo::new(
+                            radars,
                             &self.args,
                             Brand::Navico,
                             Some(serial_no),
@@ -420,7 +424,7 @@ impl NavicoLocator {
                             radar_data.into(),
                             radar_report.into(),
                             radar_send.into(),
-                            settings::new(&self.args, Some(BR24_MODEL_NAME)),
+                            |id, tx| settings::new(id, tx, &self.args, Some(BR24_MODEL_NAME)),
                             false,
                         );
                         self.found(location_info, radars, subsys);
@@ -436,7 +440,7 @@ impl NavicoLocator {
 
     fn found(&self, info: RadarInfo, radars: &SharedRadars, subsys: &SubsystemHandle) {
         info.controls
-            .set_string(&crate::settings::ControlId::UserName, info.key())
+            .set_string(&ControlId::UserName, info.key())
             .unwrap();
 
         if let Some(mut info) = radars.located(info) {

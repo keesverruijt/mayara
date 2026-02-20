@@ -28,13 +28,13 @@ use crate::brand::navico::{
 };
 use crate::network::create_udp_multicast_listen;
 use crate::radar::range::{RangeDetection, RangeDetectionResult};
+use crate::radar::settings::{ControlId, ControlValue};
 use crate::radar::spoke::GenericSpoke;
 use crate::radar::target::MS_TO_KN;
 use crate::radar::{
     BYTE_LOOKUP_LENGTH, CommonRadar, DopplerMode, Legend, Power, RadarError, RadarInfo,
     SharedRadars, SpokeBearing,
 };
-use crate::settings::{ControlId, ControlValue};
 use crate::util::PrintableSpoke;
 use crate::util::{c_string, c_wide_string};
 
@@ -874,11 +874,7 @@ impl NavicoReportReceiver {
                     return Ok(());
                 }
                 RangeDetectionResult::Complete(ranges, saved_range) => {
-                    self.common.info.ranges = ranges.clone();
-                    self.common
-                        .info
-                        .controls
-                        .set_valid_ranges(&ControlId::Range, &ranges)?;
+                    self.common.info.set_ranges(ranges);
                     self.common.info.range_detection = None;
                     self.range_timeout = Instant::now() + FAR_FUTURE;
 

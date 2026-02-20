@@ -14,8 +14,12 @@ use crate::radar::NAUTICAL_MILE_F64;
 
 use super::NAUTICAL_MILE;
 
+// What follows are ranges that we try when range detection is attempted
+// where the code will send all those ranges to the radar to see if it
+// "sticks", and if so it adds it to the supported ranges for that radar.
+
 // All ranges seen on all radars
-pub static ALL_POSSIBLE_NAUTICAL_RANGES: LazyLock<Ranges> = LazyLock::new(|| {
+static ALL_POSSIBLE_NAUTICAL_RANGES: LazyLock<Ranges> = LazyLock::new(|| {
     Ranges::new(vec![
         Range::initial(57),                  // 1/32 nm
         Range::initial(115),                 // 1/16 nm
@@ -45,7 +49,7 @@ pub static ALL_POSSIBLE_NAUTICAL_RANGES: LazyLock<Ranges> = LazyLock::new(|| {
 });
 
 // All ranges seen on all radars
-pub static ALL_POSSIBLE_METRIC_RANGES: LazyLock<Ranges> = LazyLock::new(|| {
+static ALL_POSSIBLE_METRIC_RANGES: LazyLock<Ranges> = LazyLock::new(|| {
     Ranges::new(vec![
         Range::initial(50),
         Range::initial(75),
@@ -198,20 +202,29 @@ pub struct Ranges {
     pub all: Vec<Range>,
     pub metric: Vec<Range>,
     pub nautical: Vec<Range>,
+    pub mixed: Vec<Range>,
     ordered: bool,
 }
 
 impl Ranges {
-    pub fn new(mut ranges: Vec<Range>) -> Self {
+    pub(crate) fn new(mut ranges: Vec<Range>) -> Self {
         let mut metric = Vec::new();
         let mut nautical = Vec::new();
+        let mut mixed = Vec::new();
         let mut all = Vec::new();
+
         ranges.sort_by(|a, b| a.distance.cmp(&b.distance));
         for (i, range) in ranges.iter().enumerate() {
             if Range::metric(range.distance) {
                 metric.push(Range::new(range.distance, i));
+                if (range.distance) <= 1000 {
+                    mixed.push(Range::new(range.distance, i));
+                }
             } else {
                 nautical.push(Range::new(range.distance, i));
+                if (range.distance) > 1500 {
+                    mixed.push(Range::new(range.distance, i));
+                }
             }
             all.push(Range::new(range.distance, i));
         }
@@ -219,28 +232,30 @@ impl Ranges {
             all: ranges,
             metric,
             nautical,
+            mixed,
             ordered: true,
         }
     }
 
-    pub fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         Self {
             all: Vec::new(),
             metric: Vec::new(),
             nautical: Vec::new(),
+            mixed: Vec::new(),
             ordered: false,
         }
     }
 
-    pub fn new_by_distance(ranges: &Vec<i32>) -> Self {
+    pub(crate) fn new_by_distance(distances: &Vec<i32>) -> Self {
         let mut r = Vec::new();
-        for (i, &value) in ranges.iter().enumerate() {
+        for (i, &value) in distances.iter().enumerate() {
             r.push(Range::new(value, i));
         }
         Self::new(r)
     }
 
-    pub fn push(&mut self, range: Range) -> bool {
+    pub(crate) fn push(&mut self, range: Range) -> bool {
         if self.all.iter().any(|r| r.distance == range.distance) {
             // If the range already exists, do not add it again
             return false;
@@ -250,9 +265,15 @@ impl Ranges {
         if Range::metric(self.all[index].distance) {
             self.metric
                 .push(Range::new(self.all[index].distance, index));
+            if (range.distance) <= 1000 {
+                self.mixed.push(Range::new(self.all[index].distance, index));
+            }
         } else {
             self.nautical
                 .push(Range::new(self.all[index].distance, index));
+            if (range.distance) > 1500 {
+                self.mixed.push(Range::new(self.all[index].distance, index));
+            }
         }
         true
     }
@@ -269,7 +290,7 @@ impl Ranges {
         false
     }
 
-    pub fn get_distance(&self, index: usize) -> i32 {
+    pub(crate) fn get_distance(&self, index: usize) -> i32 {
         if let Some(range) = self.all.get(index) {
             range.distance
         } else {
@@ -277,11 +298,11 @@ impl Ranges {
         }
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.all.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.all.is_empty()
     }
 }

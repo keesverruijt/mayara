@@ -12,14 +12,9 @@ use strum::{EnumIter, IntoEnumIterator};
 use kalman::{KalmanFilter, LocalPosition, Polar};
 use ndarray::Array2;
 
-use crate::{
-    navdata,
-    protos::RadarMessage::radar_message::Spoke,
-    radar::NAUTICAL_MILE_F64,
-    settings::{ControlError, ControlId},
-};
-
+use super::settings::{ControlError, ControlId};
 use super::{GeoPosition, Legend, RadarInfo};
+use crate::{navdata, protos::RadarMessage::radar_message::Spoke, radar::NAUTICAL_MILE_F64};
 
 mod arpa;
 mod kalman;

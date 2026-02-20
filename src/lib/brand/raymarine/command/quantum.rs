@@ -1,5 +1,5 @@
+use crate::radar::settings::{ControlId, ControlValue, SharedControls};
 use crate::radar::{Power, RadarError};
-use crate::settings::{ControlId, ControlValue, SharedControls};
 
 use super::Command;
 

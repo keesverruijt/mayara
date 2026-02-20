@@ -16,8 +16,8 @@ pub(crate) mod navico;
 pub(crate) mod raymarine;
 
 use crate::locator::LocatorAddress;
+use crate::radar::settings::{ControlValue, SharedControls};
 use crate::radar::{RadarError, SharedRadars};
-use crate::settings::{ControlValue, SharedControls};
 use crate::{Brand, Cli};
 
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Debug)]

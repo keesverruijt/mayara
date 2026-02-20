@@ -71,6 +71,7 @@ div.myr_ppi {
   font-size: 14px;
   font-weight: bold;
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
   z-index: 100;
   transition: all 0.2s ease;
@@ -105,6 +106,7 @@ div.myr_ppi {
   font-weight: bold;
   z-index: 100;
   overflow: hidden;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -170,4 +172,53 @@ div.myr_ppi {
   padding: 0 14px 0 10px;
   color: #8cf;
   white-space: nowrap;
+}
+
+/* Range lozenge - vertical, left side, centered */
+.myr_range_lozenge {
+  position: absolute;
+  left: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 24px;
+  border: 1px solid #444;
+  overflow: hidden;
+  z-index: 100;
+  padding: 4px 0;
+}
+
+.myr_range_zoom {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 32px;
+  color: #8cf;
+  font-size: 36px;
+  font-weight: bold;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.myr_range_zoom:hover {
+  color: #fff;
+}
+
+.myr_range_zoom:active {
+  transform: scale(0.95);
+}
+
+.myr_range_display {
+  padding: 4px 12px;
+  color: #8cf;
+  font-size: 11px;
+  font-weight: bold;
+  text-align: center;
+  white-space: nowrap;
+  min-width: 48px;
 }

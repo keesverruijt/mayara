@@ -2,26 +2,25 @@ use std::collections::HashMap;
 
 use crate::{
     Cli,
-    radar::{NAUTICAL_MILE, RadarInfo, range::Ranges},
-    settings::{
+    radar::settings::{
         ControlId, HAS_AUTO_NOT_ADJUSTABLE, SharedControls, Units, new_auto, new_list, new_numeric,
         new_string,
     },
+    radar::{RadarInfo, range::Ranges},
+    stream::SignalKDelta,
 };
 
 use super::RadarModel;
 
-pub fn new(args: &Cli) -> SharedControls {
+pub fn new(
+    radar_id: String,
+    sk_client_tx: tokio::sync::broadcast::Sender<SignalKDelta>,
+    args: &Cli,
+) -> SharedControls {
     let mut controls = HashMap::new();
 
     new_string(ControlId::UserName)
         .read_only(false)
-        .build(&mut controls);
-
-    // Note: valid range values are set per-model in update_when_model_known()
-    let max_value = 120. * NAUTICAL_MILE as f64;
-    new_numeric(ControlId::Range, 0., max_value)
-        .wire_units(Units::Meters)
         .build(&mut controls);
 
     new_auto(ControlId::Gain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE).build(&mut controls);
@@ -44,7 +43,8 @@ pub fn new(args: &Cli) -> SharedControls {
 
     new_string(ControlId::SerialNumber).build(&mut controls);
 
-    SharedControls::new(args, controls)
+    // Furuno is nautical-only - no RangeUnits control, default is already 0 (Nautical)
+    SharedControls::new(radar_id, sk_client_tx, args, controls)
 }
 
 pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version: &str) {
@@ -70,9 +70,7 @@ pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version:
         model_name,
         ranges
     );
-    info.controls
-        .set_valid_ranges(&ControlId::Range, &ranges)
-        .expect("Set valid values");
+    info.set_ranges(ranges);
 
     // TODO: Add controls based on reverse engineered capability table
 

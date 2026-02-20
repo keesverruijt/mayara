@@ -5,14 +5,20 @@ use strum::VariantNames;
 use super::{HaloMode, Model};
 use crate::{
     Cli,
-    radar::{NAUTICAL_MILE_F64, RadarInfo},
-    settings::{
+    radar::RadarInfo,
+    radar::settings::{
         AutomaticValue, ControlId, HAS_AUTO_NOT_ADJUSTABLE, SharedControls, Units, new_auto,
         new_list, new_numeric, new_string,
     },
+    stream::SignalKDelta,
 };
 
-pub fn new(args: &Cli, model: Option<&str>) -> SharedControls {
+pub fn new(
+    radar_id: String,
+    sk_client_tx: tokio::sync::broadcast::Sender<SignalKDelta>,
+    args: &Cli,
+    model: Option<&str>,
+) -> SharedControls {
     let mut controls = HashMap::new();
 
     new_string(ControlId::ModelName).build(&mut controls);
@@ -70,7 +76,11 @@ pub fn new(args: &Cli, model: Option<&str>) -> SharedControls {
     .build(&mut controls);
     new_string(ControlId::SerialNumber).build(&mut controls);
 
-    SharedControls::new(args, controls)
+    // Navico supports all three range unit modes
+    // 0 = Nautical (default), 1 = Metric, 2 = Mixed
+    new_list(ControlId::RangeUnits, &["Nautical", "Metric", "Mixed"]).build(&mut controls);
+
+    SharedControls::new(radar_id, sk_client_tx, args, controls)
 }
 
 pub fn update_when_model_known(
@@ -79,6 +89,11 @@ pub fn update_when_model_known(
     radar_info: &RadarInfo,
 ) {
     controls.set_model_name(model.to_string());
+
+    // Override the wire_units for Range
+    controls
+        .set_wire_range(&ControlId::Range, 0.0, 10.0)
+        .expect("Range is mandatory");
 
     if let Some(serial_number) = radar_info.serial_no.as_ref() {
         controls
@@ -101,22 +116,6 @@ pub fn update_when_model_known(
         }
         controls.set_user_name(user_name);
     }
-
-    let max_value = (match model {
-        Model::Unknown => 96.,
-        Model::BR24 => 24.,
-        Model::Gen3 => 36.,
-        Model::Gen4 | Model::HaloOrG4 => 48.,
-        Model::HALO => 96.,
-    }) * NAUTICAL_MILE_F64;
-    controls.add(
-        new_numeric(ControlId::Range, 50., max_value)
-            .wire_scale_factor(10., false)
-            .wire_units(Units::Meters),
-    ); // Radar sends and receives in decimeters
-    controls
-        .set_valid_ranges(&ControlId::Range, &radar_info.ranges)
-        .expect("Valid ranges");
 
     if model == Model::HALO {
         controls.add(new_list(ControlId::Mode, HaloMode::VARIANTS));

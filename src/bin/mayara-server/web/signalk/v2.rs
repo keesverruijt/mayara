@@ -35,8 +35,8 @@ use crate::web::spokes_handler;
 
 use super::super::{Message, Web, WebSocket, WebSocketUpgrade};
 use mayara::{
+    radar::settings::{BareControlValue, Control, ControlId, ControlValue, RadarControlValue},
     radar::{Legend, RadarError, RadarInfo, SharedRadars},
-    settings::{BareControlValue, Control, ControlId, ControlValue, RadarControlValue},
     stream::{ActiveSubscriptions, Desubscription, SignalKDelta, Subscribe, Subscription},
 };
 

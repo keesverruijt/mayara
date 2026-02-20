@@ -11,11 +11,11 @@ use wildmatch::WildMatch;
 
 use crate::{
     PACKAGE,
+    radar::settings::{BareControlValue, Control, ControlDefinition, ControlId, RadarControlValue},
     radar::{RadarError, SharedRadars},
-    settings::{BareControlValue, ControlDefinition, ControlId, RadarControlValue},
 };
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 pub struct SignalKDelta {
     updates: Vec<DeltaUpdate>,
 }
@@ -50,13 +50,28 @@ impl SignalKDelta {
                 }
             }
         }
-        if meta {
+        if !meta {
             self.add_meta_updates(radars, meta_sent);
         }
     }
 
     pub fn add_updates(&mut self, rcvs: Vec<RadarControlValue>) {
         let delta_update = DeltaUpdate::from(rcvs);
+        self.updates.push(delta_update);
+    }
+
+    pub fn add_meta_for_control(&mut self, radar_id: &str, control: &Control) {
+        let mut meta = Vec::new();
+        let path = format!("radars.{}.controls.{}", radar_id, control.item().control_id);
+        let value = control.item().clone();
+        meta.push(DeltaMeta { path, value });
+
+        let delta_update = DeltaUpdate {
+            timestamp: Some(Utc::now()),
+            source: Some(PACKAGE.to_string()),
+            meta,
+            values: Vec::new(),
+        };
         self.updates.push(delta_update);
     }
 
@@ -76,7 +91,7 @@ impl SignalKDelta {
     }
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 struct DeltaUpdate {
     #[serde(
         rename = "$source",
@@ -92,7 +107,7 @@ struct DeltaUpdate {
     values: Vec<DeltaValue>,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 struct DeltaValue {
     path: String,
     value: BareControlValue,
@@ -119,7 +134,7 @@ impl DeltaUpdate {
     }
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 pub struct DeltaMeta {
     path: String,
     value: ControlDefinition,
@@ -129,14 +144,15 @@ fn get_meta_delta(radars: &SharedRadars, meta_sent: &mut Vec<String>) -> Option<
     let mut meta = Vec::new();
 
     for radar in radars.get_active() {
+        let radar_id = radar.key();
         let controls = radar.controls.get_controls();
 
         for (k, v) in controls.iter() {
-            let path = format!("radars.{}.controls.{}", radar.key(), k);
+            let path = format!("radars.{}.controls.{}", radar_id, k);
             let value = v.item().clone();
             meta.push(DeltaMeta { path, value });
         }
-        meta_sent.push(radar.key());
+        meta_sent.push(radar_id);
     }
 
     if meta.len() == 0 {
@@ -205,7 +221,7 @@ impl ActiveSubscriptions {
                 for id in ControlId::iter() {
                     let matcher = WildMatch::new(control_id);
                     if matcher.matches(&id.to_string()) {
-                        log::info!("{} matches {}", id, control_id);
+                        log::trace!("{} matches {}", id, control_id);
                         paths.insert(id, path_subscription.clone());
                     }
                 }

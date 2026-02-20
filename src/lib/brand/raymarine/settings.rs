@@ -3,16 +3,22 @@ use std::collections::HashMap;
 use crate::{
     Cli,
     brand::raymarine::RaymarineModel,
-    radar::{NAUTICAL_MILE_F64, RadarInfo},
-    settings::{
+    radar::RadarInfo,
+    radar::settings::{
         ControlId, HAS_AUTO_NOT_ADJUSTABLE, SharedControls, Units, new_auto, new_list, new_numeric,
         new_string,
     },
+    stream::SignalKDelta,
 };
 
 use super::BaseModel;
 
-pub fn new(args: &Cli, model: BaseModel) -> SharedControls {
+pub fn new(
+    radar_id: String,
+    sk_client_tx: tokio::sync::broadcast::Sender<SignalKDelta>,
+    args: &Cli,
+    model: BaseModel,
+) -> SharedControls {
     let mut controls = HashMap::new();
 
     new_string(ControlId::UserName).build(&mut controls);
@@ -113,7 +119,9 @@ pub fn new(args: &Cli, model: BaseModel) -> SharedControls {
         }
     }
     new_string(ControlId::SerialNumber).build(&mut controls);
-    SharedControls::new(args, controls)
+
+    // Raymarine is nautical-only - no RangeUnits control, default is already 0 (Nautical)
+    SharedControls::new(radar_id, sk_client_tx, args, controls)
 }
 
 pub fn update_when_model_known(
@@ -145,10 +153,6 @@ pub fn update_when_model_known(
         }
         controls.set_user_name(user_name);
     }
-
-    let max_value = 36. * NAUTICAL_MILE_F64 as f64;
-    controls.add(new_numeric(ControlId::Range, 50., max_value).wire_units(Units::Meters));
-    let _ = controls.set_valid_ranges(&ControlId::Range, &radar_info.ranges);
 
     controls.add(
         new_auto(ControlId::Sea, 0., 100., HAS_AUTO_NOT_ADJUSTABLE).wire_scale_factor(255., false),

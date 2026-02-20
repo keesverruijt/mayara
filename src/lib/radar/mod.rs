@@ -18,6 +18,7 @@ use tokio::sync::broadcast;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 
 pub mod range;
+pub mod settings;
 pub mod spoke;
 pub mod target;
 pub mod trail;
@@ -25,11 +26,11 @@ pub mod trail;
 use crate::brand::CommandSender;
 use crate::config::Persistence;
 use crate::protos::RadarMessage::RadarMessage;
-use crate::radar::spoke::{GenericSpoke, to_protobuf_spoke};
-use crate::radar::trail::TrailBuffer;
-use crate::settings::{
+use crate::radar::settings::{
     ControlDestination, ControlError, ControlId, ControlUpdate, ControlValue, SharedControls, Units,
 };
+use crate::radar::spoke::{GenericSpoke, to_protobuf_spoke};
+use crate::radar::trail::TrailBuffer;
 use crate::stream::SignalKDelta;
 use crate::{Brand, Cli, TargetMode};
 use range::{RangeDetection, Ranges};
@@ -213,7 +214,8 @@ pub struct RadarInfo {
 }
 
 impl RadarInfo {
-    pub fn new(
+    pub fn new<F>(
+        radars: &SharedRadars,
         args: &Cli,
         brand: Brand,
         serial_no: Option<&str>,
@@ -226,9 +228,12 @@ impl RadarInfo {
         spoke_data_addr: SocketAddrV4,
         report_addr: SocketAddrV4,
         send_command_addr: SocketAddrV4,
-        controls: SharedControls,
+        controls_fn: F,
         doppler: bool,
-    ) -> Self {
+    ) -> Self
+    where
+        F: FnOnce(String, tokio::sync::broadcast::Sender<SignalKDelta>) -> SharedControls,
+    {
         let (message_tx, _message_rx) = tokio::sync::broadcast::channel(32);
 
         let (targets, replay, output) = {
@@ -240,24 +245,24 @@ impl RadarInfo {
         };
         let legend = default_legend(&targets, false, pixel_values);
 
+        let mut key = brand.to_prefix().to_string();
+        if let Some(serial_no) = serial_no {
+            key.push_str(&serial_no[serial_no.len().saturating_sub(4)..]);
+        } else {
+            write!(key, "{:04x}", addr.ip().to_bits() & 0xffff).unwrap();
+        }
+        if let Some(dual) = dual {
+            key.push_str(dual);
+        }
+
+        let sk_client_tx = radars.radars.read().unwrap().sk_client_tx.clone();
+        let controls = controls_fn(key.clone(), sk_client_tx);
+
         let info = RadarInfo {
             targets,
             replay,
             output,
-            key: {
-                let mut key = brand.to_prefix().to_string();
-
-                if let Some(serial_no) = serial_no {
-                    key.push_str(&serial_no[serial_no.len().saturating_sub(4)..]);
-                } else {
-                    write!(key, "{:04x}", addr.ip().to_bits() & 0xffff).unwrap();
-                }
-
-                if let Some(dual) = dual {
-                    key.push_str(dual);
-                }
-                key
-            },
+            key,
             brand,
             serial_no: serial_no.map(String::from),
             dual: dual.map(String::from),
@@ -353,10 +358,9 @@ impl RadarInfo {
         }
     }
 
-    pub fn set_ranges(&mut self, ranges: Ranges) -> Result<(), RadarError> {
-        self.controls.set_valid_ranges(&ControlId::Range, &ranges)?;
+    pub(crate) fn set_ranges(&mut self, ranges: Ranges) {
         self.ranges = ranges;
-        Ok(())
+        self.controls.set_valid_ranges(&self.ranges);
     }
 
     pub(super) fn broadcast_radar_message(&self, message: RadarMessage) {
@@ -492,10 +496,6 @@ impl SharedRadars {
     pub fn update(&self, radar_info: &mut RadarInfo) {
         let mut radars = self.radars.write().unwrap();
 
-        let sk_client_tx = radars.sk_client_tx.clone();
-        radar_info
-            .controls
-            .set_radar_info(sk_client_tx, radar_info.key());
         radars
             .info
             .insert(radar_info.key.clone(), radar_info.clone());

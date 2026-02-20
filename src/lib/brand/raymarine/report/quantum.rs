@@ -6,9 +6,9 @@ use crate::brand::raymarine::command::Command;
 use crate::brand::raymarine::report::{LookupDoppler, PixelToBlobType, pixel_to_blob};
 use crate::brand::raymarine::{RaymarineModel, hd_to_pixel_values, settings};
 use crate::radar::range::{Range, Ranges};
+use crate::radar::settings::ControlId;
 use crate::radar::spoke::GenericSpoke;
 use crate::radar::{Power, SpokeBearing};
-use crate::settings::ControlId;
 
 use super::{RaymarineReportReceiver, ReceiverState};
 

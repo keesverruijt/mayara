@@ -18,6 +18,8 @@ use thiserror::Error;
 use utoipa::ToSchema;
 
 use crate::Cli;
+use crate::radar::NAUTICAL_MILE;
+use crate::radar::range::Range;
 use crate::stream::SignalKDelta;
 use crate::{
     TargetMode,
@@ -71,11 +73,15 @@ pub struct Controls {
     controls: HashMap<ControlId, Control>,
 
     #[serde(skip)]
-    key: Option<String>, // A copy of the radar's key() value
+    radar_id: String, // A copy of the radar's key() value
+    #[serde(skip)]
+    all_ranges: Ranges, // All supported ranges, used for filtering by RangeUnits
+    #[serde(skip)]
+    default_range_units: i32, // Default range units (0=Metric, 1=Nautical, 2=Mixed) when no control exists
     #[serde(skip)]
     all_clients_tx: tokio::sync::broadcast::Sender<ControlValue>,
     #[serde(skip)]
-    sk_client_tx: Option<tokio::sync::broadcast::Sender<SignalKDelta>>,
+    sk_client_tx: tokio::sync::broadcast::Sender<SignalKDelta>,
     #[serde(skip)]
     control_update_tx: tokio::sync::broadcast::Sender<ControlUpdate>,
 }
@@ -93,13 +99,24 @@ impl Controls {
         self.controls.insert(control_id, v);
     }
 
-    pub(self) fn new_base(args: &Cli, mut controls: HashMap<ControlId, Control>) -> Self {
+    pub(self) fn new_base(
+        radar_id: String,
+        sk_client_tx: tokio::sync::broadcast::Sender<SignalKDelta>,
+        args: &Cli,
+        mut controls: HashMap<ControlId, Control>,
+    ) -> Self {
         // Add _mandatory_ controls
         if !controls.contains_key(&ControlId::ModelName) {
             new_string(ControlId::ModelName)
                 .read_only(true)
                 .build(&mut controls);
         }
+
+        // Note: valid range values are set per-model in update_when_model_known()
+        let max_value = 120. * NAUTICAL_MILE as f64;
+        new_numeric(ControlId::Range, 0., max_value)
+            .wire_units(Units::Meters)
+            .build(&mut controls);
 
         new_numeric(ControlId::Spokes, 0., 9999.)
             .read_only(true)
@@ -119,6 +136,8 @@ impl Controls {
         new_string(ControlId::UserName)
             .read_only(false)
             .build(&mut controls);
+
+        new_list(ControlId::SpokeProcessing, &["Clean", "Smoothing"]).build(&mut controls);
 
         if args.targets != TargetMode::None {
             new_map(
@@ -155,9 +174,11 @@ impl Controls {
         Controls {
             replay: args.replay,
             controls,
-            key: None,
+            radar_id,
+            all_ranges: Ranges::empty(),
+            default_range_units: 0, // Nautical (default) - can be overridden per brand
             all_clients_tx,
-            sk_client_tx: None,
+            sk_client_tx,
             control_update_tx,
         }
     }
@@ -197,7 +218,12 @@ impl SharedControls {
     // Create a new set of controls, for a radar.
     // There is only one set that is shared amongst the various threads and
     // structs, hence the word Shared.
-    pub(crate) fn new(args: &Cli, mut controls: HashMap<ControlId, Control>) -> SharedControls {
+    pub(crate) fn new(
+        radar_id: String,
+        sk_client_tx: tokio::sync::broadcast::Sender<SignalKDelta>,
+        args: &Cli,
+        mut controls: HashMap<ControlId, Control>,
+    ) -> SharedControls {
         // All radars must have the same Status control
         new_list(
             ControlId::Power,
@@ -208,23 +234,18 @@ impl SharedControls {
         .build(&mut controls); // Only allow setting to Standby (index 1) and Transmit (index 2)
 
         SharedControls {
-            controls: Arc::new(RwLock::new(Controls::new_base(args, controls))),
+            controls: Arc::new(RwLock::new(Controls::new_base(
+                radar_id,
+                sk_client_tx,
+                args,
+                controls,
+            ))),
         }
     }
 
     pub(crate) fn add(&mut self, control_builder: ControlBuilder) {
         let (id, control) = control_builder.take();
         self.controls.write().unwrap().controls.insert(id, control);
-    }
-
-    pub(crate) fn set_radar_info(
-        &mut self,
-        sk_client_tx: tokio::sync::broadcast::Sender<SignalKDelta>,
-        radar_label: String,
-    ) {
-        let mut locked = self.controls.write().unwrap();
-        locked.key = Some(radar_label);
-        locked.sk_client_tx = Some(sk_client_tx);
     }
 
     fn get_command_tx(&self) -> tokio::sync::broadcast::Sender<ControlUpdate> {
@@ -386,7 +407,7 @@ impl SharedControls {
         locked
             .controls
             .iter()
-            .map(|(_, c)| RadarControlValue::new(locked.key.as_ref().unwrap(), c, None))
+            .map(|(_, c)| RadarControlValue::new(&locked.radar_id, c, None))
             .collect()
     }
 
@@ -423,6 +444,9 @@ impl SharedControls {
     }
 
     fn send_to_all_clients(&self, control: &Control) {
+        if control.item.control_id == ControlId::RangeUnits {
+            self.update_valid_ranges();
+        }
         let control_value = ControlValue::from(control, None);
         let locked = self.controls.read().unwrap();
         match locked.all_clients_tx.send(control_value.clone()) {
@@ -435,20 +459,27 @@ impl SharedControls {
                 );
             }
         }
-        if let (Some(label), Some(sk_client_tx)) = (&locked.key, &locked.sk_client_tx) {
-            let radar_control_value = RadarControlValue::new(label, control, None);
+        let radar_control_value = RadarControlValue::new(&locked.radar_id, control, None);
 
-            let mut sk_delta = SignalKDelta::new();
-            sk_delta.add_updates(vec![radar_control_value]);
-            match sk_client_tx.send(sk_delta.build().unwrap()) {
-                Err(_e) => {}
-                Ok(cnt) => {
-                    log::debug!(
-                        "Sent control value {} to {} SK clients",
-                        control.item().control_id,
-                        cnt
-                    );
-                }
+        log::info!("Sending {:?} to SignalK", radar_control_value);
+        let mut sk_delta = SignalKDelta::new();
+        if control.item.control_id == ControlId::RangeUnits {
+            let range_control = locked
+                .controls
+                .get(&ControlId::Range)
+                .expect("Range should always be set");
+            sk_delta.add_meta_for_control(&locked.radar_id, &range_control);
+            log::info!("meta: {:?}", sk_delta);
+        }
+        sk_delta.add_updates(vec![radar_control_value]);
+        match locked.sk_client_tx.send(sk_delta.build().unwrap()) {
+            Err(_e) => {}
+            Ok(cnt) => {
+                log::debug!(
+                    "Sent control value {} to {} SK clients",
+                    control.item().control_id,
+                    cnt
+                );
             }
         }
     }
@@ -747,6 +778,7 @@ impl SharedControls {
 
         if let Some(control) = control {
             self.send_to_all_clients(&control);
+
             Ok(control.description.clone())
         } else {
             Ok(None)
@@ -776,6 +808,38 @@ impl SharedControls {
             .unwrap()
     }
 
+    pub fn set_spoke_processing(&self, value: i32) {
+        let mut locked = self.controls.write().unwrap();
+        let control = locked
+            .controls
+            .get_mut(&ControlId::SpokeProcessing)
+            .unwrap();
+        let _ = control.set(value as f64, None, None, None);
+    }
+
+    pub fn spoke_processing(&self) -> i32 {
+        self.get(&ControlId::SpokeProcessing)
+            .and_then(|c| c.value)
+            .map(|v| v as i32)
+            .unwrap_or(0)
+    }
+
+    pub fn set_range_units(&self, value: i32) {
+        let mut locked = self.controls.write().unwrap();
+        let control = locked.controls.get_mut(&ControlId::RangeUnits).unwrap();
+        let _ = control.set(value as f64, None, None, None);
+    }
+
+    pub fn range_units(&self) -> i32 {
+        let locked = self.controls.read().unwrap();
+        locked
+            .controls
+            .get(&ControlId::RangeUnits)
+            .and_then(|c| c.value)
+            .map(|v| v as i32)
+            .unwrap_or(locked.default_range_units)
+    }
+
     pub fn set_model_name(&self, name: String) {
         let mut locked = self.controls.write().unwrap();
         let control = locked.controls.get_mut(&ControlId::ModelName).unwrap();
@@ -786,37 +850,40 @@ impl SharedControls {
         self.get(&ControlId::ModelName).and_then(|c| c.description)
     }
 
-    pub fn set_valid_values(
-        &self,
-        control_id: &ControlId,
-        valid_values: Vec<i32>,
-    ) -> Result<(), ControlError> {
-        let mut locked = self.controls.write().unwrap();
-        locked
-            .controls
-            .get_mut(control_id)
-            .ok_or(ControlError::NotSupported(*control_id))
-            .map(|c| {
-                c.set_valid_values(valid_values);
-                ()
-            })
+    pub(crate) fn set_valid_ranges(&self, ranges: &Ranges) {
+        self.controls.write().unwrap().all_ranges = ranges.clone();
+
+        self.update_valid_ranges();
     }
 
-    pub fn set_valid_ranges(
-        &self,
-        control_id: &ControlId,
-        ranges: &Ranges,
-    ) -> Result<(), ControlError> {
+    pub(crate) fn update_valid_ranges(&self) {
+        // read this before taking the lock as it also locks
+        let range_units = self.range_units();
+
         let mut locked = self.controls.write().unwrap();
+        let ranges = &locked.all_ranges;
+        log::info!(
+            "set_valid_ranges: units={} ranges={:?}",
+            range_units,
+            ranges
+        );
+        let filtered_ranges = match range_units {
+            0 => &ranges.nautical, // Nautical (default)
+            1 => &ranges.metric,   // Metric
+            _ => &ranges.mixed,    // Mixed
+        }
+        .clone(); // to avoid borrow mut problem
+        log::info!(
+            "set_valid_ranges: units={} filtered={:?}",
+            range_units,
+            filtered_ranges,
+        );
+
         locked
             .controls
-            .get_mut(control_id)
-            .ok_or(ControlError::NotSupported(*control_id))
-            .map(|c| {
-                c.set_valid_ranges(ranges);
-                ()
-            })?;
-        Ok(())
+            .get_mut(&ControlId::Range)
+            .expect("Range is mandatory control")
+            .set_valid_ranges(&filtered_ranges);
     }
 
     pub(crate) fn get_status(&self) -> Option<Power> {
@@ -1476,14 +1543,18 @@ impl Control {
         self.item.valid_values = Some(values);
     }
 
-    pub(crate) fn set_valid_ranges(&mut self, ranges: &Ranges) {
+    pub(crate) fn set_valid_ranges(&mut self, ranges: &Vec<Range>) {
         let mut values = Vec::new();
         let mut descriptions = HashMap::new();
-        for range in ranges.all.iter() {
+        for range in ranges.iter() {
             values.push(range.distance());
             descriptions.insert(range.distance() as i32, format!("{}", range));
         }
 
+        log::info!("New valid ranges: {:?}", values);
+        self.item.min_value = Some(values[0] as f64);
+        self.item.max_value = Some(values[values.len() - 1] as f64);
+        self.item.step_value = None;
         self.item.valid_values = Some(values);
         self.item.descriptions = Some(descriptions);
     }
@@ -1911,6 +1982,7 @@ impl ControlDefinition {
 pub enum ControlId {
     Power,
     WarmupTime,
+    RangeUnits,
     Range,
     Mode,
     // AllAuto,
@@ -1980,6 +2052,7 @@ pub enum ControlId {
     SerialNumber,
     Spokes,
     SpokeLength,
+    SpokeProcessing,
     UserName,
 }
 
@@ -2038,7 +2111,8 @@ impl ControlId {
             | ControlId::NoTransmitStart1
             | ControlId::NoTransmitStart2
             | ControlId::NoTransmitStart3
-            | ControlId::NoTransmitStart4 => Category::Installation,
+            | ControlId::NoTransmitStart4
+            | ControlId::RangeUnits => Category::Installation,
             ControlId::ModelName
             | ControlId::WarmupTime
             | ControlId::FirmwareVersion
@@ -2119,6 +2193,8 @@ impl ControlId {
             ControlId::SpokeLength => {
                 "How long the spokes are that the radar transmitted last rotation"
             }
+            ControlId::SpokeProcessing => "How to process spoke data for display",
+            ControlId::RangeUnits => "Which unit system to use for range values",
             ControlId::UserName => "User defined name for the radar",
         }
     }
@@ -2189,6 +2265,8 @@ impl ControlId {
             // ControlId::TuneFine => "Fine tune",
             ControlId::Spokes => "Spokes",
             ControlId::SpokeLength => "Spoke length",
+            ControlId::SpokeProcessing => "Spoke Processing",
+            ControlId::RangeUnits => "Range Units",
             ControlId::UserName => "Custom name",
             ControlId::WarmupTime => "Warmup time",
         }
@@ -2249,6 +2327,8 @@ impl ControlId {
             ControlId::SerialNumber => ControlDestination::ReadOnly,
             ControlId::Spokes => ControlDestination::ReadOnly,
             ControlId::SpokeLength => ControlDestination::ReadOnly,
+            ControlId::SpokeProcessing => ControlDestination::Internal,
+            ControlId::RangeUnits => ControlDestination::Internal,
             ControlId::UserName => ControlDestination::Internal,
         }
     }
@@ -2428,7 +2508,8 @@ mod test {
     #[test]
     fn control_range_values() {
         let args = Cli::parse_from(["my_program"]);
-        let controls = SharedControls::new(&args, HashMap::new());
+        let tx = tokio::sync::broadcast::Sender::new(1);
+        let controls = SharedControls::new("nav1234".to_string(), tx, &args, HashMap::new());
 
         assert!(controls.set(&ControlId::TargetTrails, 0., None).is_ok());
         assert_eq!(

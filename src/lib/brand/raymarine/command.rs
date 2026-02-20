@@ -5,8 +5,8 @@ use super::BaseModel;
 use crate::brand::CommandSender;
 use crate::network::create_multicast_send;
 use crate::radar::range::Ranges;
+use crate::radar::settings::{ControlValue, SharedControls};
 use crate::radar::{RadarError, RadarInfo};
-use crate::settings::{ControlValue, SharedControls};
 
 mod quantum;
 mod rd;

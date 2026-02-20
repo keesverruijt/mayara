@@ -17,6 +17,9 @@ export {
   isPlaybackMode,
   getUserName,
   togglePower,
+  zoomIn,
+  zoomOut,
+  getCurrentRangeDisplay,
 };
 
 import van from "./van-1.5.2.js";
@@ -44,7 +47,6 @@ let playbackMode = false;
 
 // Control state (from v1)
 let myr_control_values = {};
-let myr_range_control_id = null;
 let myr_error_message = null;
 
 // Current range (for viewer.js integration)
@@ -56,7 +58,6 @@ let rangeFromSpokeData = false;
 const control_prefix = "myr_control_";
 const auto_postfix = "_auto";
 const enabled_postfix = "_enabled";
-const RANGE_UNIT_SELECT_ID = 999;
 
 function registerRadarCallback(callback) {
   radarCallbacks.push(callback);
@@ -392,6 +393,8 @@ function buildControls() {
   for (const [k, v] of Object.entries(myr_capabilities.controls)) {
     // Skip power control - it's handled by the power lozenge on the viewer
     if (k === "power") continue;
+    // Skip range control - it's handled by the range lozenge on the viewer
+    if (v.name === "Range") continue;
 
     const control = { ...v, controlId: k };
     if (control.isReadOnly || control.readOnly) {
@@ -421,11 +424,6 @@ function buildControls() {
       const k = control.controlId;
       const v = control;
 
-      // Add range unit select before Range control
-      if (v.name === "Range" && v.descriptions) {
-        add_range_unit_select(baseSection, v.descriptions);
-      }
-
       van.add(baseSection, buildSingleControl(k, v));
 
       // Add auto/enabled buttons
@@ -437,14 +435,6 @@ function buildControls() {
       }
     }
   }
-
-  // Add internal smoothing control
-  const smoothingSection = div(
-    { class: "myr_control_section myr_internal_section" },
-    div({ class: "myr_section_header" }, "Display Settings")
-  );
-  van.add(smoothingSection, buildSmoothingControl());
-  van.add(controlsEl, smoothingSection);
 
   // Build extended controls section
   if (extendedControls.length > 0) {
@@ -534,72 +524,6 @@ function buildSingleControl(k, v) {
     return RangeValue(k, v.name, min, max, 0);
   } else {
     return NumericValue(k, v.name);
-  }
-}
-
-function buildSmoothingControl() {
-  let currentMode = "auto";
-
-  const modes = {
-    auto: "Auto",
-    clean: "Clean",
-    smoothing: "Smoothing",
-  };
-
-  return div(
-    { class: "myr_control myr_enum_control" },
-    span({ class: "myr_control_label" }, "Spoke Processing"),
-    div(
-      { class: "myr_button_group", id: "myr_internalSmoothing_group" },
-      ...Object.entries(modes).map(([value, labelText]) => {
-        const isActive = currentMode === value;
-        return button(
-          {
-            type: "button",
-            class: `myr_enum_button ${isActive ? "myr_enum_active" : ""}`,
-            "data-value": value,
-            onclick: () => {
-              const rendererModule = window.renderer;
-              if (rendererModule && rendererModule.setProcessingMode) {
-                rendererModule.setProcessingMode(value);
-              }
-              updateSmoothingUI(value);
-            },
-          },
-          labelText
-        );
-      })
-    )
-  );
-}
-
-function updateSmoothingUI(value) {
-  const group = document.getElementById("myr_internalSmoothing_group");
-  if (group) {
-    group.querySelectorAll(".myr_enum_button").forEach((btn) => {
-      btn.classList.toggle("myr_enum_active", btn.dataset.value === value);
-    });
-  }
-}
-
-function add_range_unit_select(container, descriptions) {
-  let found_metric = false;
-  let found_nautical = false;
-  for (const [, v] of Object.entries(descriptions)) {
-    if (v.match(/ nm$/)) {
-      found_nautical = true;
-    } else {
-      found_metric = true;
-    }
-  }
-  if (found_metric && found_nautical) {
-    van.add(
-      container,
-      SelectValue(RANGE_UNIT_SELECT_ID, "Range units", [0, 1], {
-        0: "Metric",
-        1: "Nautic",
-      })
-    );
   }
 }
 
@@ -707,24 +631,13 @@ function setControlValue(cv) {
         i.style.display = display;
       }
 
-      // Special handling for Range control
-      if (control.name === "Range") {
-        myr_range_control_id = cv.id;
-
-        let r = parseFloat(cv.value);
-        if (control.descriptions && control.descriptions[r]) {
-          let unitsArr = control.descriptions[r].split(/(\s+)/);
-          if (unitsArr.length === 3) {
-            let units_el = get_element_by_server_id(RANGE_UNIT_SELECT_ID);
-            if (units_el) {
-              let new_value = unitsArr[2] === "nm" ? 1 : 0;
-              if (units_el.value != new_value) {
-                units_el.value = new_value;
-                handle_range_unit_change(new_value);
-                i.value = cv.value;
-              }
-            }
-          }
+      // Special handling for Spoke Processing control - update renderer
+      if (cv.id === "spokeProcessing") {
+        const rendererModule = window.renderer;
+        if (rendererModule && rendererModule.setProcessingMode) {
+          // Map server values (0=Clean, 1=Smoothing) to renderer modes
+          const mode = cv.value === 0 ? "clean" : "smoothing";
+          rendererModule.setProcessingMode(mode);
         }
       }
 
@@ -759,10 +672,6 @@ function setControlValue(cv) {
 
 function do_change(v) {
   let id = html_to_server_id(v.id);
-  if (id == RANGE_UNIT_SELECT_ID) {
-    handle_range_unit_change(v.value);
-    return;
-  }
 
   let control = getControl(id);
   let update = myr_control_values[id];
@@ -870,31 +779,6 @@ function html_to_value_id(id) {
   return r;
 }
 
-function handle_range_unit_change(value) {
-  let units = value == 0 ? / (k?)m$/ : / nm$/;
-
-  if (myr_range_control_id) {
-    let e = get_element_by_server_id(myr_range_control_id);
-    let c = getControl(myr_range_control_id);
-
-    let validValues = [];
-    let descriptions = {};
-
-    for (const r of c.validValues) {
-      if (c.descriptions[r].match(units)) {
-        validValues.push(r);
-        descriptions[r] = c.descriptions[r];
-      }
-    }
-
-    e.innerHTML = "";
-    van.add(
-      e,
-      validValues.map((v) => option({ value: v }, descriptions[v]))
-    );
-  }
-}
-
 // ============================================================================
 // WebSocket State Streaming (v3 Signal K protocol)
 // ============================================================================
@@ -928,6 +812,30 @@ function connectStateStream(streamUrl, radarIdParam) {
 
       if (message.updates) {
         for (const update of message.updates) {
+          if (update.meta) {
+            for (const item of update.meta) {
+              const pathParts = item.path.split(".");
+              if (
+                pathParts.length === 4 &&
+                pathParts[0] === "radars" &&
+                pathParts[1] === radarIdParam &&
+                pathParts[2] === "controls"
+              ) {
+                const controlId = pathParts[pathParts.length - 1];
+
+                let newc = JSON.stringify(item.value);
+                let oldc = JSON.stringify(myr_capabilities.controls[controlId]);
+                if (oldc != newc) {
+                  console.log(
+                    `meta data changed: ${controlId} from ${oldc} to ${newc}`
+                  );
+                  myr_capabilities.controls[controlId] = item.value;
+                } else {
+                  console.log(`No change to meta data for ${controlId}`);
+                }
+              }
+            }
+          }
           if (update.values) {
             for (const item of update.values) {
               const pathParts = item.path.split(".");
@@ -940,7 +848,7 @@ function connectStateStream(streamUrl, radarIdParam) {
                 const controlId = pathParts[pathParts.length - 1];
 
                 console.log(
-                  `Receiving control: ${controlId} = ${JSON.stringify(
+                  `Receiving control value: ${controlId} = ${JSON.stringify(
                     item.value
                   )}`
                 );
@@ -1193,4 +1101,89 @@ function togglePower() {
 
   // Send the control update
   sendControlToServer("power", { value: nextValue });
+}
+
+// ============================================================================
+// Range Zoom Functions
+// ============================================================================
+
+/**
+ * Find the range control ID (it may be "range" or a numeric ID)
+ */
+function getRangeControlId() {
+  if (!myr_capabilities?.controls) return null;
+  for (const [k, v] of Object.entries(myr_capabilities.controls)) {
+    if (v.name === "Range") return k;
+  }
+  return null;
+}
+
+/**
+ * Get current range value and valid values
+ */
+function getRangeInfo() {
+  const controlId = getRangeControlId();
+  if (!controlId) return null;
+
+  const control = myr_capabilities.controls[controlId];
+  const currentValue = myr_control_values[controlId]?.value;
+  const validValues = control?.validValues || [];
+
+  return { controlId, control, currentValue, validValues };
+}
+
+/**
+ * Zoom in - go to shorter range (previous in validValues, smaller value)
+ */
+function zoomIn() {
+  const info = getRangeInfo();
+  if (!info || info.validValues.length === 0) return;
+
+  const { controlId, currentValue, validValues } = info;
+
+  // Find current index
+  const currentIndex = validValues.findIndex(
+    (v) => Number(v) === Number(currentValue)
+  );
+
+  // Go to previous (shorter) range
+  if (currentIndex > 0) {
+    const newValue = validValues[currentIndex - 1];
+    sendControlToServer(controlId, { value: newValue });
+  }
+}
+
+/**
+ * Zoom out - go to longer range (next in validValues, larger value)
+ */
+function zoomOut() {
+  const info = getRangeInfo();
+  if (!info || info.validValues.length === 0) return;
+
+  const { controlId, currentValue, validValues } = info;
+
+  // Find current index
+  const currentIndex = validValues.findIndex(
+    (v) => Number(v) === Number(currentValue)
+  );
+
+  // Go to next (longer) range
+  if (currentIndex < validValues.length - 1) {
+    const newValue = validValues[currentIndex + 1];
+    sendControlToServer(controlId, { value: newValue });
+  }
+}
+
+/**
+ * Get current range display text
+ */
+function getCurrentRangeDisplay() {
+  const info = getRangeInfo();
+  if (!info) return "";
+
+  const { control, currentValue } = info;
+  if (control?.descriptions && control.descriptions[currentValue]) {
+    return control.descriptions[currentValue];
+  }
+  return currentValue ? `${currentValue} m` : "";
 }

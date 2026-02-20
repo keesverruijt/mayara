@@ -2,15 +2,14 @@ use cartesian::PolarToCartesianLookup;
 use ndarray::{Array2, s};
 
 mod cartesian;
+use super::settings::{ControlError, ControlId, ControlValue, SharedControls};
+use super::target::TargetBuffer;
+use super::{RadarError, RadarInfo};
 use crate::protos::RadarMessage::radar_message::Spoke;
 use crate::radar::target::{METERS_PER_DEGREE_LATITUDE, meters_per_degree_longitude};
 use crate::radar::trail::cartesian::PointInt;
 use crate::radar::{BLOB_HISTORY_COLORS, GeoPosition, Legend, SpokeBearing};
-use crate::settings::{ControlError, ControlId, ControlValue, SharedControls};
 use crate::{Cli, TargetMode};
-
-use super::target::TargetBuffer;
-use super::{RadarError, RadarInfo};
 
 const MARGIN_I16: i16 = 100;
 const MARGIN_USIZE: usize = MARGIN_I16 as usize;
