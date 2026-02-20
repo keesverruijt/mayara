@@ -826,10 +826,6 @@ function connectStateStream(streamUrl, radarIdParam) {
                 const controlId = pathParts[pathParts.length - 1];
 
                 let control = convertControlToUserUnits(controlId, item.value);
-                if (controlId === "bearingAlignment") {
-                  console.log("bearing aligment user control");
-                  console.log(control);
-                }
                 let newc = JSON.stringify(control);
                 let oldc = JSON.stringify(myr_capabilities.controls[controlId]);
                 if (oldc != newc) {
@@ -861,10 +857,6 @@ function connectStateStream(streamUrl, radarIdParam) {
                 );
 
                 const cv = { ...item.value, id: controlId };
-                if (controlId === "bearingAlignment") {
-                  console.log("bearing aligment controlValue");
-                  console.log(cv);
-                }
                 setControlValue(cv);
               }
             }
