@@ -138,7 +138,7 @@ function toUser(units, value) {
   if (units === Units.Meters) {
     let [probeUnit, probeValue] = toRangeValue(false, value);
     if (probeUnit === Units.NauticalMiles) {
-      return [Units.NauticalMiles, value];
+      return [Units.NauticalMiles, probeValue];
     }
   }
   for (const [to, from, factor] of TO_USER_CONVERSIONS) {

@@ -136,23 +136,29 @@ class TemporaryMessage {
 function convertControlsToUserUnits(controls) {
   const result = {};
 
-  Object.entries(controls).forEach(([id, ctrl]) => {
-    let cloned = { ...ctrl };
-
-    if (cloned.units) {
-      let units = cloned.units;
-      ["minValue", "maxValue", "stepValue"].forEach((prop) => {
-        if (prop in cloned) {
-          [units, cloned[prop]] = toUser(cloned.units, cloned[prop]);
-        }
-      });
-      cloned.user_units = units;
-    }
-
-    result[id] = cloned;
+  Object.entries(controls).forEach(([id, control]) => {
+    result[id] = convertControlToUserUnits(id, control);
   });
 
   return result;
+}
+
+function convertControlToUserUnits(id, control) {
+  const result = {};
+
+  let cloned = { id, ...control };
+
+  if (cloned.units) {
+    let units = cloned.units;
+    ["minValue", "maxValue", "stepValue"].forEach((prop) => {
+      if (prop in cloned) {
+        [units, cloned[prop]] = toUser(cloned.units, cloned[prop]);
+      }
+    });
+    cloned.user_units = units;
+  }
+
+  return cloned;
 }
 
 /**
@@ -547,20 +553,18 @@ function setControlValue(cv) {
       value = cv.value;
     }
 
-    if (cv.units && control.name !== "Range") {
-      [units, value] = toUser(cv.units, value);
+    let html = value;
+    if (control.units && cv.id !== "range") {
+      [units, value] = toUser(control.units, value);
       if (control.stepValue) {
         value = roundToStep(value, control.stepValue);
       }
+      html = value + " " + units;
     }
 
     // For read-only controls, update the element directly (it's a span with myr_info_value)
     if (control.isReadOnly || control.readOnly) {
-      if (units) {
-        i.innerHTML = value + " " + units;
-      } else {
-        i.innerHTML = value;
-      }
+      i.innerHTML = html;
     } else {
       // Update numeric display
       let n = document.getElementById(control_prefix + cv.id + "_display");
@@ -568,11 +572,7 @@ function setControlValue(cv) {
         n = i.parentNode.querySelector(".myr_numeric");
       }
       if (n) {
-        if (units) {
-          n.innerHTML = value + " " + units;
-        } else {
-          n.innerHTML = value;
-        }
+        n.innerHTML = html;
       }
 
       // Update description display
@@ -595,7 +595,9 @@ function setControlValue(cv) {
             i.max = control.maxValue;
           }
         }
-        if (!description) description = value;
+        if (!description) {
+          description = html;
+        }
         d.innerHTML = description;
       }
 
@@ -823,13 +825,18 @@ function connectStateStream(streamUrl, radarIdParam) {
               ) {
                 const controlId = pathParts[pathParts.length - 1];
 
-                let newc = JSON.stringify(item.value);
+                let control = convertControlToUserUnits(controlId, item.value);
+                if (controlId === "bearingAlignment") {
+                  console.log("bearing aligment user control");
+                  console.log(control);
+                }
+                let newc = JSON.stringify(control);
                 let oldc = JSON.stringify(myr_capabilities.controls[controlId]);
                 if (oldc != newc) {
                   console.log(
                     `meta data changed: ${controlId} from ${oldc} to ${newc}`
                   );
-                  myr_capabilities.controls[controlId] = item.value;
+                  myr_capabilities.controls[controlId] = control;
                 } else {
                   console.log(`No change to meta data for ${controlId}`);
                 }
@@ -853,9 +860,11 @@ function connectStateStream(streamUrl, radarIdParam) {
                   )}`
                 );
 
-                // The value from v3 websocket has the same structure as v1 control value
-                // Add id field if not present
                 const cv = { ...item.value, id: controlId };
+                if (controlId === "bearingAlignment") {
+                  console.log("bearing aligment controlValue");
+                  console.log(cv);
+                }
                 setControlValue(cv);
               }
             }
