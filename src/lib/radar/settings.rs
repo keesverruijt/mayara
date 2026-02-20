@@ -785,6 +785,33 @@ impl SharedControls {
         }
     }
 
+    /// Set a sector control with start (value) and end (end_value) angles
+    pub fn set_sector(
+        &self,
+        control_id: &ControlId,
+        start: f64,
+        end: f64,
+        enabled: Option<bool>,
+    ) -> Result<Option<()>, ControlError> {
+        let control = {
+            let mut locked = self.controls.write().unwrap();
+            if let Some(control) = locked.controls.get_mut(control_id) {
+                Ok(control
+                    .set_sector(start, end, enabled)?
+                    .map(|_| control.clone()))
+            } else {
+                Err(ControlError::NotSupported(*control_id))
+            }
+        }?;
+
+        if let Some(control) = control {
+            self.send_to_all_clients(&control);
+            Ok(Some(()))
+        } else {
+            Ok(None)
+        }
+    }
+
     #[allow(dead_code)]
     fn get_description(control: &Control) -> Option<String> {
         if let (Some(value), Some(descriptions)) = (control.value, &control.item().descriptions) {
@@ -990,6 +1017,8 @@ pub struct ControlValue {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_value: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_value: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub allowed: Option<bool>,
@@ -1005,6 +1034,7 @@ impl ControlValue {
             units: None,
             auto: None,
             auto_value: None,
+            end_value: None,
             enabled: None,
             allowed: None,
             error: None,
@@ -1018,6 +1048,7 @@ impl ControlValue {
             units: b.units,
             auto: b.auto,
             auto_value: b.auto_value,
+            end_value: b.end_value,
             enabled: b.enabled,
             allowed: b.allowed,
             error: b.error,
@@ -1031,6 +1062,7 @@ impl ControlValue {
             units: control.item().units.clone(),
             auto: control.auto,
             auto_value: control.auto_value(),
+            end_value: control.end_value(),
             enabled: control.enabled,
             allowed: control.allowed,
             error,
@@ -1101,6 +1133,22 @@ impl ControlValue {
             Err(RadarError::CannotSetControlId(self.id))
         }
     }
+
+    pub fn end_as_f64(&self) -> Result<f64, RadarError> {
+        if let Some(value) = &self.end_value {
+            match value {
+                Value::String(s) => {
+                    s.parse::<f64>().map_err(|_| RadarError::EnumerationFailed)
+                }
+                Value::Bool(b) => Ok(if *b { 1. } else { 0. }),
+                Value::Number(n) => n.as_f64().ok_or(RadarError::EnumerationFailed),
+                _ => Err(RadarError::EnumerationFailed),
+            }
+            .map_err(|_| RadarError::CannotSetControlId(self.id))
+        } else {
+            Err(RadarError::CannotSetControlId(self.id))
+        }
+    }
 }
 
 // This is the represenation of a control value used by the Signal K (web) services
@@ -1123,6 +1171,8 @@ pub struct RadarControlValue {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_value: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_value: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub allowed: Option<bool>,
@@ -1140,6 +1190,7 @@ impl RadarControlValue {
             units: control.item().units.clone(),
             auto: control.auto,
             auto_value: control.auto_value(),
+            end_value: control.end_value(),
             enabled: control.enabled,
             allowed: control.allowed,
             error,
@@ -1171,6 +1222,7 @@ impl From<RadarControlValue> for ControlValue {
             units: rcv.units,
             auto: rcv.auto,
             auto_value: rcv.auto_value,
+            end_value: rcv.end_value,
             enabled: rcv.enabled,
             allowed: rcv.allowed,
             error: rcv.error,
@@ -1191,6 +1243,8 @@ pub struct BareControlValue {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_value: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_value: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub allowed: Option<bool>,
@@ -1205,6 +1259,7 @@ impl BareControlValue {
             units: None,
             auto: None,
             auto_value: None,
+            end_value: None,
             enabled: None,
             allowed: None,
             error: Some(error),
@@ -1218,6 +1273,7 @@ impl From<RadarControlValue> for BareControlValue {
             units: rcv.units,
             auto: rcv.auto,
             auto_value: rcv.auto_value,
+            end_value: rcv.end_value,
             enabled: rcv.enabled,
             allowed: rcv.allowed,
             error: rcv.error,
@@ -1232,6 +1288,7 @@ impl From<ControlValue> for BareControlValue {
             units: cv.units,
             auto: cv.auto,
             auto_value: cv.auto_value,
+            end_value: cv.end_value,
             enabled: cv.enabled,
             allowed: cv.allowed,
             error: cv.error,
@@ -1498,6 +1555,33 @@ pub(crate) fn new_button(control_id: ControlId) -> ControlBuilder {
         frozen: false,
     }
 }
+
+pub(crate) fn new_sector(control_id: ControlId, min_value: f64, max_value: f64) -> ControlBuilder {
+    let min_value = Some(min_value);
+    let max_value = Some(max_value);
+    let control = Control::new(ControlDefinition::new(
+        control_id,
+        ControlDataType::Sector,
+        min_value,
+        None,
+        true, // Sectors always have enabled
+        min_value,
+        max_value,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        false,
+    ));
+    ControlBuilder {
+        control,
+        frozen: false,
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Control {
@@ -1507,6 +1591,8 @@ pub struct Control {
     pub value: Option<f64>,
     #[serde(skip)]
     pub auto_value: Option<f64>,
+    #[serde(skip)]
+    pub end_value: Option<f64>,
     #[serde(skip)]
     pub description: Option<String>,
     #[serde(skip)]
@@ -1526,6 +1612,7 @@ impl Control {
             item,
             value,
             auto_value: None,
+            end_value: None,
             auto: None,
             enabled: None,
             description: None,
@@ -1596,8 +1683,20 @@ impl Control {
         self.auto_value.map(|v| self.to_number(v))
     }
 
+    pub fn end_value(&self) -> Option<Value> {
+        if self.item.data_type != ControlDataType::Sector {
+            return None;
+        }
+
+        self.end_value.map(|v| self.to_number(v))
+    }
+
     pub(crate) fn auto_as_f64(&self) -> Option<f64> {
         self.auto_value
+    }
+
+    pub(crate) fn end_as_f64(&self) -> Option<f64> {
+        self.end_value
     }
 
     pub(crate) fn as_f64(&self) -> Option<f64> {
@@ -1754,6 +1853,111 @@ impl Control {
         }
     }
 
+    /// Set a sector control with start and end values
+    ///
+    /// The start value is stored in `value` and end value in `end_value`.
+    /// Both values are in radians (SI units for angles).
+    pub fn set_sector(
+        &mut self,
+        mut start: f64,
+        mut end: f64,
+        enabled: Option<bool>,
+    ) -> Result<Option<()>, ControlError> {
+        if self.item.data_type != ControlDataType::Sector {
+            return Err(ControlError::NotSupported(self.item.control_id));
+        }
+
+        // Apply wire offset
+        if let Some(wire_offset) = self.item.wire_offset {
+            if wire_offset > 0.0 {
+                start -= wire_offset;
+                end -= wire_offset;
+            }
+        }
+
+        // Apply wire scale factor
+        if let Some(wire_scale_factor) = self.item.wire_scale_factor {
+            start = start / wire_scale_factor;
+            end = end / wire_scale_factor;
+        }
+
+        // Convert to SI units
+        start = self
+            .item
+            .wire_units
+            .map(|u| u.to_si(start).1)
+            .unwrap_or(start);
+        end = self
+            .item
+            .wire_units
+            .map(|u| u.to_si(end).1)
+            .unwrap_or(end);
+
+        // Range validation for start
+        if let (Some(min_value), Some(max_value)) = (self.item.min_value, self.item.max_value) {
+            if self.item.wire_offset.unwrap_or(0.) == -1.
+                && start > max_value
+                && start <= 2. * max_value
+            {
+                start -= 2. * max_value;
+            }
+            if start < min_value {
+                return Err(ControlError::TooLow(self.item.control_id, start, min_value));
+            }
+            if start > max_value {
+                return Err(ControlError::TooHigh(self.item.control_id, start, max_value));
+            }
+
+            // Range validation for end
+            if self.item.wire_offset.unwrap_or(0.) == -1.
+                && end > max_value
+                && end <= 2. * max_value
+            {
+                end -= 2. * max_value;
+            }
+            if end < min_value {
+                return Err(ControlError::TooLow(self.item.control_id, end, min_value));
+            }
+            if end > max_value {
+                return Err(ControlError::TooHigh(self.item.control_id, end, max_value));
+            }
+        }
+
+        // Apply step rounding
+        let step = self.item.step_value.unwrap_or(1.0);
+        match step {
+            0.1 => {
+                start = (start * 10.) as i32 as f64 / 10.;
+                end = (end * 10.) as i32 as f64 / 10.;
+            }
+            1.0 => {
+                start = start as i32 as f64;
+                end = end as i32 as f64;
+            }
+            _ => {
+                start = (start / step).round() * step;
+                end = (end / step).round() * step;
+            }
+        }
+
+        if self.value != Some(start)
+            || self.end_value != Some(end)
+            || self.enabled != enabled
+        {
+            self.value = Some(start);
+            self.end_value = Some(end);
+            self.enabled = enabled;
+            self.needs_refresh = false;
+
+            Ok(Some(()))
+        } else if self.needs_refresh || self.item.is_send_always {
+            self.needs_refresh = false;
+            Ok(Some(()))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn set_string(&mut self, value: String) -> Option<()> {
         let value = Some(value);
         if &self.description != &value {
@@ -1850,6 +2054,7 @@ pub enum ControlDataType {
     Enum,
     String,
     Button,
+    Sector,
 }
 
 #[derive(Clone, Debug)]
@@ -2036,6 +2241,10 @@ pub enum ControlId {
     NoTransmitEnd3,
     NoTransmitStart4,
     NoTransmitEnd4,
+    NoTransmitZone1,
+    NoTransmitZone2,
+    NoTransmitZone3,
+    NoTransmitZone4,
     AccentLight,
     // AntennaForward,
     AntennaHeight,
@@ -2112,6 +2321,10 @@ impl ControlId {
             | ControlId::NoTransmitStart2
             | ControlId::NoTransmitStart3
             | ControlId::NoTransmitStart4
+            | ControlId::NoTransmitZone1
+            | ControlId::NoTransmitZone2
+            | ControlId::NoTransmitZone3
+            | ControlId::NoTransmitZone4
             | ControlId::RangeUnits => Category::Installation,
             ControlId::ModelName
             | ControlId::WarmupTime
@@ -2166,6 +2379,10 @@ impl ControlId {
             ControlId::NoTransmitStart2 => "Start angle of the second no-transmit sector",
             ControlId::NoTransmitStart3 => "Start angle of the third no-transmit sector",
             ControlId::NoTransmitStart4 => "Start angle of the fourth no-transmit sector",
+            ControlId::NoTransmitZone1 => "First no-transmit sector",
+            ControlId::NoTransmitZone2 => "Second no-transmit sector",
+            ControlId::NoTransmitZone3 => "Third no-transmit sector",
+            ControlId::NoTransmitZone4 => "Fourth no-transmit sector",
             ControlId::Power => "Radar operational state",
             ControlId::WarmupTime => {
                 "How long the radar still needs to warm up before transmitting"
@@ -2236,6 +2453,10 @@ impl ControlId {
             ControlId::NoTransmitStart2 => "No Transmit start (2)",
             ControlId::NoTransmitStart3 => "No Transmit start (3)",
             ControlId::NoTransmitStart4 => "No Transmit start (4)",
+            ControlId::NoTransmitZone1 => "No Transmit zone",
+            ControlId::NoTransmitZone2 => "No Transmit zone (2)",
+            ControlId::NoTransmitZone3 => "No Transmit zone (3)",
+            ControlId::NoTransmitZone4 => "No Transmit zone (4)",
             ControlId::NoiseRejection => "Noise rejection",
             ControlId::OperatingTime => "Operating time",
             ControlId::TransmitTime => "Transmit time",
@@ -2317,6 +2538,10 @@ impl ControlId {
             ControlId::NoTransmitEnd3 => ControlDestination::Command,
             ControlId::NoTransmitStart4 => ControlDestination::Command,
             ControlId::NoTransmitEnd4 => ControlDestination::Command,
+            ControlId::NoTransmitZone1 => ControlDestination::Command,
+            ControlId::NoTransmitZone2 => ControlDestination::Command,
+            ControlId::NoTransmitZone3 => ControlDestination::Command,
+            ControlId::NoTransmitZone4 => ControlDestination::Command,
             ControlId::RotationSpeed => ControlDestination::Command,
             ControlId::MagnetronCurrent => ControlDestination::Command,
             ControlId::SignalStrength => ControlDestination::Command,

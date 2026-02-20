@@ -407,6 +407,7 @@ impl FurunoReportReceiver {
                         numbers.len()
                     );
                 }
+                let s2_enable = numbers[0] != 0.0;
                 let s1_start = numbers[1];
                 let s1_width = numbers[2];
                 let s2_start = numbers[3];
@@ -416,12 +417,21 @@ impl FurunoReportReceiver {
                 let s1_end = (s1_start + s1_width) % 360.0;
                 let s2_end = (s2_start + s2_width) % 360.0;
 
-                self.common
-                    .set_value(&ControlId::NoTransmitStart1, s1_start);
-                self.common.set_value(&ControlId::NoTransmitEnd1, s1_end);
-                self.common
-                    .set_value(&ControlId::NoTransmitStart2, s2_start);
-                self.common.set_value(&ControlId::NoTransmitEnd2, s2_end);
+                // Zone 1 is enabled if width is non-zero
+                let s1_enable = s1_width != 0.0;
+
+                self.common.set_sector(
+                    &ControlId::NoTransmitZone1,
+                    s1_start,
+                    s1_end,
+                    Some(s1_enable),
+                );
+                self.common.set_sector(
+                    &ControlId::NoTransmitZone2,
+                    s2_start,
+                    s2_end,
+                    Some(s2_enable),
+                );
             }
             CommandId::Range => {
                 if numbers.len() < 3 {

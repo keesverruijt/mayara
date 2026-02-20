@@ -180,33 +180,28 @@ impl Command {
         Ok(())
     }
 
-    fn get_angle_value(&self, ct: &ControlId) -> i32 {
-        if let Some(control) = self.controls.get(ct) {
-            if let Some(value) = control.value {
-                return value as i32;
-            }
+    fn get_zone_values(&self, control_id: &ControlId) -> (i32, i32, bool) {
+        if let Some(control) = self.controls.get(control_id) {
+            let start = control.value.map(|v| v as i32).unwrap_or(0);
+            let end = control.end_value.map(|v| v as i32).unwrap_or(0);
+            let enabled = control.enabled.unwrap_or(false);
+            return (start, end, enabled);
         }
-        return 0;
+        (0, 0, false)
     }
 
     fn fill_blind_sector(
         &mut self,
-        sector1_start: Option<i32>,
-        sector1_end: Option<i32>,
-        sector2_start: Option<i32>,
-        sector2_end: Option<i32>,
+        zone1: Option<(i32, i32, bool)>,
+        zone2: Option<(i32, i32, bool)>,
     ) -> Vec<i32> {
         let mut cmd = Vec::with_capacity(5);
 
-        // Get current values
-        let s1_start =
-            sector1_start.unwrap_or_else(|| self.get_angle_value(&ControlId::NoTransmitStart1));
-        let s1_end =
-            sector1_end.unwrap_or_else(|| self.get_angle_value(&ControlId::NoTransmitEnd1));
-        let s2_start =
-            sector2_start.unwrap_or_else(|| self.get_angle_value(&ControlId::NoTransmitStart2));
-        let s2_end =
-            sector2_end.unwrap_or_else(|| self.get_angle_value(&ControlId::NoTransmitEnd2));
+        // Get current values from zone controls
+        let (s1_start, s1_end, _s1_enabled) =
+            zone1.unwrap_or_else(|| self.get_zone_values(&ControlId::NoTransmitZone1));
+        let (s2_start, s2_end, s2_enabled) =
+            zone2.unwrap_or_else(|| self.get_zone_values(&ControlId::NoTransmitZone2));
 
         // Calculate widths from start/end angles
         let s1_width = if s1_end >= s1_start {
@@ -222,7 +217,7 @@ impl Command {
         };
 
         // Format: $S77,{s2_enable},{s1_start},{s1_width},{s2_start},{s2_width}
-        let s2_enable = if s2_width > 0 { 1 } else { 0 };
+        let s2_enable = if s2_enabled && s2_width > 0 { 1 } else { 0 };
         cmd.push(s2_enable);
         cmd.push(s1_start);
         cmd.push(s1_width);
@@ -374,23 +369,23 @@ impl CommandSender for Command {
                 CommandId::Rain
             }
 
-            ControlId::NoTransmitStart1 => {
-                cmd = self.fill_blind_sector(Some(value), None, None, None);
+            ControlId::NoTransmitZone1 => {
+                let end_value = cv
+                    .end_as_f64()
+                    .map(|v| v as i32)
+                    .unwrap_or(0);
+                let enabled = cv.enabled.unwrap_or(false);
+                cmd = self.fill_blind_sector(Some((value, end_value, enabled)), None);
 
                 CommandId::BlindSector
             }
-            ControlId::NoTransmitEnd1 => {
-                cmd = self.fill_blind_sector(None, Some(value), None, None);
-
-                CommandId::BlindSector
-            }
-            ControlId::NoTransmitStart2 => {
-                cmd = self.fill_blind_sector(None, None, Some(value), None);
-
-                CommandId::BlindSector
-            }
-            ControlId::NoTransmitEnd2 => {
-                cmd = self.fill_blind_sector(None, None, None, Some(value));
+            ControlId::NoTransmitZone2 => {
+                let end_value = cv
+                    .end_as_f64()
+                    .map(|v| v as i32)
+                    .unwrap_or(0);
+                let enabled = cv.enabled.unwrap_or(false);
+                cmd = self.fill_blind_sector(None, Some((value, end_value, enabled)));
 
                 CommandId::BlindSector
             }

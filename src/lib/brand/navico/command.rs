@@ -4,7 +4,7 @@ use tokio::net::UdpSocket;
 
 use crate::brand::CommandSender;
 use crate::network::create_multicast_send;
-use crate::radar::settings::{ControlId, ControlValue, SharedControls, Units};
+use crate::radar::settings::{ControlId, ControlValue, SharedControls};
 use crate::radar::{Power, RadarError, RadarInfo};
 
 use super::Model;
@@ -93,22 +93,6 @@ impl Command {
             12 => Err(RadarError::CannotSetControlId(ControlId::Power)),
             _ => Err(RadarError::NoSuchRadar("n1234a".to_string())),
         }
-    }
-
-    fn get_angle_value(ct: &ControlId, controls: &SharedControls) -> i16 {
-        if let Some(control) = controls.get(ct) {
-            if let Some(value) = control.value {
-                let deg = Units::Degrees.from_si(Units::Radians, value);
-                let deg = (deg * 10.) as i32;
-                log::trace!(
-                    "Convert other angle from {} rad to {} decidegrees",
-                    value,
-                    deg
-                );
-                return Self::mod_deci_degrees(deg) as i16;
-            }
-        }
-        return 0;
     }
 
     async fn send_no_transmit_cmd(
@@ -266,64 +250,23 @@ impl CommandSender for Command {
             ControlId::SeaState => {
                 cmd.extend_from_slice(&[0x0b, 0xc1, value as u8]);
             }
-            ControlId::NoTransmitStart1 => {
+            ControlId::NoTransmitZone1
+            | ControlId::NoTransmitZone2
+            | ControlId::NoTransmitZone3
+            | ControlId::NoTransmitZone4 => {
+                let sector = match cv.id {
+                    ControlId::NoTransmitZone1 => 0,
+                    ControlId::NoTransmitZone2 => 1,
+                    ControlId::NoTransmitZone3 => 2,
+                    ControlId::NoTransmitZone4 => 3,
+                    _ => unreachable!(),
+                };
                 let value_start: i16 = Self::mod_deci_degrees(deci_value) as i16;
-                let value_end: i16 = Self::get_angle_value(&ControlId::NoTransmitEnd1, controls);
+                let end_value = cv.end_as_f64().unwrap_or(control.end_as_f64().unwrap_or(0.));
+                let deci_end_value = f64::round(end_value * 10.0) as i32;
+                let value_end: i16 = Self::mod_deci_degrees(deci_end_value) as i16;
                 cmd = self
-                    .send_no_transmit_cmd(value_start, value_end, enabled, 0)
-                    .await?;
-            }
-            ControlId::NoTransmitStart2 => {
-                let value_start: i16 = Self::mod_deci_degrees(deci_value) as i16;
-                let value_end: i16 = Self::get_angle_value(&ControlId::NoTransmitEnd2, controls);
-                cmd = self
-                    .send_no_transmit_cmd(value_start, value_end, enabled, 1)
-                    .await?;
-            }
-            ControlId::NoTransmitStart3 => {
-                let value_start: i16 = Self::mod_deci_degrees(deci_value) as i16;
-                let value_end: i16 = Self::get_angle_value(&ControlId::NoTransmitEnd3, controls);
-                cmd = self
-                    .send_no_transmit_cmd(value_start, value_end, enabled, 2)
-                    .await?;
-            }
-            ControlId::NoTransmitStart4 => {
-                let value_start: i16 = Self::mod_deci_degrees(deci_value) as i16;
-                let value_end: i16 = Self::get_angle_value(&ControlId::NoTransmitEnd4, controls);
-                cmd = self
-                    .send_no_transmit_cmd(value_start, value_end, enabled, 3)
-                    .await?;
-            }
-            ControlId::NoTransmitEnd1 => {
-                let value_start: i16 =
-                    Self::get_angle_value(&ControlId::NoTransmitStart1, controls);
-                let value_end: i16 = Self::mod_deci_degrees(deci_value) as i16;
-                cmd = self
-                    .send_no_transmit_cmd(value_start, value_end, enabled, 0)
-                    .await?;
-            }
-            ControlId::NoTransmitEnd2 => {
-                let value_start: i16 =
-                    Self::get_angle_value(&ControlId::NoTransmitStart2, controls);
-                let value_end: i16 = Self::mod_deci_degrees(deci_value) as i16;
-                cmd = self
-                    .send_no_transmit_cmd(value_start, value_end, enabled, 1)
-                    .await?;
-            }
-            ControlId::NoTransmitEnd3 => {
-                let value_start: i16 =
-                    Self::get_angle_value(&ControlId::NoTransmitStart3, controls);
-                let value_end: i16 = Self::mod_deci_degrees(deci_value) as i16;
-                cmd = self
-                    .send_no_transmit_cmd(value_start, value_end, enabled, 2)
-                    .await?;
-            }
-            ControlId::NoTransmitEnd4 => {
-                let value_start: i16 =
-                    Self::get_angle_value(&ControlId::NoTransmitStart4, controls);
-                let value_end: i16 = Self::mod_deci_degrees(deci_value) as i16;
-                cmd = self
-                    .send_no_transmit_cmd(value_start, value_end, enabled, 3)
+                    .send_no_transmit_cmd(value_start, value_end, enabled, sector)
                     .await?;
             }
             ControlId::LocalInterferenceRejection => {

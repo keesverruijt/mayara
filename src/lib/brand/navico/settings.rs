@@ -8,7 +8,7 @@ use crate::{
     radar::RadarInfo,
     radar::settings::{
         AutomaticValue, ControlId, HAS_AUTO_NOT_ADJUSTABLE, SharedControls, Units, new_auto,
-        new_list, new_numeric, new_string,
+        new_list, new_numeric, new_sector, new_string,
     },
     stream::SignalKDelta,
 };
@@ -124,16 +124,9 @@ pub fn update_when_model_known(
             &["Off", "Low", "Medium", "High"],
         ));
 
-        for (_, start, end) in super::BLANKING_SETS {
+        for (_, zone) in super::BLANKING_ZONES {
             controls.add(
-                new_numeric(start, -180., 180.)
-                    .wire_scale_factor(10., true)
-                    .wire_offset(-1.)
-                    .wire_units(Units::Degrees)
-                    .has_enabled(),
-            );
-            controls.add(
-                new_numeric(end, -180., 180.)
+                new_sector(zone, -180., 180.)
                     .wire_scale_factor(10., true)
                     .wire_offset(-1.)
                     .wire_units(Units::Degrees)

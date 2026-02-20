@@ -18,17 +18,6 @@ fn two_value_command(cmd: &mut Vec<u8>, lead: &[u8], value1: u16, value2: u16) {
     cmd.extend_from_slice(&value2.to_le_bytes());
 }
 
-fn get_angle_value(ct: &ControlId, controls: &SharedControls) -> i16 {
-    if let Some(control) = controls.get(ct) {
-        if let Some(value) = control.value {
-            let value = (value * 10.0) as i16;
-            return value;
-        }
-    }
-
-    return 0;
-}
-
 pub async fn set_control(
     command: &mut Command,
     cv: &ControlValue,
@@ -116,25 +105,13 @@ pub async fn set_control(
         ControlId::MainBangSuppression => {
             one_byte_command(&mut cmd, &[0x0a, 0x04], v);
         }
-        ControlId::NoTransmitStart1 => {
+        ControlId::NoTransmitZone1 | ControlId::NoTransmitZone2 => {
+            let sector = if cv.id == ControlId::NoTransmitZone1 { 0 } else { 1 };
             let value_start: i16 = (value * 10.0) as i16;
-            let value_end: i16 = get_angle_value(&ControlId::NoTransmitEnd1, controls);
-            cmd = send_no_transmit_cmd(command, value_start, value_end, enabled, 0).await?;
-        }
-        ControlId::NoTransmitEnd1 => {
-            let value_start: i16 = get_angle_value(&ControlId::NoTransmitStart1, controls);
-            let value_end: i16 = (value * 10.0) as i16;
-            cmd = send_no_transmit_cmd(command, value_start, value_end, enabled, 0).await?;
-        }
-        ControlId::NoTransmitStart2 => {
-            let value_start: i16 = (value * 10.0) as i16;
-            let value_end: i16 = get_angle_value(&ControlId::NoTransmitEnd2, controls);
-            cmd = send_no_transmit_cmd(command, value_start, value_end, enabled, 1).await?;
-        }
-        ControlId::NoTransmitEnd2 => {
-            let value_start: i16 = get_angle_value(&ControlId::NoTransmitStart2, controls);
-            let value_end: i16 = (value * 10.0) as i16;
-            cmd = send_no_transmit_cmd(command, value_start, value_end, enabled, 1).await?;
+            let control = controls.get(&cv.id).unwrap();
+            let end_value = cv.end_as_f64().unwrap_or(control.end_as_f64().unwrap_or(0.));
+            let value_end: i16 = (end_value * 10.0) as i16;
+            cmd = send_no_transmit_cmd(command, value_start, value_end, enabled, sector).await?;
         }
         ControlId::SeaClutterCurve => {
             one_byte_command(&mut cmd, &[0x12, 0x03], v - 1);

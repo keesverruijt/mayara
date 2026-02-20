@@ -521,9 +521,9 @@ pub(super) fn new(args: &Cli, addresses: &mut Vec<LocatorAddress>) {
     }
 }
 
-const BLANKING_SETS: [(usize, ControlId, ControlId); 4] = [
-    (0, ControlId::NoTransmitStart1, ControlId::NoTransmitEnd1),
-    (1, ControlId::NoTransmitStart2, ControlId::NoTransmitEnd2),
-    (2, ControlId::NoTransmitStart3, ControlId::NoTransmitEnd3),
-    (3, ControlId::NoTransmitStart4, ControlId::NoTransmitEnd4),
+const BLANKING_ZONES: [(usize, ControlId); 4] = [
+    (0, ControlId::NoTransmitZone1),
+    (1, ControlId::NoTransmitZone2),
+    (2, ControlId::NoTransmitZone3),
+    (3, ControlId::NoTransmitZone4),
 ];

@@ -1119,4 +1119,38 @@ impl CommonRadar {
             Ok(None) => {}
         };
     }
+
+    pub(crate) fn set_sector<T>(
+        &mut self,
+        control_id: &ControlId,
+        start: T,
+        end: T,
+        enabled: Option<bool>,
+    ) where
+        f64: From<T>,
+    {
+        match self
+            .info
+            .controls
+            .set_sector(control_id, start.into(), end.into(), enabled)
+        {
+            Err(e) => {
+                log::error!("{}: {}", self.key, e.to_string());
+            }
+            Ok(Some(())) => {
+                if log::log_enabled!(log::Level::Debug) {
+                    let control = self.info.controls.get(control_id).unwrap();
+                    log::debug!(
+                        "{}: Control '{}' new sector start {:?} end {:?} enabled {:?}",
+                        self.key,
+                        control_id,
+                        control.value,
+                        control.end_value,
+                        control.enabled
+                    );
+                }
+            }
+            Ok(None) => {}
+        };
+    }
 }

@@ -1205,21 +1205,15 @@ impl NavicoReportReceiver {
         self.common
             .set_string(&ControlId::ModelName, name.unwrap_or("").to_string());
 
-        for (i, start, end) in super::BLANKING_SETS {
+        for (i, zone) in super::BLANKING_ZONES {
             let blanking = &report.blanking[i];
             let start_angle = i16::from_le_bytes(blanking.start_angle);
             let end_angle = i16::from_le_bytes(blanking.end_angle);
             let enabled = Some(blanking.enabled > 0);
-            self.common.info.controls.set_value_auto_enabled(
-                &start,
+            self.common.info.controls.set_sector(
+                &zone,
                 start_angle as f64,
-                None,
-                enabled,
-            )?;
-            self.common.info.controls.set_value_auto_enabled(
-                &end,
                 end_angle as f64,
-                None,
                 enabled,
             )?;
         }
@@ -1243,21 +1237,15 @@ impl NavicoReportReceiver {
             self.model
         );
 
-        for (i, start, end) in super::BLANKING_SETS {
+        for (i, zone) in super::BLANKING_ZONES {
             let blanking = &report.blanking[i];
             let start_angle = i16::from_le_bytes(blanking.start_angle);
             let end_angle = i16::from_le_bytes(blanking.end_angle);
             let enabled = Some(blanking.enabled > 0);
-            self.common.info.controls.set_value_auto_enabled(
-                &start,
+            self.common.info.controls.set_sector(
+                &zone,
                 start_angle as f64,
-                None,
-                enabled,
-            )?;
-            self.common.info.controls.set_value_auto_enabled(
-                &end,
                 end_angle as f64,
-                None,
                 enabled,
             )?;
         }

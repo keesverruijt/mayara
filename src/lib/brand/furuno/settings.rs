@@ -4,7 +4,7 @@ use crate::{
     Cli,
     radar::settings::{
         ControlId, HAS_AUTO_NOT_ADJUSTABLE, SharedControls, Units, new_auto, new_list, new_numeric,
-        new_string,
+        new_sector, new_string,
     },
     radar::{RadarInfo, range::Ranges},
     stream::SignalKDelta,
@@ -80,25 +80,16 @@ pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version:
         .expect("FirmwareVersion");
 
     info.controls.add(
-        new_numeric(ControlId::NoTransmitStart1, -180., 180.)
+        new_sector(ControlId::NoTransmitZone1, -180., 180.)
             .wire_offset(-1.)
-            .wire_units(Units::Degrees),
+            .wire_units(Units::Degrees)
+            .has_enabled(),
     );
     info.controls.add(
-        new_numeric(ControlId::NoTransmitEnd1, -180., 180.)
+        new_sector(ControlId::NoTransmitZone2, -180., 180.)
             .wire_offset(-1.)
-            .wire_units(Units::Degrees),
-    );
-
-    info.controls.add(
-        new_numeric(ControlId::NoTransmitStart2, -180., 180.)
-            .wire_offset(-1.)
-            .wire_units(Units::Degrees),
-    );
-    info.controls.add(
-        new_numeric(ControlId::NoTransmitEnd2, -180., 180.)
-            .wire_offset(-1.)
-            .wire_units(Units::Degrees),
+            .wire_units(Units::Degrees)
+            .has_enabled(),
     );
 
     // Add NXT-specific controls for NXT models

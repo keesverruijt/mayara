@@ -6,7 +6,7 @@ use crate::{
     radar::RadarInfo,
     radar::settings::{
         ControlId, HAS_AUTO_NOT_ADJUSTABLE, SharedControls, Units, new_auto, new_list, new_numeric,
-        new_string,
+        new_sector, new_string,
     },
     stream::SignalKDelta,
 };
@@ -66,22 +66,12 @@ pub fn new(
             new_list(ControlId::TargetExpansion, &["Off", "On"]).build(&mut controls);
             new_auto(ControlId::ColorGain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE).build(&mut controls);
             new_list(ControlId::MainBangSuppression, &["Off", "On"]).build(&mut controls);
-            new_numeric(ControlId::NoTransmitStart1, 0., 359.)
+            new_sector(ControlId::NoTransmitZone1, 0., 359.)
                 .wire_scale_step(0.1)
                 .has_enabled()
                 .wire_units(Units::Degrees)
                 .build(&mut controls);
-            new_numeric(ControlId::NoTransmitEnd1, 0., 359.)
-                .wire_scale_step(0.1)
-                .has_enabled()
-                .wire_units(Units::Degrees)
-                .build(&mut controls);
-            new_numeric(ControlId::NoTransmitStart2, 0., 359.)
-                .wire_scale_step(0.1)
-                .has_enabled()
-                .wire_units(Units::Degrees)
-                .build(&mut controls);
-            new_numeric(ControlId::NoTransmitEnd2, 0., 359.)
+            new_sector(ControlId::NoTransmitZone2, 0., 359.)
                 .wire_scale_step(0.1)
                 .has_enabled()
                 .wire_units(Units::Degrees)

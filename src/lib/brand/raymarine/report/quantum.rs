@@ -293,25 +293,17 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
         .common
         .set_value(&ControlId::MainBangSuppression, report.mbs_enabled as f64);
 
-    receiver.common.set_value_enabled(
-        &ControlId::NoTransmitStart1,
+    receiver.common.set_sector(
+        &ControlId::NoTransmitZone1,
         u16::from_le_bytes(report.blank_start_1) as f64,
-        report.blank_enabled_1,
-    );
-    receiver.common.set_value_enabled(
-        &ControlId::NoTransmitEnd1,
         u16::from_le_bytes(report.blank_end_1) as f64,
-        report.blank_enabled_1,
+        Some(report.blank_enabled_1 > 0),
     );
-    receiver.common.set_value_enabled(
-        &ControlId::NoTransmitStart2,
+    receiver.common.set_sector(
+        &ControlId::NoTransmitZone2,
         u16::from_le_bytes(report.blank_start_2) as f64,
-        report.blank_enabled_2,
-    );
-    receiver.common.set_value_enabled(
-        &ControlId::NoTransmitEnd2,
         u16::from_le_bytes(report.blank_end_2) as f64,
-        report.blank_enabled_2,
+        Some(report.blank_enabled_2 > 0),
     );
 }
 
