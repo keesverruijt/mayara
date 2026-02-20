@@ -680,17 +680,16 @@ function do_change(v) {
   let message = {};
   let value = v.value;
 
-  if ("user_units" in control && control.name !== "Range") {
+  if ("user_units" in control && id !== "range") {
     message.units = control.user_units;
     value = Number(value);
   }
 
-  let checkbox = document.getElementById(v.id + auto_postfix);
-  if (checkbox) {
-    update.auto = checkbox.checked;
-    message.auto = checkbox.checked;
-  }
-  if (checkbox && checkbox.checked && control.hasAutoAdjustable) {
+  // Check if auto mode is active from current control state
+  let auto = update?.auto || false;
+  update.auto = auto;
+  message.auto = auto;
+  if (auto && control.hasAutoAdjustable) {
     update.autoValue = value;
     message.autoValue = value;
   } else {
@@ -698,7 +697,7 @@ function do_change(v) {
     message.value = value;
   }
 
-  checkbox = document.getElementById(v.id + enabled_postfix);
+  let checkbox = document.getElementById(v.id + enabled_postfix);
   if (checkbox) {
     update.enabled = checkbox.checked;
     message.enabled = checkbox.checked;
