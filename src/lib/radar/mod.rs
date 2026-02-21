@@ -27,7 +27,7 @@ use crate::brand::CommandSender;
 use crate::config::Persistence;
 use crate::protos::RadarMessage::RadarMessage;
 use crate::radar::settings::{
-    ControlDestination, ControlError, ControlId, ControlUpdate, ControlValue, SharedControls, Units,
+    ControlDestination, ControlError, ControlId, ControlUpdate, ControlValue, SharedControls,
 };
 use crate::radar::spoke::{GenericSpoke, to_protobuf_spoke};
 use crate::radar::trail::TrailBuffer;
@@ -71,8 +71,8 @@ pub enum RadarError {
     CannotSetControlIdValue(ControlId, Value),
     #[error("Missing value for control '{0}'")]
     MissingValue(ControlId),
-    #[error("Control '{0}' value '{1}' must be numeric as it has a unit '{2}'")]
-    NotNumeric(ControlId, Value, Units),
+    #[error("Control '{0}' value '{1}' must be a valid number")]
+    NotNumeric(ControlId, Value),
     #[error("No such radar with id '{0}'")]
     NoSuchRadar(String),
     #[error("Cannot parse JSON '{0}'")]

@@ -421,13 +421,13 @@ impl FurunoReportReceiver {
                 let s1_enable = s1_width != 0.0;
 
                 self.common.set_sector(
-                    &ControlId::NoTransmitZone1,
+                    &ControlId::NoTransmitSector1,
                     s1_start,
                     s1_end,
                     Some(s1_enable),
                 );
                 self.common.set_sector(
-                    &ControlId::NoTransmitZone2,
+                    &ControlId::NoTransmitSector2,
                     s2_start,
                     s2_end,
                     Some(s2_enable),

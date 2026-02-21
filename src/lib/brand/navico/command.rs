@@ -104,6 +104,14 @@ impl Command {
     ) -> Result<Vec<u8>, RadarError> {
         let mut cmd = Vec::with_capacity(12);
 
+        log::info!(
+            "send_no_transmit({}, {}, {}, {})",
+            sector,
+            value_start,
+            value_end,
+            enabled
+        );
+
         cmd.extend_from_slice(&[0x0d, 0xc1, sector, 0, 0, 0, enabled]);
         self.send(&cmd).await?;
         cmd.clear();
@@ -142,7 +150,7 @@ impl CommandSender for Command {
             .unwrap_or(control.auto_as_f64().unwrap_or(0.));
         let value = cv.as_f64().unwrap_or(control.as_f64().unwrap_or(0.));
         let deci_value = f64::round(value * 10.0) as i32;
-        log::debug!(
+        log::info!(
             "set_control({:?},...) = {} / {},auto={},auto_value={},enabled={}",
             cv,
             value,
@@ -250,19 +258,21 @@ impl CommandSender for Command {
             ControlId::SeaState => {
                 cmd.extend_from_slice(&[0x0b, 0xc1, value as u8]);
             }
-            ControlId::NoTransmitZone1
-            | ControlId::NoTransmitZone2
-            | ControlId::NoTransmitZone3
-            | ControlId::NoTransmitZone4 => {
+            ControlId::NoTransmitSector1
+            | ControlId::NoTransmitSector2
+            | ControlId::NoTransmitSector3
+            | ControlId::NoTransmitSector4 => {
                 let sector = match cv.id {
-                    ControlId::NoTransmitZone1 => 0,
-                    ControlId::NoTransmitZone2 => 1,
-                    ControlId::NoTransmitZone3 => 2,
-                    ControlId::NoTransmitZone4 => 3,
+                    ControlId::NoTransmitSector1 => 0,
+                    ControlId::NoTransmitSector2 => 1,
+                    ControlId::NoTransmitSector3 => 2,
+                    ControlId::NoTransmitSector4 => 3,
                     _ => unreachable!(),
                 };
                 let value_start: i16 = Self::mod_deci_degrees(deci_value) as i16;
-                let end_value = cv.end_as_f64().unwrap_or(control.end_as_f64().unwrap_or(0.));
+                let end_value = cv
+                    .end_as_f64()
+                    .unwrap_or(control.end_as_f64().unwrap_or(0.));
                 let deci_end_value = f64::round(end_value * 10.0) as i32;
                 let value_end: i16 = Self::mod_deci_degrees(deci_end_value) as i16;
                 cmd = self

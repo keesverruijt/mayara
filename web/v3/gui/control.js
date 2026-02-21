@@ -57,6 +57,7 @@ let rangeFromSpokeData = false;
 
 const control_prefix = "myr_control_";
 const auto_postfix = "_auto";
+const end_postfix = "_end";
 const enabled_postfix = "_enabled";
 
 function registerRadarCallback(callback) {
@@ -365,6 +366,124 @@ const SelectValue = (id, name, validValues, descriptions) => {
   );
 };
 
+/**
+ * Sector control - displays start and end angles with optional enabled checkbox
+ * Server sends: value (start in radians), endValue (end in radians), enabled (optional)
+ */
+const SectorValue = (id, name, control) => {
+  const prefix = `myr_control_${id}`;
+  const hasEnabled = control.hasEnabled !== false;
+
+  function sendSectorValue() {
+    const startEl = document.getElementById(`${prefix}`);
+    const endEl = document.getElementById(`${prefix}${end_postfix}`);
+    const enabledEl = document.getElementById(`${prefix}${enabled_postfix}`);
+
+    const startDeg = parseInt(startEl?.value) || 0;
+    const endDeg = parseInt(endEl?.value) || 0;
+    const enabledVal = enabledEl?.checked ?? true;
+
+    // Convert degrees to radians for server
+    const startRad = (startDeg * Math.PI) / 180;
+    const endRad = (endDeg * Math.PI) / 180;
+
+    apiSetControl(radarId, id, {
+      value: startRad,
+      endValue: endRad,
+      enabled: enabledVal,
+    });
+  }
+
+  function onEnabledChange(e) {
+    const enabled = e.target.checked;
+    const startEl = document.getElementById(`${prefix}_start`);
+    const endEl = document.getElementById(`${prefix}_end`);
+    if (startEl) startEl.disabled = !enabled;
+    if (endEl) endEl.disabled = !enabled;
+    sendSectorValue();
+  }
+
+  const min = control.minValue ?? -180;
+  const max = control.maxValue ?? 180;
+
+  return div(
+    { class: "myr_control myr_sector_control", id: `myr_${id}` },
+    span({ class: "myr_control_label" }, name),
+    div(
+      { class: "myr_sector_angles" },
+      div(
+        { class: "myr_sector_angle" },
+        label({ for: `${control_prefix}${id}` }, "Start°"),
+        input({
+          type: "number",
+          id: `${control_prefix}${id}`,
+          min: min,
+          max: max,
+          value: 0,
+          disabled: hasEnabled,
+          onchange: () => sendSectorValue(),
+        })
+      ),
+      div(
+        { class: "myr_sector_angle" },
+        label({ for: `${control_prefix}${id}${end_postfix}` }, "End°"),
+        input({
+          type: "number",
+          id: `${control_prefix}${id}${end_postfix}`,
+          min: min,
+          max: max,
+          value: 0,
+          disabled: hasEnabled,
+          onchange: () => sendSectorValue(),
+        })
+      )
+    ),
+    hasEnabled
+      ? div(
+          { class: "myr_sector_enabled" },
+          label(
+            { class: "myr_checkbox_label" },
+            input({
+              type: "checkbox",
+              id: `${control_prefix}${id}${enabled_postfix}`,
+              checked: false,
+              onchange: onEnabledChange,
+            }),
+            " Enabled"
+          )
+        )
+      : null
+  );
+};
+
+/**
+ * Update sector control UI from server state
+ */
+function updateSectorUI(id, control, cv) {
+  const prefix = `myr_control_${id}`;
+  const startEl = document.getElementById(`${prefix}`);
+  const endEl = document.getElementById(`${prefix}${end_postfix}`);
+  const enabledEl = document.getElementById(`${prefix}${enabled_postfix}`);
+
+  const enabled = cv.enabled ?? false;
+
+  let units, value, endValue;
+
+  if (startEl) {
+    [units, value] = toUser(control.units, cv.value);
+    startEl.value = value;
+    startEl.disabled = !enabled;
+  }
+  if (endEl) {
+    [units, endValue] = toUser(control.units, cv.endValue);
+    endEl.value = endValue;
+    endEl.disabled = !enabled;
+  }
+  if (enabledEl) {
+    enabledEl.checked = enabled;
+  }
+}
+
 function buildControls() {
   let titleEl = get_element_by_server_id("myr_title");
   if (titleEl) {
@@ -513,6 +632,8 @@ function buildSingleControl(k, v) {
     return ButtonValue(k, v.name);
   } else if (v.dataType === "string") {
     return StringValue(k, v.name);
+  } else if (v.dataType === "sector") {
+    return SectorValue(k, v.name, v);
   } else if ("validValues" in v && "descriptions" in v) {
     return SelectValue(k, v.name, v.validValues, v.descriptions);
   } else if (
@@ -565,6 +686,8 @@ function setControlValue(cv) {
     // For read-only controls, update the element directly (it's a span with myr_info_value)
     if (control.isReadOnly || control.readOnly) {
       i.innerHTML = html;
+    } else if (control && control.dataType === "sector") {
+      updateSectorUI(cv.id, control, cv);
     } else {
       // Update numeric display
       let n = document.getElementById(control_prefix + cv.id + "_display");

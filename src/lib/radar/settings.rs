@@ -315,40 +315,49 @@ impl SharedControls {
     // If the control is an Enum style, also convert to number.
     // If it is a string or button, leave it alone.
     //
-    fn convert_to_si_number(
-        control_value: &ControlValue,
+    fn convert_to_wire_number(
+        cv_units: Option<Units>,
+        cv_value: Option<Value>,
         control: &Control,
-    ) -> Result<ControlValue, RadarError> {
-        let mut control_value = control_value.clone();
+    ) -> Result<(Option<Units>, Option<Value>), RadarError> {
         if control.item.data_type == ControlDataType::Button
             || control.item.data_type == ControlDataType::String
         {
-            return Ok(control_value);
+            return Ok((None, cv_value));
         }
 
-        if let Some(value) = control_value.value {
-            control_value.value = Some(Self::normalize_value(&value, control)?);
+        if let Some(mut value) = cv_value {
+            // convert boolean and enums into numbers
+            value = Self::normalize_value(&value, control)?;
 
-            if let Some(units) = control_value.units {
-                let value_float = value.as_f64();
-                if value_float.is_none() {
-                    return Err(RadarError::NotNumeric(control_value.id, value, units));
+            let mut value_float = match value.as_f64() {
+                None => {
+                    return Err(RadarError::NotNumeric(control.item.control_id, value));
                 }
-                let (mut units, mut value_float) = units.to_si(value_float.unwrap());
-                if let Some(wire_unit) = control.item.wire_units {
-                    value_float = wire_unit.from_si(units, value_float);
-                    units = wire_unit;
-                }
-                let value_number = serde_json::Number::from_f64(value_float);
-                if value_number.is_none() {
-                    return Err(RadarError::NotNumeric(control_value.id, value, units));
-                }
-                control_value.units = Some(units);
-                control_value.value = Some(Value::Number(value_number.unwrap()));
+                Some(v) => v,
+            };
+
+            let mut units: Units = Units::None;
+            if let Some(cv_units) = cv_units {
+                (units, value_float) = cv_units.to_si(value_float);
             }
+            if let Some(wire_units) = control.item.wire_units {
+                value_float = wire_units.from_si(value_float);
+                units = wire_units;
+            }
+            let value_number = serde_json::Number::from_f64(value_float);
+            if value_number.is_none() {
+                return Err(RadarError::NotNumeric(control.item.control_id, value));
+            }
+            let units = match units {
+                Units::None => None,
+                v => Some(v),
+            };
+            let value = Some(Value::Number(value_number.unwrap()));
+            return Ok((units, value));
         }
 
-        Ok(control_value)
+        Ok((cv_units, cv_value))
     }
 
     // process_client_request()
@@ -367,12 +376,27 @@ impl SharedControls {
     ) -> Result<(), RadarError> {
         match self.get(&control_value.id) {
             Some(c) => {
-                let cv = Self::convert_to_si_number(&control_value, &c)?;
-
-                log::debug!(
-                    "Client request to update {:?} to {:?} si {:?}",
+                let cv_orig = control_value.clone();
+                let (units, value) =
+                    Self::convert_to_wire_number(control_value.units, control_value.value, &c)?;
+                let (_, end_value) =
+                    Self::convert_to_wire_number(control_value.units, control_value.end_value, &c)?;
+                let (_, auto_value) = Self::convert_to_wire_number(
+                    control_value.units,
+                    control_value.auto_value,
+                    &c,
+                )?;
+                let cv = ControlValue {
+                    units,
+                    value,
+                    auto_value,
+                    end_value,
+                    ..control_value
+                };
+                log::info!(
+                    "Client request to update {:?} to {:?} wire {:?}",
                     ControlValue::from(&c, None),
-                    control_value,
+                    cv_orig,
                     cv
                 );
                 match cv.id.get_destination() {
@@ -970,36 +994,44 @@ pub enum Units {
     Hours,
 }
 
-const TO_SI_CONVERSIONS: [(Units, Units, f64); 7] = [
-    (Units::NauticalMiles, Units::Meters, 1852.),
-    (Units::KiloMeters, Units::Meters, 1000.),
-    (Units::Knots, Units::MetersPerSecond, 1852. / 3600.),
-    (Units::Degrees, Units::Radians, PI / 180.),
-    (
-        Units::RotationsPerMinute,
-        Units::RadiansPerSecond,
-        2. * PI / 60.,
-    ),
-    (Units::Minutes, Units::Seconds, 60.),
-    (Units::Hours, Units::Seconds, 3600.),
-];
-
 impl Units {
     pub(crate) fn to_si(&self, value: f64) -> (Units, f64) {
-        for (from, to, factor) in TO_SI_CONVERSIONS {
-            if *self == from {
-                return (to, value * factor);
-            }
-        }
-        (*self, value)
+        let (units, factor) = match self {
+            Units::Degrees => (Units::Radians, PI / 180.),
+            Units::Hours => (Units::Seconds, 3600.),
+            Units::Minutes => (Units::Seconds, 60.),
+            Units::KiloMeters => (Units::Meters, 1000.),
+            Units::Knots => (Units::MetersPerSecond, 1852. / 3600.),
+            Units::Meters => (Units::Meters, 1.),
+            Units::MetersPerSecond => (Units::MetersPerSecond, 1.),
+            Units::NauticalMiles => (Units::Meters, 1852.),
+            Units::None => unreachable!("Units::None"),
+            Units::Radians => (Units::Radians, 1.),
+            Units::RadiansPerSecond => (Units::RadiansPerSecond, 1.),
+            Units::RotationsPerMinute => (Units::RotationsPerMinute, (2. * PI) / 60.),
+            Units::Seconds => (Units::Seconds, 1.),
+        };
+        (units, value * factor)
     }
-    pub(crate) fn from_si(&self, origin: Units, value: f64) -> f64 {
-        for (from, to, factor) in TO_SI_CONVERSIONS {
-            if *self == from && origin == to {
-                return value / factor;
-            }
-        }
-        value
+
+    pub(crate) fn from_si(&self, value: f64) -> f64 {
+        let factor = match self {
+            Units::Degrees => 180. / PI,
+            Units::Hours => 1. / 3600.,
+            Units::Minutes => 1. / 60.,
+            Units::KiloMeters => 0.001,
+            Units::Knots => 3600. / 1852.,
+            Units::Meters => 1.,
+            Units::MetersPerSecond => 1.,
+            Units::NauticalMiles => 1. / 1852.,
+            Units::None => unreachable!("Units::None"),
+            Units::Radians => 1.,
+            Units::RadiansPerSecond => 1.,
+            Units::RotationsPerMinute => 60. / (2. * PI),
+            Units::Seconds => 1.,
+        };
+
+        value * factor
     }
 }
 
@@ -1137,9 +1169,7 @@ impl ControlValue {
     pub fn end_as_f64(&self) -> Result<f64, RadarError> {
         if let Some(value) = &self.end_value {
             match value {
-                Value::String(s) => {
-                    s.parse::<f64>().map_err(|_| RadarError::EnumerationFailed)
-                }
+                Value::String(s) => s.parse::<f64>().map_err(|_| RadarError::EnumerationFailed),
                 Value::Bool(b) => Ok(if *b { 1. } else { 0. }),
                 Value::Number(n) => n.as_f64().ok_or(RadarError::EnumerationFailed),
                 _ => Err(RadarError::EnumerationFailed),
@@ -1887,11 +1917,7 @@ impl Control {
             .wire_units
             .map(|u| u.to_si(start).1)
             .unwrap_or(start);
-        end = self
-            .item
-            .wire_units
-            .map(|u| u.to_si(end).1)
-            .unwrap_or(end);
+        end = self.item.wire_units.map(|u| u.to_si(end).1).unwrap_or(end);
 
         // Range validation for start
         if let (Some(min_value), Some(max_value)) = (self.item.min_value, self.item.max_value) {
@@ -1905,7 +1931,11 @@ impl Control {
                 return Err(ControlError::TooLow(self.item.control_id, start, min_value));
             }
             if start > max_value {
-                return Err(ControlError::TooHigh(self.item.control_id, start, max_value));
+                return Err(ControlError::TooHigh(
+                    self.item.control_id,
+                    start,
+                    max_value,
+                ));
             }
 
             // Range validation for end
@@ -1940,10 +1970,7 @@ impl Control {
             }
         }
 
-        if self.value != Some(start)
-            || self.end_value != Some(end)
-            || self.enabled != enabled
-        {
+        if self.value != Some(start) || self.end_value != Some(end) || self.enabled != enabled {
             self.value = Some(start);
             self.end_value = Some(end);
             self.enabled = enabled;
@@ -2233,18 +2260,10 @@ pub enum ControlId {
     MainBangSuppression,
     SeaClutterCurve,
     DisplayTiming,
-    NoTransmitStart1,
-    NoTransmitEnd1,
-    NoTransmitStart2,
-    NoTransmitEnd2,
-    NoTransmitStart3,
-    NoTransmitEnd3,
-    NoTransmitStart4,
-    NoTransmitEnd4,
-    NoTransmitZone1,
-    NoTransmitZone2,
-    NoTransmitZone3,
-    NoTransmitZone4,
+    NoTransmitSector1,
+    NoTransmitSector2,
+    NoTransmitSector3,
+    NoTransmitSector4,
     AccentLight,
     // AntennaForward,
     AntennaHeight,
@@ -2313,18 +2332,10 @@ impl ControlId {
             ControlId::AccentLight
             | ControlId::AntennaHeight
             | ControlId::BearingAlignment
-            | ControlId::NoTransmitEnd1
-            | ControlId::NoTransmitEnd2
-            | ControlId::NoTransmitEnd3
-            | ControlId::NoTransmitEnd4
-            | ControlId::NoTransmitStart1
-            | ControlId::NoTransmitStart2
-            | ControlId::NoTransmitStart3
-            | ControlId::NoTransmitStart4
-            | ControlId::NoTransmitZone1
-            | ControlId::NoTransmitZone2
-            | ControlId::NoTransmitZone3
-            | ControlId::NoTransmitZone4
+            | ControlId::NoTransmitSector1
+            | ControlId::NoTransmitSector2
+            | ControlId::NoTransmitSector3
+            | ControlId::NoTransmitSector4
             | ControlId::RangeUnits => Category::Installation,
             ControlId::ModelName
             | ControlId::WarmupTime
@@ -2371,18 +2382,10 @@ impl ControlId {
             ControlId::MainBangSuppression => "Main bang suppression",
             ControlId::Mode => "Choice of radar mode tuning to certain conditions, or custom",
             ControlId::ModelName => "Manufacturer model name of the radar",
-            ControlId::NoTransmitEnd1 => "End angle of the (first) no-transmit sector",
-            ControlId::NoTransmitEnd2 => "End angle of the second no-transmit sector",
-            ControlId::NoTransmitEnd3 => "End angle of the third no-transmit sector",
-            ControlId::NoTransmitEnd4 => "End angle of the fourth no-transmit sector",
-            ControlId::NoTransmitStart1 => "Start angle of the (first) no-transmit sector",
-            ControlId::NoTransmitStart2 => "Start angle of the second no-transmit sector",
-            ControlId::NoTransmitStart3 => "Start angle of the third no-transmit sector",
-            ControlId::NoTransmitStart4 => "Start angle of the fourth no-transmit sector",
-            ControlId::NoTransmitZone1 => "First no-transmit sector",
-            ControlId::NoTransmitZone2 => "Second no-transmit sector",
-            ControlId::NoTransmitZone3 => "Third no-transmit sector",
-            ControlId::NoTransmitZone4 => "Fourth no-transmit sector",
+            ControlId::NoTransmitSector1 => "First no-transmit sector",
+            ControlId::NoTransmitSector2 => "Second no-transmit sector",
+            ControlId::NoTransmitSector3 => "Third no-transmit sector",
+            ControlId::NoTransmitSector4 => "Fourth no-transmit sector",
             ControlId::Power => "Radar operational state",
             ControlId::WarmupTime => {
                 "How long the radar still needs to warm up before transmitting"
@@ -2445,18 +2448,10 @@ impl ControlId {
             ControlId::MainBangSuppression => "Main bang suppression",
             ControlId::Mode => "Mode",
             ControlId::ModelName => "Model name",
-            ControlId::NoTransmitEnd1 => "No Transmit end",
-            ControlId::NoTransmitEnd2 => "No Transmit end (2)",
-            ControlId::NoTransmitEnd3 => "No Transmit end (3)",
-            ControlId::NoTransmitEnd4 => "No Transmit end (4)",
-            ControlId::NoTransmitStart1 => "No Transmit start",
-            ControlId::NoTransmitStart2 => "No Transmit start (2)",
-            ControlId::NoTransmitStart3 => "No Transmit start (3)",
-            ControlId::NoTransmitStart4 => "No Transmit start (4)",
-            ControlId::NoTransmitZone1 => "No Transmit zone",
-            ControlId::NoTransmitZone2 => "No Transmit zone (2)",
-            ControlId::NoTransmitZone3 => "No Transmit zone (3)",
-            ControlId::NoTransmitZone4 => "No Transmit zone (4)",
+            ControlId::NoTransmitSector1 => "No Transmit sector",
+            ControlId::NoTransmitSector2 => "No Transmit sector (2)",
+            ControlId::NoTransmitSector3 => "No Transmit sector (3)",
+            ControlId::NoTransmitSector4 => "No Transmit sector (4)",
             ControlId::NoiseRejection => "Noise rejection",
             ControlId::OperatingTime => "Operating time",
             ControlId::TransmitTime => "Transmit time",
@@ -2530,18 +2525,10 @@ impl ControlId {
             ControlId::Ftc => ControlDestination::Command,
             ControlId::MainBangSuppression => ControlDestination::Command,
             ControlId::SeaClutterCurve => ControlDestination::Command,
-            ControlId::NoTransmitStart1 => ControlDestination::Command,
-            ControlId::NoTransmitEnd1 => ControlDestination::Command,
-            ControlId::NoTransmitStart2 => ControlDestination::Command,
-            ControlId::NoTransmitEnd2 => ControlDestination::Command,
-            ControlId::NoTransmitStart3 => ControlDestination::Command,
-            ControlId::NoTransmitEnd3 => ControlDestination::Command,
-            ControlId::NoTransmitStart4 => ControlDestination::Command,
-            ControlId::NoTransmitEnd4 => ControlDestination::Command,
-            ControlId::NoTransmitZone1 => ControlDestination::Command,
-            ControlId::NoTransmitZone2 => ControlDestination::Command,
-            ControlId::NoTransmitZone3 => ControlDestination::Command,
-            ControlId::NoTransmitZone4 => ControlDestination::Command,
+            ControlId::NoTransmitSector1 => ControlDestination::Command,
+            ControlId::NoTransmitSector2 => ControlDestination::Command,
+            ControlId::NoTransmitSector3 => ControlDestination::Command,
+            ControlId::NoTransmitSector4 => ControlDestination::Command,
             ControlId::RotationSpeed => ControlDestination::Command,
             ControlId::MagnetronCurrent => ControlDestination::Command,
             ControlId::SignalStrength => ControlDestination::Command,
@@ -2707,7 +2694,7 @@ mod test {
         }
 
         // Check without optional fields and with v1 ID
-        let json = r#"{"id":"4","value":49}"#;
+        let json = r#"{"id":"5","value":49}"#;
 
         match serde_json::from_str::<ControlValue>(&json) {
             Ok(cv) => {

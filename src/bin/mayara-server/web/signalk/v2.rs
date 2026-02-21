@@ -194,10 +194,10 @@ impl Capabilities {
                 .filter(|(ctype, _)| {
                     matches!(
                         ctype,
-                        ControlId::NoTransmitStart1
-                            | ControlId::NoTransmitStart2
-                            | ControlId::NoTransmitStart3
-                            | ControlId::NoTransmitStart4
+                        ControlId::NoTransmitSector1
+                            | ControlId::NoTransmitSector2
+                            | ControlId::NoTransmitSector3
+                            | ControlId::NoTransmitSector4
                     )
                 })
                 .count() as u8,
@@ -274,7 +274,7 @@ async fn set_control_value(
     extract::Json(request): extract::Json<BareControlValue>,
 ) -> Response {
     let (radar_id, control_id) = (params.radar_id, params.control_id);
-    log::debug!(
+    log::info!(
         "PUT control {} = {:?} for radar {}",
         control_id,
         request,

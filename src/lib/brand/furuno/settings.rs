@@ -80,13 +80,13 @@ pub fn update_when_model_known(info: &mut RadarInfo, model: RadarModel, version:
         .expect("FirmwareVersion");
 
     info.controls.add(
-        new_sector(ControlId::NoTransmitZone1, -180., 180.)
+        new_sector(ControlId::NoTransmitSector1, -180., 180.)
             .wire_offset(-1.)
             .wire_units(Units::Degrees)
             .has_enabled(),
     );
     info.controls.add(
-        new_sector(ControlId::NoTransmitZone2, -180., 180.)
+        new_sector(ControlId::NoTransmitSector2, -180., 180.)
             .wire_offset(-1.)
             .wire_units(Units::Degrees)
             .has_enabled(),

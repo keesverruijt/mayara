@@ -124,9 +124,9 @@ pub fn update_when_model_known(
             &["Off", "Low", "Medium", "High"],
         ));
 
-        for (_, zone) in super::BLANKING_ZONES {
+        for (_, sector) in super::BLANKING_SECTORS {
             controls.add(
-                new_sector(zone, -180., 180.)
+                new_sector(sector, -180., 180.)
                     .wire_scale_factor(10., true)
                     .wire_offset(-1.)
                     .wire_units(Units::Degrees)

@@ -105,8 +105,8 @@ pub async fn set_control(
         ControlId::MainBangSuppression => {
             one_byte_command(&mut cmd, &[0x0a, 0x04], v);
         }
-        ControlId::NoTransmitZone1 | ControlId::NoTransmitZone2 => {
-            let sector = if cv.id == ControlId::NoTransmitZone1 { 0 } else { 1 };
+        ControlId::NoTransmitSector1 | ControlId::NoTransmitSector2 => {
+            let sector = if cv.id == ControlId::NoTransmitSector1 { 0 } else { 1 };
             let value_start: i16 = (value * 10.0) as i16;
             let control = controls.get(&cv.id).unwrap();
             let end_value = cv.end_as_f64().unwrap_or(control.end_as_f64().unwrap_or(0.));

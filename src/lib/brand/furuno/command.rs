@@ -199,9 +199,9 @@ impl Command {
 
         // Get current values from zone controls
         let (s1_start, s1_end, _s1_enabled) =
-            zone1.unwrap_or_else(|| self.get_zone_values(&ControlId::NoTransmitZone1));
+            zone1.unwrap_or_else(|| self.get_zone_values(&ControlId::NoTransmitSector1));
         let (s2_start, s2_end, s2_enabled) =
-            zone2.unwrap_or_else(|| self.get_zone_values(&ControlId::NoTransmitZone2));
+            zone2.unwrap_or_else(|| self.get_zone_values(&ControlId::NoTransmitSector2));
 
         // Calculate widths from start/end angles
         let s1_width = if s1_end >= s1_start {
@@ -369,7 +369,7 @@ impl CommandSender for Command {
                 CommandId::Rain
             }
 
-            ControlId::NoTransmitZone1 => {
+            ControlId::NoTransmitSector1 => {
                 let end_value = cv
                     .end_as_f64()
                     .map(|v| v as i32)
@@ -379,7 +379,7 @@ impl CommandSender for Command {
 
                 CommandId::BlindSector
             }
-            ControlId::NoTransmitZone2 => {
+            ControlId::NoTransmitSector2 => {
                 let end_value = cv
                     .end_as_f64()
                     .map(|v| v as i32)

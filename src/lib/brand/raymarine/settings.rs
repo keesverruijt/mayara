@@ -66,12 +66,12 @@ pub fn new(
             new_list(ControlId::TargetExpansion, &["Off", "On"]).build(&mut controls);
             new_auto(ControlId::ColorGain, 0., 100., HAS_AUTO_NOT_ADJUSTABLE).build(&mut controls);
             new_list(ControlId::MainBangSuppression, &["Off", "On"]).build(&mut controls);
-            new_sector(ControlId::NoTransmitZone1, 0., 359.)
+            new_sector(ControlId::NoTransmitSector1, 0., 359.)
                 .wire_scale_step(0.1)
                 .has_enabled()
                 .wire_units(Units::Degrees)
                 .build(&mut controls);
-            new_sector(ControlId::NoTransmitZone2, 0., 359.)
+            new_sector(ControlId::NoTransmitSector2, 0., 359.)
                 .wire_scale_step(0.1)
                 .has_enabled()
                 .wire_units(Units::Degrees)

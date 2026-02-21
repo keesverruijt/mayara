@@ -941,7 +941,7 @@ impl NavicoReportReceiver {
                         if let Ok(report) = HaloNavigationPacket::transmute(&self.info_buf) {
                             let sog = u16::from_le_bytes(report.sog) as f64 * 0.01 * MS_TO_KN;
                             let cog = u16::from_le_bytes(report.cog) as f64 * 360.0 / 63488.0;
-                            log::debug!(
+                            log::trace!(
                                 "{}: Halo sog={sog} cog={cog} from navigation report {:?}",
                                 self.common.key,
                                 report
@@ -949,7 +949,7 @@ impl NavicoReportReceiver {
                         }
                     } else {
                         if let Ok(report) = HaloHeadingPacket::transmute(&self.info_buf) {
-                            log::debug!("{}: Halo heading report {:?}", self.common.key, report);
+                            log::trace!("{}: Halo heading report {:?}", self.common.key, report);
                         }
                     }
                 }
@@ -961,7 +961,7 @@ impl NavicoReportReceiver {
         if let SocketAddr::V4(addr) = addr {
             if addr.ip() != &self.common.info.nic_addr {
                 if let Ok(report) = HaloSpeedPacket::transmute(&self.speed_buf) {
-                    log::debug!("{}: Halo speed report {:?}", self.common.key, report);
+                    log::trace!("{}: Halo speed report {:?}", self.common.key, report);
                 }
             }
         }
@@ -1199,19 +1199,19 @@ impl NavicoReportReceiver {
     async fn process_report_06_68(&mut self) -> Result<(), Error> {
         let report = RadarReport6_68::transmute(&self.report_buf)?;
 
-        log::trace!("{}: report {:?}", self.common.key, report);
+        log::debug!("{}: report {:?}", self.common.key, report);
 
         let name = c_string(&report.name);
         self.common
             .set_string(&ControlId::ModelName, name.unwrap_or("").to_string());
 
-        for (i, zone) in super::BLANKING_ZONES {
+        for (i, sector) in super::BLANKING_SECTORS {
             let blanking = &report.blanking[i];
             let start_angle = i16::from_le_bytes(blanking.start_angle);
             let end_angle = i16::from_le_bytes(blanking.end_angle);
             let enabled = Some(blanking.enabled > 0);
             self.common.info.controls.set_sector(
-                &zone,
+                &sector,
                 start_angle as f64,
                 end_angle as f64,
                 enabled,
@@ -1227,7 +1227,7 @@ impl NavicoReportReceiver {
     async fn process_report_06_74(&mut self) -> Result<(), Error> {
         let report = RadarReport6_74::transmute(&self.report_buf)?;
 
-        log::trace!("{}: report {:?}", self.common.key, report);
+        log::debug!("{}: report {:?}", self.common.key, report);
 
         let name = c_string(&report.name);
         // self.common.set_string(&ControlId::ModelName, name.unwrap_or("").to_string());
@@ -1237,13 +1237,20 @@ impl NavicoReportReceiver {
             self.model
         );
 
-        for (i, zone) in super::BLANKING_ZONES {
+        for (i, sector) in super::BLANKING_SECTORS {
             let blanking = &report.blanking[i];
             let start_angle = i16::from_le_bytes(blanking.start_angle);
             let end_angle = i16::from_le_bytes(blanking.end_angle);
             let enabled = Some(blanking.enabled > 0);
+            log::info!(
+                "no_transmit_sector_{}: {}-{} en={:?}",
+                i,
+                start_angle,
+                end_angle,
+                enabled
+            );
             self.common.info.controls.set_sector(
-                &zone,
+                &sector,
                 start_angle as f64,
                 end_angle as f64,
                 enabled,

@@ -144,6 +144,7 @@ function toUser(units, value) {
   for (const [to, from, factor] of TO_USER_CONVERSIONS) {
     if (units === from) return [to, value * factor];
   }
+
   // No conversion needed
   return [units, value];
 }
