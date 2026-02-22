@@ -244,7 +244,7 @@ impl RadarInfo {
                 args.output.clone(),
             )
         };
-        let legend = default_legend(&targets, false, pixel_values);
+        let legend = default_legend(&targets, doppler, pixel_values);
 
         let mut key = brand.to_prefix().to_string();
         if let Some(serial_no) = serial_no {

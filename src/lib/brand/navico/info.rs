@@ -236,7 +236,7 @@ impl Information {
         Ok(())
     }
 
-    pub(super) async fn send_info_requests(&mut self) -> Result<(), RadarError> {
+    pub(super) async fn send_info_packets(&mut self) -> Result<(), RadarError> {
         self.send_heading_packet().await?;
         self.send_navigation_packet().await?;
         self.send_speed_packet().await?;

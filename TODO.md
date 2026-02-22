@@ -3,12 +3,11 @@
 
 Gui changes to do:
 
-- doppler on kills image
-- antenna height is NaN NM?
 - fix padding/border in read only values
 - check why hours are rounded to a half hour
 - fix double enable checkboxes in NoTransmitSector
-
+- check doppler packets sent when no chartplotter present
+- move radar controls for trails and targets into separate groups
 
 A list of things still to do before this code has caught back up with Dirk's vibe coded version:
 

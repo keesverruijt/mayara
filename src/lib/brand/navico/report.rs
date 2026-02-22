@@ -9,7 +9,7 @@ use std::mem::transmute;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::net::UdpSocket;
-use tokio::time::{Instant, sleep_until};
+use tokio::time::{Instant, sleep, sleep_until};
 use tokio_graceful_shutdown::SubsystemHandle;
 
 use super::Model;
@@ -183,7 +183,7 @@ pub struct NavicoReportReceiver {
     command_sender: Option<Command>,
     info_sender: Option<Information>,
     range_timeout: Instant,
-    info_request_timeout: Instant,
+    info_send_timeout: Instant,
     report_request_timeout: Instant,
     reported_unknown: [bool; 256],
 
@@ -505,7 +505,7 @@ impl NavicoReportReceiver {
             command_sender,
             info_sender,
             range_timeout: now + FAR_FUTURE,
-            info_request_timeout: now,
+            info_send_timeout: now,
             report_request_timeout: now,
             reported_unknown: [false; 256],
             data_buf: Vec::with_capacity(size_of::<RadarFramePkt>()),
@@ -517,7 +517,17 @@ impl NavicoReportReceiver {
 
     pub async fn run(mut self, subsys: SubsystemHandle) -> Result<(), RadarError> {
         self.start_report_socket()?;
-        self.socket_loop(&subsys).await
+        loop {
+            match self.socket_loop(&subsys).await {
+                Ok(()) => {
+                    break Ok(());
+                }
+                Err(e) => {
+                    log::error!("{}: trying to recover from error {}", self.common.key, e);
+                }
+            }
+            sleep(Duration::from_millis(2000)).await;
+        }
     }
 
     fn start_report_socket(&mut self) -> io::Result<()> {
@@ -647,13 +657,13 @@ impl NavicoReportReceiver {
 
             let timeout = min(
                 min(self.report_request_timeout, self.range_timeout),
-                self.info_request_timeout,
+                self.info_send_timeout,
             );
 
             tokio::select! {
                 _ = subsys.on_shutdown_requested() => {
                     log::debug!("{}: shutdown", self.common.key);
-                    return Err(RadarError::Shutdown);
+                    return Ok(());
                 },
 
                 _ = sleep_until(timeout) => {
@@ -664,8 +674,10 @@ impl NavicoReportReceiver {
                     if self.report_request_timeout <= now {
                         self.send_report_requests().await?;
                     }
-                    if self.info_request_timeout <= now {
-                        self.send_info_requests().await?;
+                    if self.info_send_timeout <= now {
+                        // If no other device sends these packets, send them ourselves.
+                        // This enables Doppler returns from the HALO radars.
+                        self.send_info_packets().await?;
                     }
                 },
 
@@ -826,11 +838,11 @@ impl NavicoReportReceiver {
         Ok(())
     }
 
-    async fn send_info_requests(&mut self) -> Result<(), RadarError> {
+    async fn send_info_packets(&mut self) -> Result<(), RadarError> {
         if let Some(info_sender) = &mut self.info_sender {
-            info_sender.send_info_requests().await?;
+            info_sender.send_info_packets().await?;
         }
-        self.info_request_timeout += INFO_BY_US_INTERVAL;
+        self.info_send_timeout += INFO_BY_US_INTERVAL;
         Ok(())
     }
 
@@ -934,7 +946,7 @@ impl NavicoReportReceiver {
                     self.common.key,
                     addr
                 );
-                self.info_request_timeout = Instant::now() + INFO_BY_OTHERS_TIMEOUT;
+                self.info_send_timeout = Instant::now() + INFO_BY_OTHERS_TIMEOUT;
 
                 if self.info_buf.len() >= ::core::mem::size_of::<HaloNavigationPacket>() {
                     if self.info_buf[36] == 0x02 {
