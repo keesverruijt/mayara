@@ -810,6 +810,10 @@ function setControlValue(cv) {
       if (control.stepValue) {
         value = roundToStep(value, control.stepValue);
       }
+      // Floor time values displayed in hours (operating time, transmit time)
+      if (units === "h") {
+        value = Math.floor(value);
+      }
       html = value + " " + units;
     }
 
