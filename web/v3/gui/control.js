@@ -489,71 +489,45 @@ function updateSectorUI(id, control, cv) {
 }
 
 function buildControls() {
-  let titleEl = get_element_by_server_id("myr_title");
-  if (titleEl) {
-    titleEl.innerHTML = "";
-    const titleText = `${myr_capabilities.make || ""} ${
-      myr_capabilities.model || ""
-    } Controls`;
-    if (playbackMode) {
-      van.add(
-        titleEl,
-        div(
-          { class: "myr_title_with_badge" },
-          span(titleText),
-          span({ class: "myr_playback_badge" }, "PLAYBACK")
-        )
-      );
-    } else {
-      van.add(titleEl, div(titleText));
-    }
-  }
-
   let controlsEl = document.getElementById("myr_controls");
   if (!controlsEl) return;
   controlsEl.innerHTML = "";
 
-  // Group controls by category
-  const baseControls = [];
-  const advancedControls = [];
-  const configControls = [];
-  const infoControls = [];
+  // First, collect all controls and sort by id
+  const sortById = (a, b) => (a.id || 0) - (b.id || 0);
+  const allControls = Object.entries(myr_capabilities.controls)
+    .filter(([k]) => k !== "power" && k !== "range")
+    .map(([k, v]) => ({ ...v, controlId: k }))
+    .sort(sortById);
 
-  for (const [k, v] of Object.entries(myr_capabilities.controls)) {
-    // Skip power control - it's handled by the power lozenge on the viewer
-    if (k === "power") continue;
-    // Skip range control - it's handled by the range lozenge on the viewer
-    if (k === "range") continue;
+  // Group controls by category, preserving order of first occurrence
+  const categories = {};
+  const categoryOrder = [];
 
-    const control = { ...v, controlId: k };
-    if (control.isReadOnly || control.readOnly) {
-      infoControls.push(control);
-    } else if (control.category === "installation") {
-      configControls.push(control);
-    } else if (control.category === "advanced") {
-      advancedControls.push(control);
-    } else {
-      baseControls.push(control);
+  for (const control of allControls) {
+    const category = control.category || "basic";
+
+    if (!categories[category]) {
+      categories[category] = [];
+      categoryOrder.push(category);
     }
+    categories[category].push(control);
   }
 
-  // Sort by id
-  const sortById = (a, b) => (a.id || 0) - (b.id || 0);
-  baseControls.sort(sortById);
-  advancedControls.sort(sortById);
-  configControls.sort(sortById);
-  infoControls.sort(sortById);
+  // Build sections for each category in order
+  for (const category of categoryOrder) {
+    const categoryTitle = category.charAt(0).toUpperCase() + category.slice(1);
+    const section = div(
+      { class: `myr_control_section myr_${category}_section` },
+      div({ class: "myr_section_header" }, categoryTitle)
+    );
+    van.add(controlsEl, section);
 
-  // Build base controls section
-  if (baseControls.length > 0) {
-    const baseSection = div({ class: "myr_control_section" });
-    van.add(controlsEl, baseSection);
-
-    for (const control of baseControls) {
+    for (const control of categories[category]) {
       const k = control.controlId;
       const v = control;
 
-      van.add(baseSection, buildSingleControl(k, v));
+      van.add(section, buildSingleControl(k, v));
 
       // Add auto/enabled buttons
       if (v.hasAuto) {
@@ -562,69 +536,6 @@ function buildControls() {
       if (v.hasEnabled && !v.isReadOnly) {
         van.add(get_element_by_server_id(k).parentNode, EnabledButton(k));
       }
-    }
-  }
-
-  // Build advanced controls section
-  if (advancedControls.length > 0) {
-    const advancedSection = div(
-      { class: "myr_control_section myr_advanced_section" },
-      div({ class: "myr_section_header" }, "Advanced Controls")
-    );
-    van.add(controlsEl, advancedSection);
-
-    for (const control of advancedControls) {
-      const k = control.controlId;
-      const v = control;
-      van.add(advancedSection, buildSingleControl(k, v));
-      if (v.hasAuto) {
-        van.add(get_element_by_server_id(k).parentNode, AutoButton(k));
-      }
-      if (v.hasEnabled && !v.isReadOnly) {
-        van.add(get_element_by_server_id(k).parentNode, EnabledButton(k));
-      }
-    }
-  }
-
-  // Build installation controls section
-  if (configControls.length > 0) {
-    const configSection = div(
-      { class: "myr_control_section myr_installation_section" },
-      div({ class: "myr_section_header" }, "Installation")
-    );
-    van.add(controlsEl, configSection);
-
-    for (const control of configControls) {
-      const k = control.controlId;
-      const v = control;
-      van.add(configSection, buildSingleControl(k, v));
-
-      if (v.hasAuto) {
-        van.add(get_element_by_server_id(k).parentNode, AutoButton(k));
-      }
-      if (v.hasEnabled && !v.isReadOnly) {
-        van.add(get_element_by_server_id(k).parentNode, EnabledButton(k));
-      }
-    }
-  }
-
-  // Build info controls section
-  if (infoControls.length > 0) {
-    const infoSection = div(
-      { class: "myr_control_section myr_info_section" },
-      div({ class: "myr_section_header" }, "Radar Information")
-    );
-    van.add(controlsEl, infoSection);
-
-    for (const control of infoControls) {
-      const k = control.controlId;
-      if (k == 0 && playbackMode) {
-        van.add(
-          infoSection,
-          div({ class: "myr_control myr_error" }, "REPLAY MODE")
-        );
-      }
-      van.add(infoSection, ReadOnlyValue(k, control.name));
     }
   }
 }

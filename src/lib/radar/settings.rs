@@ -44,6 +44,360 @@ pub fn get_api_version() -> ApiVersion {
     API_VERSION.with(|v| v.borrow().clone())
 }
 
+#[derive(
+    Eq,
+    PartialEq,
+    PartialOrd,
+    Hash,
+    Copy,
+    Clone,
+    Debug,
+    FromPrimitive,
+    ToPrimitive,
+    EnumIter,
+    EnumString,
+    IntoStaticStr,
+    EnumCount,
+)]
+#[repr(u8)]
+#[strum(ascii_case_insensitive, serialize_all = "camelCase")]
+// The order is the one in which we deem the representation is "right"
+// when present as a straight list of controls. This is the same order
+// as shown in the radar page for HALO on NOS MFDs.
+pub enum ControlId {
+    Power,
+    WarmupTime,
+    Range,
+    Mode,
+    // AllAuto,
+    Gain,
+    ColorGain,
+    Sea,
+    SeaState,
+    // Stc,
+    // StcCurve,
+    Rain,
+    // Scaling,
+    Doppler,
+    DopplerMode,
+    DopplerSpeedThreshold,
+    // Client Only, not here: ColorPalette,
+    // Client Only, not here: Orientation,
+    // Client Only, not here: Position,
+    // Client Only, not here: Symbology,
+    TargetTrails,
+    TrailsMotion,
+    DopplerTrailsOnly,
+    ClearTrails,
+    DopplerAutoTrack,
+    ClearTargets,
+    // TimedIdle,
+    // TimedRun,
+    NoiseRejection,
+    TargetBoost,
+    TargetExpansion,
+    InterferenceRejection,
+    TargetSeparation,
+    LocalInterferenceRejection,
+    BirdMode,
+    ScanSpeed,
+    SideLobeSuppression,
+    Tune,
+    // TuneCoarse,
+    // TuneFine,
+    // ColorGain,
+    // DisplayTiming,
+    Ftc,
+    // MainBangSize,
+    RangeUnits,
+    MainBangSuppression,
+    SeaClutterCurve,
+    DisplayTiming,
+    NoTransmitSector1,
+    NoTransmitSector2,
+    NoTransmitSector3,
+    NoTransmitSector4,
+    AccentLight,
+    // AntennaForward,
+    AntennaHeight,
+    // AntennaStarboard,
+    BearingAlignment,
+    // Orientation,
+    RotationSpeed,
+    MagnetronCurrent,
+    SignalStrength,
+    OperatingTime,
+    TransmitTime,
+    ModelName,
+    FirmwareVersion,
+    SerialNumber,
+    Spokes,
+    SpokeLength,
+    SpokeProcessing,
+    UserName,
+}
+
+impl Display for ControlId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s: &'static str = self.into();
+
+        write!(f, "{}", s)
+    }
+}
+
+impl ControlId {
+    pub fn from_u8(value: u8) -> ControlId {
+        FromPrimitive::from_u8(value).unwrap()
+    }
+
+    pub fn parse_str(s: Cow<'_, str>) -> Result<ControlId, RadarError> {
+        // Numeric discriminant encoded as string
+        if let Ok(num) = s.parse::<u8>() {
+            return match FromPrimitive::from_u8(num) {
+                Some(ct) => Ok(ct),
+                None => Err(RadarError::InvalidControlId(
+                    "invalid ControlId discriminant".to_string(),
+                )),
+            };
+        }
+
+        // Case-insensitive name lookup (Strum)
+        ControlId::from_str(&s)
+            .map_err(|_| RadarError::InvalidControlId("invalid ControlId discriminant".to_string()))
+    }
+
+    pub fn get_category(&self) -> Category {
+        match self {
+            ControlId::Power
+            | ControlId::BirdMode
+            | ControlId::Range
+            | ControlId::Mode
+            | ControlId::Gain
+            | ControlId::ColorGain
+            | ControlId::Sea
+            | ControlId::SeaState
+            | ControlId::Rain
+            | ControlId::Doppler
+            | ControlId::DopplerMode
+            | ControlId::TargetTrails
+            | ControlId::ClearTargets
+            | ControlId::ClearTrails => Category::Base,
+            ControlId::AccentLight
+            | ControlId::AntennaHeight
+            | ControlId::BearingAlignment
+            | ControlId::NoTransmitSector1
+            | ControlId::NoTransmitSector2
+            | ControlId::NoTransmitSector3
+            | ControlId::NoTransmitSector4
+            | ControlId::RangeUnits => Category::Installation,
+            ControlId::ModelName
+            | ControlId::WarmupTime
+            | ControlId::FirmwareVersion
+            | ControlId::OperatingTime
+            | ControlId::TransmitTime
+            | ControlId::MagnetronCurrent
+            | ControlId::RotationSpeed
+            | ControlId::SerialNumber
+            | ControlId::SignalStrength
+            | ControlId::Spokes
+            | ControlId::SpokeLength => Category::Info,
+            _ => Category::Advanced,
+        }
+    }
+
+    pub fn get_description(&self) -> &'static str {
+        match self {
+            ControlId::AccentLight => "Strength of the accent light",
+            ControlId::AntennaHeight => "Height of the antenna above waterline",
+            ControlId::BearingAlignment => "Alignment of the antenna relative to the vessel's bow",
+            ControlId::ClearTargets => "Clear all ARPA targets",
+            ControlId::ClearTrails => "Clear target trails",
+            ControlId::ColorGain => "Adjust the color curve relative to gain",
+            ControlId::DisplayTiming => "Display timing",
+            ControlId::Doppler => {
+                "Targets coming towards or going away from own ship shown in different colors"
+            }
+            ControlId::DopplerMode => "For what type of targets Doppler is used",
+            ControlId::DopplerAutoTrack => {
+                "Convert all Doppler targets to ARPA targets automatically"
+            }
+            ControlId::DopplerSpeedThreshold => "Threshold speed above which Doppler is applied",
+            ControlId::DopplerTrailsOnly => "Convert only Doppler targets to target trails",
+            ControlId::FirmwareVersion => "Version of the radar firmware",
+            ControlId::Ftc => "FTC",
+            ControlId::Gain => "How sensitive the radar is to returning echoes",
+            ControlId::InterferenceRejection => "Reduces interference from other radars",
+            ControlId::LocalInterferenceRejection => {
+                "How much local interference rejection is applied"
+            }
+            ControlId::BirdMode => "Level of optimization for bird targets",
+            ControlId::MagnetronCurrent => "The current supplied to the magnetron",
+            ControlId::MainBangSuppression => "Main bang suppression",
+            ControlId::Mode => "Choice of radar mode tuning to certain conditions, or custom",
+            ControlId::ModelName => "Manufacturer model name of the radar",
+            ControlId::NoTransmitSector1 => "First no-transmit sector",
+            ControlId::NoTransmitSector2 => "Second no-transmit sector",
+            ControlId::NoTransmitSector3 => "Third no-transmit sector",
+            ControlId::NoTransmitSector4 => "Fourth no-transmit sector",
+            ControlId::Power => "Radar operational state",
+            ControlId::WarmupTime => {
+                "How long the radar still needs to warm up before transmitting"
+            }
+            ControlId::Range => "Maximum distance the radar is looking at",
+            ControlId::Sea => "Sea clutter suppression",
+            ControlId::SeaState => "Sea state for sea clutter suppression",
+            ControlId::Rain => "Rain clutter suppression",
+            ControlId::TargetTrails => "Whether target trails are shown",
+            ControlId::TrailsMotion => "How target trails behave",
+            ControlId::NoiseRejection => "Filters out noise",
+            ControlId::TargetBoost => "Level of how much small targets are boosted",
+            ControlId::TargetExpansion => "Increases target length for small targets",
+            ControlId::TargetSeparation => "Makes separation between targets more prominent",
+            ControlId::ScanSpeed => "Desired rotation speed of the radar antenna",
+            ControlId::SideLobeSuppression => "Level of side lobe suppression",
+            ControlId::Tune => "Method to finely tune the radar receiver",
+            ControlId::SeaClutterCurve => "Sea clutter curve",
+            ControlId::RotationSpeed => "How quickly the radar antenna rotates",
+            ControlId::SignalStrength => "Signal strength of the radar",
+            ControlId::OperatingTime => "How long the radar has been operating over its lifetime",
+            ControlId::TransmitTime => "How long the radar has been transmitting over its lifetime",
+            ControlId::SerialNumber => "Manufacturer serial number of the radar",
+            ControlId::Spokes => "How many spokes the radar transmitted last rotation",
+            ControlId::SpokeLength => {
+                "How long the spokes are that the radar transmitted last rotation"
+            }
+            ControlId::SpokeProcessing => "How to process spoke data for display",
+            ControlId::RangeUnits => "Which unit system to use for range values",
+            ControlId::UserName => "User defined name for the radar",
+        }
+    }
+
+    fn get_name(&self) -> &'static str {
+        match self {
+            ControlId::AccentLight => "Accent light",
+            // ControlId::AllAuto => "All to Auto",
+            // ControlId::AntennaForward => "Antenna forward of GPS",
+            ControlId::AntennaHeight => "Antenna height",
+            // ControlId::AntennaStarboard => "Antenna starboard of GPS",
+            ControlId::BearingAlignment => "Bearing alignment",
+            // ControlId::ColorGain => "Color gain",
+            ControlId::ClearTargets => "Clear targets",
+            ControlId::ClearTrails => "Clear trails",
+            ControlId::ColorGain => "Color gain",
+            ControlId::DisplayTiming => "Display timing",
+            ControlId::Doppler => "Doppler",
+            ControlId::DopplerMode => "Doppler mode",
+            ControlId::DopplerAutoTrack => "Doppler Auto Track",
+            ControlId::DopplerSpeedThreshold => "Doppler speed threshold",
+            ControlId::DopplerTrailsOnly => "Doppler trails only",
+            ControlId::FirmwareVersion => "Firmware version",
+            ControlId::Ftc => "FTC",
+            ControlId::Gain => "Gain",
+            ControlId::InterferenceRejection => "Interference rejection",
+            ControlId::LocalInterferenceRejection => "Local interference rejection",
+            ControlId::BirdMode => "Bird mode",
+            // ControlId::MainBangSize => "Main bang size",
+            ControlId::MagnetronCurrent => "Magnetron current",
+            ControlId::MainBangSuppression => "Main bang suppression",
+            ControlId::Mode => "Mode",
+            ControlId::ModelName => "Model name",
+            ControlId::NoTransmitSector1 => "No Transmit sector",
+            ControlId::NoTransmitSector2 => "No Transmit sector (2)",
+            ControlId::NoTransmitSector3 => "No Transmit sector (3)",
+            ControlId::NoTransmitSector4 => "No Transmit sector (4)",
+            ControlId::NoiseRejection => "Noise rejection",
+            ControlId::OperatingTime => "Operating time",
+            ControlId::TransmitTime => "Transmit time",
+            // ControlId::Orientation => "Orientation",
+            ControlId::Rain => "Rain clutter",
+            ControlId::Range => "Range",
+            ControlId::RotationSpeed => "Rotation speed",
+            // ControlId::Scaling => "Scaling",
+            ControlId::ScanSpeed => "Scan speed",
+            ControlId::Sea => "Sea clutter",
+            ControlId::SeaClutterCurve => "Sea clutter curve",
+            ControlId::SeaState => "Sea state",
+            ControlId::SerialNumber => "Serial Number",
+            ControlId::SideLobeSuppression => "Side lobe suppression",
+            // ControlId::Stc => "Sensitivity Time Control",
+            // ControlId::StcCurve => "STC curve",
+            ControlId::SignalStrength => "Signal strength",
+            ControlId::Power => "Power",
+            ControlId::TargetBoost => "Target boost",
+            ControlId::TargetExpansion => "Target expansion",
+            ControlId::TargetSeparation => "Target separation",
+            ControlId::TargetTrails => "Target trails",
+            // ControlId::TimedIdle => "Time idle",
+            // ControlId::TimedRun => "Timed run",
+            ControlId::TrailsMotion => "Target trails motion",
+            ControlId::Tune => "Tune",
+            // ControlId::TuneFine => "Fine tune",
+            ControlId::Spokes => "Spokes",
+            ControlId::SpokeLength => "Spoke length",
+            ControlId::SpokeProcessing => "Spoke Processing",
+            ControlId::RangeUnits => "Range Units",
+            ControlId::UserName => "Custom name",
+            ControlId::WarmupTime => "Warmup time",
+        }
+    }
+
+    pub(crate) fn get_destination(&self) -> ControlDestination {
+        match self {
+            ControlId::AccentLight => ControlDestination::Command,
+            ControlId::AntennaHeight => ControlDestination::Command,
+            ControlId::BearingAlignment => ControlDestination::Command,
+            ControlId::BirdMode => ControlDestination::Command,
+            ControlId::ClearTargets => ControlDestination::Target,
+            ControlId::ClearTrails => ControlDestination::Trail,
+            ControlId::ColorGain => ControlDestination::Command,
+            ControlId::DisplayTiming => ControlDestination::Command,
+            ControlId::Power => ControlDestination::Command,
+            ControlId::WarmupTime => ControlDestination::ReadOnly,
+            ControlId::Range => ControlDestination::Command,
+            ControlId::Mode => ControlDestination::Command,
+            ControlId::Gain => ControlDestination::Command,
+            ControlId::Sea => ControlDestination::Command,
+            ControlId::SeaState => ControlDestination::Command,
+            ControlId::Rain => ControlDestination::Command,
+            ControlId::Doppler => ControlDestination::Command,
+            ControlId::DopplerMode => ControlDestination::Command,
+            ControlId::DopplerAutoTrack => ControlDestination::Target,
+            ControlId::DopplerSpeedThreshold => ControlDestination::Command,
+            ControlId::TargetTrails => ControlDestination::Trail,
+            ControlId::TrailsMotion => ControlDestination::Trail,
+            ControlId::DopplerTrailsOnly => ControlDestination::Trail,
+            ControlId::NoiseRejection => ControlDestination::Command,
+            ControlId::TargetBoost => ControlDestination::Command,
+            ControlId::TargetExpansion => ControlDestination::Command,
+            ControlId::InterferenceRejection => ControlDestination::Command,
+            ControlId::TargetSeparation => ControlDestination::Command,
+            ControlId::LocalInterferenceRejection => ControlDestination::Command,
+            ControlId::ScanSpeed => ControlDestination::Command,
+            ControlId::SideLobeSuppression => ControlDestination::Command,
+            ControlId::Tune => ControlDestination::Command,
+            ControlId::Ftc => ControlDestination::Command,
+            ControlId::MainBangSuppression => ControlDestination::Command,
+            ControlId::SeaClutterCurve => ControlDestination::Command,
+            ControlId::NoTransmitSector1 => ControlDestination::Command,
+            ControlId::NoTransmitSector2 => ControlDestination::Command,
+            ControlId::NoTransmitSector3 => ControlDestination::Command,
+            ControlId::NoTransmitSector4 => ControlDestination::Command,
+            ControlId::RotationSpeed => ControlDestination::Command,
+            ControlId::MagnetronCurrent => ControlDestination::Command,
+            ControlId::SignalStrength => ControlDestination::Command,
+            ControlId::OperatingTime => ControlDestination::ReadOnly,
+            ControlId::TransmitTime => ControlDestination::ReadOnly,
+            ControlId::ModelName => ControlDestination::ReadOnly,
+            ControlId::FirmwareVersion => ControlDestination::ReadOnly,
+            ControlId::SerialNumber => ControlDestination::ReadOnly,
+            ControlId::Spokes => ControlDestination::ReadOnly,
+            ControlId::SpokeLength => ControlDestination::ReadOnly,
+            ControlId::SpokeProcessing => ControlDestination::Internal,
+            ControlId::RangeUnits => ControlDestination::Internal,
+            ControlId::UserName => ControlDestination::Internal,
+        }
+    }
+}
 ///
 /// Radars have settings. There are some common ones that every radar supports:
 /// range, gain, sea clutter and rain clutter. Some others are less common, and
@@ -2102,361 +2456,6 @@ impl ControlDefinition {
             valid_values,
             is_read_only,
             is_send_always,
-        }
-    }
-}
-
-#[derive(
-    Eq,
-    PartialEq,
-    PartialOrd,
-    Hash,
-    Copy,
-    Clone,
-    Debug,
-    FromPrimitive,
-    ToPrimitive,
-    EnumIter,
-    EnumString,
-    IntoStaticStr,
-    EnumCount,
-)]
-#[repr(u8)]
-#[strum(ascii_case_insensitive, serialize_all = "camelCase")]
-// The order is the one in which we deem the representation is "right"
-// when present as a straight list of controls. This is the same order
-// as shown in the radar page for HALO on NOS MFDs.
-pub enum ControlId {
-    Power,
-    WarmupTime,
-    RangeUnits,
-    Range,
-    Mode,
-    // AllAuto,
-    Gain,
-    ColorGain,
-    Sea,
-    SeaState,
-    // Stc,
-    // StcCurve,
-    Rain,
-    // Scaling,
-    Doppler,
-    DopplerMode,
-    DopplerAutoTrack,
-    DopplerSpeedThreshold,
-    // Client Only, not here: ColorPalette,
-    // Client Only, not here: Orientation,
-    // Client Only, not here: Position,
-    // Client Only, not here: Symbology,
-    TargetTrails,
-    TrailsMotion,
-    DopplerTrailsOnly,
-    ClearTrails,
-    ClearTargets,
-    // TimedIdle,
-    // TimedRun,
-    NoiseRejection,
-    TargetBoost,
-    TargetExpansion,
-    InterferenceRejection,
-    TargetSeparation,
-    LocalInterferenceRejection,
-    BirdMode,
-    ScanSpeed,
-    SideLobeSuppression,
-    Tune,
-    // TuneCoarse,
-    // TuneFine,
-    // ColorGain,
-    // DisplayTiming,
-    Ftc,
-    // MainBangSize,
-    MainBangSuppression,
-    SeaClutterCurve,
-    DisplayTiming,
-    NoTransmitSector1,
-    NoTransmitSector2,
-    NoTransmitSector3,
-    NoTransmitSector4,
-    AccentLight,
-    // AntennaForward,
-    AntennaHeight,
-    // AntennaStarboard,
-    BearingAlignment,
-    // Orientation,
-    RotationSpeed,
-    MagnetronCurrent,
-    SignalStrength,
-    OperatingTime,
-    TransmitTime,
-    ModelName,
-    FirmwareVersion,
-    SerialNumber,
-    Spokes,
-    SpokeLength,
-    SpokeProcessing,
-    UserName,
-}
-
-impl Display for ControlId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s: &'static str = self.into();
-
-        write!(f, "{}", s)
-    }
-}
-
-impl ControlId {
-    pub fn from_u8(value: u8) -> ControlId {
-        FromPrimitive::from_u8(value).unwrap()
-    }
-
-    pub fn parse_str(s: Cow<'_, str>) -> Result<ControlId, RadarError> {
-        // Numeric discriminant encoded as string
-        if let Ok(num) = s.parse::<u8>() {
-            return match FromPrimitive::from_u8(num) {
-                Some(ct) => Ok(ct),
-                None => Err(RadarError::InvalidControlId(
-                    "invalid ControlId discriminant".to_string(),
-                )),
-            };
-        }
-
-        // Case-insensitive name lookup (Strum)
-        ControlId::from_str(&s)
-            .map_err(|_| RadarError::InvalidControlId("invalid ControlId discriminant".to_string()))
-    }
-
-    pub fn get_category(&self) -> Category {
-        match self {
-            ControlId::Power
-            | ControlId::BirdMode
-            | ControlId::Range
-            | ControlId::Mode
-            | ControlId::Gain
-            | ControlId::ColorGain
-            | ControlId::Sea
-            | ControlId::SeaState
-            | ControlId::Rain
-            | ControlId::Doppler
-            | ControlId::DopplerMode
-            | ControlId::TargetTrails
-            | ControlId::ClearTargets
-            | ControlId::ClearTrails => Category::Base,
-            ControlId::AccentLight
-            | ControlId::AntennaHeight
-            | ControlId::BearingAlignment
-            | ControlId::NoTransmitSector1
-            | ControlId::NoTransmitSector2
-            | ControlId::NoTransmitSector3
-            | ControlId::NoTransmitSector4
-            | ControlId::RangeUnits => Category::Installation,
-            ControlId::ModelName
-            | ControlId::WarmupTime
-            | ControlId::FirmwareVersion
-            | ControlId::OperatingTime
-            | ControlId::TransmitTime
-            | ControlId::MagnetronCurrent
-            | ControlId::RotationSpeed
-            | ControlId::SerialNumber
-            | ControlId::SignalStrength
-            | ControlId::Spokes
-            | ControlId::SpokeLength => Category::Info,
-            _ => Category::Advanced,
-        }
-    }
-
-    pub fn get_description(&self) -> &'static str {
-        match self {
-            ControlId::AccentLight => "Strength of the accent light",
-            ControlId::AntennaHeight => "Height of the antenna above waterline",
-            ControlId::BearingAlignment => "Alignment of the antenna relative to the vessel's bow",
-            ControlId::ClearTargets => "Clear all ARPA targets",
-            ControlId::ClearTrails => "Clear target trails",
-            ControlId::ColorGain => "Adjust the color curve relative to gain",
-            ControlId::DisplayTiming => "Display timing",
-            ControlId::Doppler => {
-                "Targets coming towards or going away from own ship shown in different colors"
-            }
-            ControlId::DopplerMode => "For what type of targets Doppler is used",
-            ControlId::DopplerAutoTrack => {
-                "Convert all Doppler targets to ARPA targets automatically"
-            }
-            ControlId::DopplerSpeedThreshold => "Threshold speed above which Doppler is applied",
-            ControlId::DopplerTrailsOnly => "Convert only Doppler targets to target trails",
-            ControlId::FirmwareVersion => "Version of the radar firmware",
-            ControlId::Ftc => "FTC",
-            ControlId::Gain => "How sensitive the radar is to returning echoes",
-            ControlId::InterferenceRejection => "Reduces interference from other radars",
-            ControlId::LocalInterferenceRejection => {
-                "How much local interference rejection is applied"
-            }
-            ControlId::BirdMode => "Level of optimization for bird targets",
-            ControlId::MagnetronCurrent => "The current supplied to the magnetron",
-            ControlId::MainBangSuppression => "Main bang suppression",
-            ControlId::Mode => "Choice of radar mode tuning to certain conditions, or custom",
-            ControlId::ModelName => "Manufacturer model name of the radar",
-            ControlId::NoTransmitSector1 => "First no-transmit sector",
-            ControlId::NoTransmitSector2 => "Second no-transmit sector",
-            ControlId::NoTransmitSector3 => "Third no-transmit sector",
-            ControlId::NoTransmitSector4 => "Fourth no-transmit sector",
-            ControlId::Power => "Radar operational state",
-            ControlId::WarmupTime => {
-                "How long the radar still needs to warm up before transmitting"
-            }
-            ControlId::Range => "Maximum distance the radar is looking at",
-            ControlId::Sea => "Sea clutter suppression",
-            ControlId::SeaState => "Sea state for sea clutter suppression",
-            ControlId::Rain => "Rain clutter suppression",
-            ControlId::TargetTrails => "Whether target trails are shown",
-            ControlId::TrailsMotion => "How target trails behave",
-            ControlId::NoiseRejection => "Filters out noise",
-            ControlId::TargetBoost => "Level of how much small targets are boosted",
-            ControlId::TargetExpansion => "Increases target length for small targets",
-            ControlId::TargetSeparation => "Makes separation between targets more prominent",
-            ControlId::ScanSpeed => "Desired rotation speed of the radar antenna",
-            ControlId::SideLobeSuppression => "Level of side lobe suppression",
-            ControlId::Tune => "Method to finely tune the radar receiver",
-            ControlId::SeaClutterCurve => "Sea clutter curve",
-            ControlId::RotationSpeed => "How quickly the radar antenna rotates",
-            ControlId::SignalStrength => "Signal strength of the radar",
-            ControlId::OperatingTime => "How long the radar has been operating over its lifetime",
-            ControlId::TransmitTime => "How long the radar has been transmitting over its lifetime",
-            ControlId::SerialNumber => "Manufacturer serial number of the radar",
-            ControlId::Spokes => "How many spokes the radar transmitted last rotation",
-            ControlId::SpokeLength => {
-                "How long the spokes are that the radar transmitted last rotation"
-            }
-            ControlId::SpokeProcessing => "How to process spoke data for display",
-            ControlId::RangeUnits => "Which unit system to use for range values",
-            ControlId::UserName => "User defined name for the radar",
-        }
-    }
-
-    fn get_name(&self) -> &'static str {
-        match self {
-            ControlId::AccentLight => "Accent light",
-            // ControlId::AllAuto => "All to Auto",
-            // ControlId::AntennaForward => "Antenna forward of GPS",
-            ControlId::AntennaHeight => "Antenna height",
-            // ControlId::AntennaStarboard => "Antenna starboard of GPS",
-            ControlId::BearingAlignment => "Bearing alignment",
-            // ControlId::ColorGain => "Color gain",
-            ControlId::ClearTargets => "Clear targets",
-            ControlId::ClearTrails => "Clear trails",
-            ControlId::ColorGain => "Color gain",
-            ControlId::DisplayTiming => "Display timing",
-            ControlId::Doppler => "Doppler",
-            ControlId::DopplerMode => "Doppler mode",
-            ControlId::DopplerAutoTrack => "Doppler Auto Track",
-            ControlId::DopplerSpeedThreshold => "Doppler speed threshold",
-            ControlId::DopplerTrailsOnly => "Doppler trails only",
-            ControlId::FirmwareVersion => "Firmware version",
-            ControlId::Ftc => "FTC",
-            ControlId::Gain => "Gain",
-            ControlId::InterferenceRejection => "Interference rejection",
-            ControlId::LocalInterferenceRejection => "Local interference rejection",
-            ControlId::BirdMode => "Bird mode",
-            // ControlId::MainBangSize => "Main bang size",
-            ControlId::MagnetronCurrent => "Magnetron current",
-            ControlId::MainBangSuppression => "Main bang suppression",
-            ControlId::Mode => "Mode",
-            ControlId::ModelName => "Model name",
-            ControlId::NoTransmitSector1 => "No Transmit sector",
-            ControlId::NoTransmitSector2 => "No Transmit sector (2)",
-            ControlId::NoTransmitSector3 => "No Transmit sector (3)",
-            ControlId::NoTransmitSector4 => "No Transmit sector (4)",
-            ControlId::NoiseRejection => "Noise rejection",
-            ControlId::OperatingTime => "Operating time",
-            ControlId::TransmitTime => "Transmit time",
-            // ControlId::Orientation => "Orientation",
-            ControlId::Rain => "Rain clutter",
-            ControlId::Range => "Range",
-            ControlId::RotationSpeed => "Rotation speed",
-            // ControlId::Scaling => "Scaling",
-            ControlId::ScanSpeed => "Scan speed",
-            ControlId::Sea => "Sea clutter",
-            ControlId::SeaClutterCurve => "Sea clutter curve",
-            ControlId::SeaState => "Sea state",
-            ControlId::SerialNumber => "Serial Number",
-            ControlId::SideLobeSuppression => "Side lobe suppression",
-            // ControlId::Stc => "Sensitivity Time Control",
-            // ControlId::StcCurve => "STC curve",
-            ControlId::SignalStrength => "Signal strength",
-            ControlId::Power => "Power",
-            ControlId::TargetBoost => "Target boost",
-            ControlId::TargetExpansion => "Target expansion",
-            ControlId::TargetSeparation => "Target separation",
-            ControlId::TargetTrails => "Target trails",
-            // ControlId::TimedIdle => "Time idle",
-            // ControlId::TimedRun => "Timed run",
-            ControlId::TrailsMotion => "Target trails motion",
-            ControlId::Tune => "Tune",
-            // ControlId::TuneFine => "Fine tune",
-            ControlId::Spokes => "Spokes",
-            ControlId::SpokeLength => "Spoke length",
-            ControlId::SpokeProcessing => "Spoke Processing",
-            ControlId::RangeUnits => "Range Units",
-            ControlId::UserName => "Custom name",
-            ControlId::WarmupTime => "Warmup time",
-        }
-    }
-
-    pub(crate) fn get_destination(&self) -> ControlDestination {
-        match self {
-            ControlId::AccentLight => ControlDestination::Command,
-            ControlId::AntennaHeight => ControlDestination::Command,
-            ControlId::BearingAlignment => ControlDestination::Command,
-            ControlId::BirdMode => ControlDestination::Command,
-            ControlId::ClearTargets => ControlDestination::Target,
-            ControlId::ClearTrails => ControlDestination::Trail,
-            ControlId::ColorGain => ControlDestination::Command,
-            ControlId::DisplayTiming => ControlDestination::Command,
-            ControlId::Power => ControlDestination::Command,
-            ControlId::WarmupTime => ControlDestination::ReadOnly,
-            ControlId::Range => ControlDestination::Command,
-            ControlId::Mode => ControlDestination::Command,
-            ControlId::Gain => ControlDestination::Command,
-            ControlId::Sea => ControlDestination::Command,
-            ControlId::SeaState => ControlDestination::Command,
-            ControlId::Rain => ControlDestination::Command,
-            ControlId::Doppler => ControlDestination::Command,
-            ControlId::DopplerMode => ControlDestination::Command,
-            ControlId::DopplerAutoTrack => ControlDestination::Target,
-            ControlId::DopplerSpeedThreshold => ControlDestination::Command,
-            ControlId::TargetTrails => ControlDestination::Trail,
-            ControlId::TrailsMotion => ControlDestination::Trail,
-            ControlId::DopplerTrailsOnly => ControlDestination::Trail,
-            ControlId::NoiseRejection => ControlDestination::Command,
-            ControlId::TargetBoost => ControlDestination::Command,
-            ControlId::TargetExpansion => ControlDestination::Command,
-            ControlId::InterferenceRejection => ControlDestination::Command,
-            ControlId::TargetSeparation => ControlDestination::Command,
-            ControlId::LocalInterferenceRejection => ControlDestination::Command,
-            ControlId::ScanSpeed => ControlDestination::Command,
-            ControlId::SideLobeSuppression => ControlDestination::Command,
-            ControlId::Tune => ControlDestination::Command,
-            ControlId::Ftc => ControlDestination::Command,
-            ControlId::MainBangSuppression => ControlDestination::Command,
-            ControlId::SeaClutterCurve => ControlDestination::Command,
-            ControlId::NoTransmitSector1 => ControlDestination::Command,
-            ControlId::NoTransmitSector2 => ControlDestination::Command,
-            ControlId::NoTransmitSector3 => ControlDestination::Command,
-            ControlId::NoTransmitSector4 => ControlDestination::Command,
-            ControlId::RotationSpeed => ControlDestination::Command,
-            ControlId::MagnetronCurrent => ControlDestination::Command,
-            ControlId::SignalStrength => ControlDestination::Command,
-            ControlId::OperatingTime => ControlDestination::ReadOnly,
-            ControlId::TransmitTime => ControlDestination::ReadOnly,
-            ControlId::ModelName => ControlDestination::ReadOnly,
-            ControlId::FirmwareVersion => ControlDestination::ReadOnly,
-            ControlId::SerialNumber => ControlDestination::ReadOnly,
-            ControlId::Spokes => ControlDestination::ReadOnly,
-            ControlId::SpokeLength => ControlDestination::ReadOnly,
-            ControlId::SpokeProcessing => ControlDestination::Internal,
-            ControlId::RangeUnits => ControlDestination::Internal,
-            ControlId::UserName => ControlDestination::Internal,
         }
     }
 }
