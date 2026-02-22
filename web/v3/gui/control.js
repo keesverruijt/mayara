@@ -34,6 +34,7 @@ import {
   saveInstallationSetting,
   isPlaybackRadar,
 } from "./api.js";
+import { setZoneEditMode, setSectorEditMode } from "./viewer.js";
 
 const { div, label, input, button, select, option, span } = van.tags;
 
@@ -375,14 +376,63 @@ const SectorValue = (id, name, control) => {
   const prefix = `myr_control_${id}`;
   const hasEnabled = control.hasEnabled !== false;
 
-  function sendSectorValue() {
-    const startEl = document.getElementById(`${prefix}`);
-    const endEl = document.getElementById(`${prefix}${end_postfix}`);
-    const enabledEl = document.getElementById(`${prefix}${enabled_postfix}`);
+  const min = control.minValue ?? -180;
+  const max = control.maxValue ?? 180;
 
-    const startDeg = parseInt(startEl?.value) || 0;
-    const endDeg = parseInt(endEl?.value) || 0;
-    const enabledVal = enabledEl?.checked ?? true;
+  function updateEditFields(sector) {
+    // Update edit fields from sector data (radians)
+    const startAngleDeg = Math.round((sector.startAngle * 180) / Math.PI);
+    const endAngleDeg = Math.round((sector.endAngle * 180) / Math.PI);
+
+    const startEl = document.getElementById(`${prefix}_edit_start`);
+    const endEl = document.getElementById(`${prefix}_edit_end`);
+
+    if (startEl) startEl.value = startAngleDeg;
+    if (endEl) endEl.value = endAngleDeg;
+  }
+
+  function onDragEnd(newSector) {
+    // Called when user finishes dragging a handle on the viewer
+    updateEditFields(newSector);
+  }
+
+  function enterEditMode() {
+    const container = document.getElementById(`myr_${id}`);
+    const displaySection = container.querySelector(".myr_sector_display");
+    const editSection = container.querySelector(".myr_sector_edit");
+
+    // Copy current values to edit fields
+    const cv = myr_control_values[id] || {};
+    const [, startAngle] = toUser(control.units, cv.value);
+    const [, endAngle] = toUser(control.units, cv.endValue);
+
+    document.getElementById(`${prefix}_edit_start`).value = startAngle ?? 0;
+    document.getElementById(`${prefix}_edit_end`).value = endAngle ?? 0;
+    document.getElementById(`${prefix}_edit_enabled`).checked = cv.enabled ?? false;
+
+    displaySection.style.display = "none";
+    editSection.style.display = "block";
+
+    // Enable drag handles on the viewer
+    setSectorEditMode(id, true, onDragEnd);
+  }
+
+  function exitEditMode() {
+    const container = document.getElementById(`myr_${id}`);
+    const displaySection = container.querySelector(".myr_sector_display");
+    const editSection = container.querySelector(".myr_sector_edit");
+
+    displaySection.style.display = "block";
+    editSection.style.display = "none";
+
+    // Disable drag handles on the viewer
+    setSectorEditMode(id, false);
+  }
+
+  function saveSector() {
+    const startDeg = parseInt(document.getElementById(`${prefix}_edit_start`)?.value) || 0;
+    const endDeg = parseInt(document.getElementById(`${prefix}_edit_end`)?.value) || 0;
+    const enabledVal = document.getElementById(`${prefix}_edit_enabled`)?.checked ?? false;
 
     // Convert degrees to radians for server
     const startRad = (startDeg * Math.PI) / 180;
@@ -393,95 +443,123 @@ const SectorValue = (id, name, control) => {
       endValue: endRad,
       enabled: enabledVal,
     });
-  }
 
-  function onEnabledChange(e) {
-    const enabled = e.target.checked;
-    const startEl = document.getElementById(`${prefix}_start`);
-    const endEl = document.getElementById(`${prefix}_end`);
-    if (startEl) startEl.disabled = !enabled;
-    if (endEl) endEl.disabled = !enabled;
-    sendSectorValue();
+    exitEditMode();
   }
-
-  const min = control.minValue ?? -180;
-  const max = control.maxValue ?? 180;
 
   return div(
     { class: "myr_control myr_sector_control", id: `myr_${id}` },
-    span({ class: "myr_control_label" }, name),
+    // Hidden input for get_element_by_server_id to find
+    input({ type: "hidden", id: `${control_prefix}${id}` }),
+    // Header with label and Edit button
     div(
-      { class: "myr_sector_angles" },
-      div(
-        { class: "myr_sector_angle" },
-        label({ for: `${control_prefix}${id}` }, "Start°"),
-        input({
-          type: "number",
-          id: `${control_prefix}${id}`,
-          min: min,
-          max: max,
-          value: 0,
-          disabled: hasEnabled,
-          onchange: () => sendSectorValue(),
-        })
-      ),
-      div(
-        { class: "myr_sector_angle" },
-        label({ for: `${control_prefix}${id}${end_postfix}` }, "End°"),
-        input({
-          type: "number",
-          id: `${control_prefix}${id}${end_postfix}`,
-          min: min,
-          max: max,
-          value: 0,
-          disabled: hasEnabled,
-          onchange: () => sendSectorValue(),
-        })
+      { class: "myr_control_header" },
+      span({ class: "myr_control_label" }, name),
+      button(
+        {
+          type: "button",
+          class: "myr_zone_edit_btn",
+          onclick: enterEditMode,
+        },
+        "Edit"
       )
     ),
-    hasEnabled
-      ? div(
-          { class: "myr_sector_enabled" },
-          label(
-            { class: "myr_checkbox_label" },
-            input({
-              type: "checkbox",
-              id: `${control_prefix}${id}${enabled_postfix}`,
-              checked: false,
-              onchange: onEnabledChange,
-            }),
-            " Enabled"
-          )
+    // Read-only display section (clickable to enter edit mode)
+    div(
+      { class: "myr_sector_display", onclick: enterEditMode },
+      div(
+        { class: "myr_sector_summary" },
+        div(
+          { class: "myr_zone_summary_row" },
+          span({ class: "myr_zone_summary_label" }, "Angle: "),
+          span({ id: `${prefix}_display_angle` }, "0° - 0°")
         )
-      : null
+      )
+    ),
+    // Edit section (hidden by default)
+    div(
+      { class: "myr_sector_edit", style: "display: none;" },
+      div(
+        { class: "myr_zone_row" },
+        div(
+          { class: "myr_zone_field" },
+          label({ for: `${prefix}_edit_start` }, "Start°"),
+          input({
+            type: "number",
+            id: `${prefix}_edit_start`,
+            min: min,
+            max: max,
+            value: 0,
+          })
+        ),
+        div(
+          { class: "myr_zone_field" },
+          label({ for: `${prefix}_edit_end` }, "End°"),
+          input({
+            type: "number",
+            id: `${prefix}_edit_end`,
+            min: min,
+            max: max,
+            value: 0,
+          })
+        )
+      ),
+      hasEnabled
+        ? div(
+            { class: "myr_zone_enabled" },
+            label(
+              { class: "myr_checkbox_label" },
+              input({
+                type: "checkbox",
+                id: `${prefix}_edit_enabled`,
+              }),
+              " Enabled"
+            )
+          )
+        : null,
+      div(
+        { class: "myr_zone_buttons" },
+        button(
+          {
+            type: "button",
+            class: "myr_zone_cancel_btn",
+            onclick: exitEditMode,
+          },
+          "Cancel"
+        ),
+        button(
+          {
+            type: "button",
+            class: "myr_zone_save_btn",
+            onclick: saveSector,
+          },
+          "Save"
+        )
+      )
+    )
   );
 };
 
 /**
- * Update sector control UI from server state
+ * Update sector control UI from server state (read-only display)
  */
 function updateSectorUI(id, control, cv) {
   const prefix = `myr_control_${id}`;
-  const startEl = document.getElementById(`${prefix}`);
-  const endEl = document.getElementById(`${prefix}${end_postfix}`);
-  const enabledEl = document.getElementById(`${prefix}${enabled_postfix}`);
 
-  const enabled = cv.enabled ?? false;
+  // Update display values
+  const angleDisplay = document.getElementById(`${prefix}_display_angle`);
 
-  let units, value, endValue;
-
-  if (startEl) {
-    [units, value] = toUser(control.units, cv.value);
-    startEl.value = value;
-    startEl.disabled = !enabled;
+  if (angleDisplay) {
+    const [, startAngle] = toUser(control.units, cv.value);
+    const [, endAngle] = toUser(control.units, cv.endValue);
+    angleDisplay.textContent = `${startAngle ?? 0}° - ${endAngle ?? 0}°`;
   }
-  if (endEl) {
-    [units, endValue] = toUser(control.units, cv.endValue);
-    endEl.value = endValue;
-    endEl.disabled = !enabled;
-  }
-  if (enabledEl) {
-    enabledEl.checked = enabled;
+
+  // Hide display section when not enabled
+  const container = document.getElementById(`myr_${id}`);
+  const displaySection = container?.querySelector(".myr_sector_display");
+  if (displaySection) {
+    displaySection.style.display = cv.enabled ? "block" : "none";
   }
 }
 
@@ -497,6 +575,27 @@ const ZoneValue = (id, name, control) => {
   const minAngle = control.minValue ?? -180;
   const maxAngle = control.maxValue ?? 180;
   const maxDist = control.maxDistance ?? 100000;
+
+  function updateEditFields(zone) {
+    // Update edit fields from zone data (radians/meters)
+    const startAngleDeg = Math.round((zone.startAngle * 180) / Math.PI);
+    const endAngleDeg = Math.round((zone.endAngle * 180) / Math.PI);
+
+    const startAngleEl = document.getElementById(`${prefix}_edit_start_angle`);
+    const endAngleEl = document.getElementById(`${prefix}_edit_end_angle`);
+    const startDistEl = document.getElementById(`${prefix}_edit_start_dist`);
+    const endDistEl = document.getElementById(`${prefix}_edit_end_dist`);
+
+    if (startAngleEl) startAngleEl.value = startAngleDeg;
+    if (endAngleEl) endAngleEl.value = endAngleDeg;
+    if (startDistEl) startDistEl.value = Math.round(zone.startDistance);
+    if (endDistEl) endDistEl.value = Math.round(zone.endDistance);
+  }
+
+  function onDragEnd(newZone) {
+    // Called when user finishes dragging a handle on the viewer
+    updateEditFields(newZone);
+  }
 
   function enterEditMode() {
     const container = document.getElementById(`myr_${id}`);
@@ -516,6 +615,9 @@ const ZoneValue = (id, name, control) => {
 
     displaySection.style.display = "none";
     editSection.style.display = "block";
+
+    // Enable drag handles on the viewer
+    setZoneEditMode(id, true, onDragEnd);
   }
 
   function exitEditMode() {
@@ -525,6 +627,9 @@ const ZoneValue = (id, name, control) => {
 
     displaySection.style.display = "block";
     editSection.style.display = "none";
+
+    // Disable drag handles on the viewer
+    setZoneEditMode(id, false);
   }
 
   function saveZone() {
@@ -580,11 +685,6 @@ const ZoneValue = (id, name, control) => {
           { class: "myr_zone_summary_row" },
           span({ class: "myr_zone_summary_label" }, "Distance: "),
           span({ id: `${prefix}_display_dist` }, "0 - 0 m")
-        ),
-        div(
-          { class: "myr_zone_summary_row" },
-          span({ class: "myr_zone_summary_label" }, "Enabled: "),
-          span({ id: `${prefix}_display_enabled` }, "No")
         )
       )
     ),
@@ -684,7 +784,6 @@ function updateZoneUI(id, control, cv) {
   // Update display values
   const angleDisplay = document.getElementById(`${prefix}_display_angle`);
   const distDisplay = document.getElementById(`${prefix}_display_dist`);
-  const enabledDisplay = document.getElementById(`${prefix}_display_enabled`);
 
   if (angleDisplay) {
     const [, startAngle] = toUser(control.units, cv.value);
@@ -696,8 +795,12 @@ function updateZoneUI(id, control, cv) {
     const endDist = Math.round(cv.endDistance ?? 0);
     distDisplay.textContent = `${startDist} - ${endDist} m`;
   }
-  if (enabledDisplay) {
-    enabledDisplay.textContent = cv.enabled ? "Yes" : "No";
+
+  // Hide display section when not enabled
+  const container = document.getElementById(`myr_${id}`);
+  const displaySection = container?.querySelector(".myr_zone_display");
+  if (displaySection) {
+    displaySection.style.display = cv.enabled ? "block" : "none";
   }
 }
 

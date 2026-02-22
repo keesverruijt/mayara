@@ -556,7 +556,7 @@ div.myr_range_buttons {
 .myr_info_stacked {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 0;
   background-color: #0a0a12;
   border-color: #334;
 }
@@ -564,6 +564,7 @@ div.myr_range_buttons {
 .myr_info_stacked .myr_control_label {
   font-size: 11px;
   color: #888;
+  margin-bottom: 4px;
 }
 
 .myr_info_value {
@@ -686,7 +687,7 @@ div.myr_range_buttons {
   display: flex;
   gap: 4px;
   margin-top: 4px;
-  font-size: 13px;
+  font-size: 11px;
 }
 
 .myr_zone_summary_label {

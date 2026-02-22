@@ -1,54 +1,27 @@
-export { render_webgpu };
+export { WebGPURenderer };
 
-import {
-  RANGE_SCALE,
-  formatRangeValue,
-  is_metric,
-  getHeadingMode,
-  getTrueHeading,
-} from "./viewer.js";
-
-import { SpokeProcessorFactory } from "./spoke_processor.js";
-
-class render_webgpu {
-  constructor(canvas_dom, canvas_background_dom) {
+/**
+ * WebGPU Renderer - Handles only the WebGPU-specific spoke rendering
+ * This is a backend renderer that can be used with the PPI class
+ */
+class WebGPURenderer {
+  constructor(canvas_dom) {
     this.dom = canvas_dom;
-    this.background_dom = canvas_background_dom;
-    this.background_ctx = this.background_dom.getContext("2d");
-    // Overlay canvas for range rings (on top of radar)
-    this.overlay_dom = document.getElementById("myr_canvas_overlay");
-    this.overlay_ctx = this.overlay_dom
-      ? this.overlay_dom.getContext("2d")
-      : null;
-
-    this.actual_range = 0;
-    this.lastHeading = null;
     this.ready = false;
     this.pendingLegend = null;
     this.pendingSpokes = null;
-    this.legend = null;
 
-    // Spoke processing strategy
-    this.spokeProcessor = null;
-    this.processingMode = "auto"; // "auto", "clean", or "smoothing"
+    // Spoke data
+    this.spokesPerRevolution = 0;
+    this.maxspokelength = 0;
 
-    // Buffer flush - wait for full rotation after standby/range change
-    // This ensures we only draw fresh data, not stale buffered spokes
-    this.waitForRotation = false; // True when waiting for angle wraparound
-    this.waitStartAngle = -1; // Angle when we started waiting
-    this.seenAngleWrap = false; // True once we've seen angle decrease (wrap)
-
-    // Heading rotation for North Up mode (in radians)
+    // Display parameters (set by PPI via resize)
+    this.width = 0;
+    this.height = 0;
+    this.beam_length = 0;
     this.headingRotation = 0;
-
-    // Standby mode state
-    this.powerMode = "off";
-
-    // Guard zones and no-transmit sectors
-    this.guardZones = [null, null];
-    this.noTransmitSectors = [null, null, null, null];
-    this.onTimeSeconds = 0;
-    this.txTimeSeconds = 0;
+    this.range = 0;
+    this.actual_range = 0;
 
     // Start async initialization
     this.initPromise = this.#initWebGPU();
@@ -74,17 +47,17 @@ class render_webgpu {
       alphaMode: "premultiplied",
     });
 
-    // Create sampler for polar data (linear for smooth display like TZ Pro)
+    // Create sampler for polar data
     this.sampler = this.device.createSampler({
       magFilter: "linear",
       minFilter: "linear",
       addressModeU: "clamp-to-edge",
-      addressModeV: "repeat", // Wrap around for angles
+      addressModeV: "repeat",
     });
 
     // Create uniform buffer for parameters
     this.uniformBuffer = this.device.createBuffer({
-      size: 32, // scaleX, scaleY, spokesPerRev, maxSpokeLen + padding
+      size: 32,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -104,8 +77,8 @@ class render_webgpu {
     await this.#createRenderPipeline();
 
     this.ready = true;
-    this.redrawCanvas();
 
+    // Process any pending data
     if (this.pendingSpokes) {
       this.setSpokes(
         this.pendingSpokes.spokesPerRevolution,
@@ -117,6 +90,7 @@ class render_webgpu {
       this.setLegend(this.pendingLegend);
       this.pendingLegend = null;
     }
+
     console.log("WebGPU initialized (direct polar rendering)");
   }
 
@@ -131,12 +105,12 @@ class render_webgpu {
           binding: 0,
           visibility: GPUShaderStage.FRAGMENT,
           texture: { sampleType: "float" },
-        }, // polar data
+        },
         {
           binding: 1,
           visibility: GPUShaderStage.FRAGMENT,
           texture: { sampleType: "float" },
-        }, // color table
+        },
         {
           binding: 2,
           visibility: GPUShaderStage.FRAGMENT,
@@ -176,202 +150,41 @@ class render_webgpu {
     });
   }
 
+  /**
+   * Initialize spoke texture dimensions
+   */
   setSpokes(spokesPerRevolution, maxspokelength) {
     if (!this.ready) {
       this.pendingSpokes = { spokesPerRevolution, maxspokelength };
       this.spokesPerRevolution = spokesPerRevolution;
       this.maxspokelength = maxspokelength;
-      this.data = new Uint8Array(spokesPerRevolution * maxspokelength);
       return;
     }
 
     this.spokesPerRevolution = spokesPerRevolution;
     this.maxspokelength = maxspokelength;
-    this.data = new Uint8Array(spokesPerRevolution * maxspokelength);
 
-    // Create polar data texture (width = range samples, height = angles)
+    // Create polar data texture
     this.polarTexture = this.device.createTexture({
       size: [maxspokelength, spokesPerRevolution],
       format: "r8unorm",
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });
 
-    // Create spoke processor if legend is available
-    if (this.legend) {
-      this.#createSpokeProcessor();
-    }
-
     this.#createBindGroup();
   }
 
-  setRange(range) {
-    this.range = range;
-    // Clear spoke data when range changes - old data is no longer valid
-    if (this.data) {
-      this.data.fill(0);
-    }
-    this.redrawCanvas();
-  }
-
-  setHeadingMode(mode) {
-    if (this.lastHeading || getTrueHeading()) {
-      this.headingMode = mode;
-      return mode;
-    } else {
-      return "headingUp";
-    }
-  }
-
-  setPowerMode(powerMode, onTimeSeconds, txTimeSeconds) {
-    const isStandby = powerMode != "transmit";
-    const wasStandby = this.powerMode != "transmit";
-    this.powerMode = powerMode;
-    this.onTimeSeconds = onTimeSeconds || 0;
-    this.txTimeSeconds = txTimeSeconds || 0;
-
-    if (isStandby && !wasStandby) {
-      // Entering standby - clear spoke data and force GPU texture update
-      this.clearRadarDisplay();
-    } else if (!isStandby && wasStandby) {
-      // Exiting standby (entering transmit) - clear any stale data and reset state
-      this.clearRadarDisplay();
-    }
-
-    // Redraw to show/hide standby overlay
-    this.redrawCanvas();
-  }
-
-  // Clear all radar data from display (used when entering standby or changing range)
-  clearRadarDisplay() {
-    if (this.data) {
-      this.data.fill(0);
-    }
-    // Reset spoke processor state
-    if (this.spokeProcessor) {
-      this.spokeProcessor.reset();
-    }
-
-    // Wait for full rotation to flush any buffered stale spokes (if processor needs it)
-    if (this.spokeProcessor && this.spokeProcessor.needsRotationWait()) {
-      this.waitForRotation = true;
-      this.waitStartAngle = -1;
-      this.seenAngleWrap = false;
-    } else {
-      this.waitForRotation = false;
-    }
-
-    // Upload cleared data to GPU and render
-    if (this.ready && this.polarTexture && this.data) {
-      this.device.queue.writeTexture(
-        { texture: this.polarTexture },
-        this.data,
-        { bytesPerRow: this.maxspokelength },
-        { width: this.maxspokelength, height: this.spokesPerRevolution }
-      );
-      this.render();
-    }
-  }
-
   /**
-   * Set the spoke processing mode
-   * @param {string} mode - "auto", "clean", or "smoothing"
+   * Set the color legend/table
+   * @param {object} legend - Legend with colors array
    */
-  setProcessingMode(mode) {
-    if (this.processingMode !== mode) {
-      this.processingMode = mode;
-      this.#createSpokeProcessor();
-      // Clear display when switching modes
-      this.clearRadarDisplay();
-    }
-  }
-
-  /**
-   * Set a guard zone for display
-   * @param {number} index - Zone index (0 or 1)
-   * @param {object|null} zone - Zone data {startAngle, endAngle, startDistance, endDistance} or null to disable
-   */
-  setGuardZone(index, zone) {
-    if (index >= 0 && index < 2) {
-      this.guardZones[index] = zone;
-      this.redrawCanvas();
-    }
-  }
-
-  /**
-   * Set a no-transmit sector for display
-   * @param {number} index - Sector index (0-3)
-   * @param {object|null} sector - Sector data {startAngle, endAngle} or null to disable
-   */
-  setNoTransmitSector(index, sector) {
-    if (index >= 0 && index < 4) {
-      this.noTransmitSectors[index] = sector;
-      this.redrawCanvas();
-    }
-  }
-
-  #createSpokeProcessor() {
-    if (!this.legend || !this.spokesPerRevolution) {
-      return;
-    }
-    this.spokeProcessor = SpokeProcessorFactory.create(
-      this.processingMode,
-      this.spokesPerRevolution,
-      this.legend
-    );
-  }
-
-  #convertServerLegend(serverLegend) {
-    const colors = new Array(256);
-
-    // Fill with red (overflow) by default
-    for (let i = 0; i < 256; i++) {
-      colors[i] = [255, 0, 0, 255];
-    }
-
-    // serverLegend.pixels is an array of {type, color} objects
-    // type is camelCase: "normal", "targetBorder", "dopplerApproaching", "dopplerReceding", "history"
-    for (let i = 0; i < serverLegend.pixels.length && i < 256; i++) {
-      const entry = serverLegend.pixels[i];
-      if (entry.color) {
-        colors[i] = this.#hexToRGBA(entry.color);
-      }
-    }
-
-    const legend = {
-      colors: colors,
-      lowReturn: serverLegend.lowReturn,
-      mediumReturn: serverLegend.mediumReturn,
-      strongReturn: serverLegend.strongReturn,
-      specialStart: serverLegend.pixelColors,
-    };
-
-    return legend;
-  }
-
-  #hexToRGBA(hex) {
-    let a = Array();
-    for (let i = 1; i < hex.length; i += 2) {
-      a.push(parseInt(hex.slice(i, i + 2), 16));
-    }
-    while (a.length < 3) {
-      a.push(0);
-    }
-    while (a.length < 4) {
-      a.push(255);
-    }
-
-    return a;
-  }
-
   setLegend(legend) {
     if (!this.ready) {
       this.pendingLegend = legend;
       return;
     }
 
-    this.legend = this.#convertServerLegend(legend);
-    const l = this.legend.colors;
-
+    const l = legend.colors;
     const colorTableData = new Uint8Array(256 * 4);
     for (let i = 0; i < l.length; i++) {
       colorTableData[i * 4] = l[i][0];
@@ -393,9 +206,6 @@ class render_webgpu {
       { width: 256, height: 1 }
     );
 
-    // Create spoke processor now that we have legend
-    this.#createSpokeProcessor();
-
     if (this.polarTexture) {
       this.#createBindGroup();
     }
@@ -415,143 +225,81 @@ class render_webgpu {
     });
   }
 
-  drawSpoke(spoke) {
-    if (!this.data || !this.legend || !this.spokeProcessor) return;
+  /**
+   * Handle canvas resize
+   * @param {number} width - Canvas width
+   * @param {number} height - Canvas height
+   * @param {number} beam_length - Beam length in pixels
+   * @param {number} headingRotation - Heading rotation in radians
+   */
+  resize(width, height, beam_length, headingRotation) {
+    this.width = width;
+    this.height = height;
+    this.beam_length = beam_length;
+    this.headingRotation = headingRotation;
 
-    if (spoke.bearing && spoke.angle) {
-      // Bearing and Angle are in terms of [0..spoke_count>, compute the
-      // difference which is the heading
-      const heading =
-        (spoke.bearing + this.spokesPerRevolution - spoke.angle) %
-        this.spokesPerRevolution;
-      this.lastHeading = (spoke.heading * 360) / this.spokesPerRevolution; // Convert to degrees
-    } else {
-      this.lastHeading = null;
+    this.dom.width = width;
+    this.dom.height = height;
+
+    if (this.ready) {
+      this.context.configure({
+        device: this.device,
+        format: this.canvasFormat,
+        alphaMode: "premultiplied",
+      });
+      this.#updateUniforms();
     }
-
-    // Don't draw spokes in standby mode
-    if (this.powerMode != "transmit") {
-      // Prepare to wait for full rotation when we exit standby (if processor needs it)
-      if (this.spokeProcessor.needsRotationWait()) {
-        this.waitForRotation = true;
-        this.waitStartAngle = -1;
-        this.seenAngleWrap = false;
-      }
-      return;
-    }
-
-    // Bounds check - log bad angles
-    if (spoke.angle >= this.spokesPerRevolution) {
-      console.error(
-        `Bad spoke angle: ${spoke.angle} >= ${this.spokesPerRevolution}`
-      );
-      return;
-    }
-
-    // Wait for full rotation: skip all buffered spokes until we complete one full sweep
-    // This ensures we only draw fresh data after standby/range change
-    if (this.waitForRotation) {
-      if (this.waitStartAngle < 0) {
-        // First spoke - record starting angle
-        this.waitStartAngle = spoke.angle;
-        this.lastWaitAngle = spoke.angle;
-        return;
-      }
-
-      // Detect angle wraparound (e.g., from 2000 to 100)
-      if (
-        !this.seenAngleWrap &&
-        spoke.angle < this.lastWaitAngle - this.spokesPerRevolution / 2
-      ) {
-        this.seenAngleWrap = true;
-      }
-
-      // After wraparound, wait until we're back past the start angle
-      // This means we've completed one full rotation of fresh data
-      if (this.seenAngleWrap && spoke.angle >= this.waitStartAngle) {
-        // Full rotation complete - start drawing fresh data
-        this.waitForRotation = false;
-        if (this.spokeProcessor) {
-          this.spokeProcessor.reset();
-        }
-        // Clear display before starting fresh
-        if (this.data) this.data.fill(0);
-        if (this.ready && this.polarTexture && this.data) {
-          this.device.queue.writeTexture(
-            { texture: this.polarTexture },
-            this.data,
-            { bytesPerRow: this.maxspokelength },
-            { width: this.maxspokelength, height: this.spokesPerRevolution }
-          );
-        }
-        // Fall through to draw this spoke
-      } else {
-        // Still waiting for rotation to complete
-        this.lastWaitAngle = spoke.angle;
-        return;
-      }
-    }
-
-    if (this.actual_range != spoke.range) {
-      const wasInitialRange = this.actual_range === 0;
-      this.actual_range = spoke.range;
-      // Clear spoke data when range changes - old data is at wrong scale
-      this.data.fill(0);
-      // Reset spoke processor on range change
-      if (this.spokeProcessor) {
-        this.spokeProcessor.reset();
-      }
-      this.redrawCanvas();
-
-      // Only wait for full rotation on actual range CHANGE, not initial range setting
-      // This prevents ghost spokes from buffered old-range data
-      if (!wasInitialRange && this.spokeProcessor.needsRotationWait()) {
-        this.waitForRotation = true;
-        this.waitStartAngle = -1;
-        this.seenAngleWrap = false;
-        // Upload cleared data to GPU
-        if (this.ready && this.polarTexture) {
-          this.device.queue.writeTexture(
-            { texture: this.polarTexture },
-            this.data,
-            { bytesPerRow: this.maxspokelength },
-            { width: this.maxspokelength, height: this.spokesPerRevolution }
-          );
-          this.render();
-        }
-        return; // Skip this spoke, it's from the old range
-      }
-      // For initial range, just continue drawing - no stale data to flush
-    }
-
-    // Update rotation tracking in processor
-    this.spokeProcessor.updateRotationTracking(
-      spoke.angle,
-      this.spokesPerRevolution
-    );
-
-    // Process spoke using current strategy
-    this.spokeProcessor.processSpoke(
-      this.data,
-      spoke,
-      this.spokesPerRevolution,
-      this.maxspokelength
-    );
   }
 
-  render() {
-    if (!this.ready || !this.data || !this.bindGroup) {
+  /**
+   * Set range for scaling
+   */
+  setRangeScale(range, actual_range) {
+    this.range = range;
+    this.actual_range = actual_range;
+    if (this.ready) {
+      this.#updateUniforms();
+    }
+  }
+
+  /**
+   * Clear the radar display
+   */
+  clearDisplay(data, spokesPerRevolution, maxspokelength) {
+    if (this.ready && this.polarTexture && data) {
+      this.device.queue.writeTexture(
+        { texture: this.polarTexture },
+        data,
+        { bytesPerRow: maxspokelength },
+        { width: maxspokelength, height: spokesPerRevolution }
+      );
+      this.#renderFrame();
+    }
+  }
+
+  /**
+   * Render the current spoke data
+   * @param {Uint8Array} data - Spoke data buffer
+   * @param {number} spokesPerRevolution - Spokes per revolution
+   * @param {number} maxspokelength - Max spoke length
+   */
+  render(data, spokesPerRevolution, maxspokelength) {
+    if (!this.ready || !data || !this.bindGroup) {
       return;
     }
 
     // Upload spoke data to GPU
     this.device.queue.writeTexture(
       { texture: this.polarTexture },
-      this.data,
-      { bytesPerRow: this.maxspokelength },
-      { width: this.maxspokelength, height: this.spokesPerRevolution }
+      data,
+      { bytesPerRow: maxspokelength },
+      { width: maxspokelength, height: spokesPerRevolution }
     );
 
+    this.#renderFrame();
+  }
+
+  #renderFrame() {
     const encoder = this.device.createCommandEncoder();
 
     const renderPass = encoder.beginRenderPass({
@@ -573,319 +321,23 @@ class render_webgpu {
     this.device.queue.submit([encoder.finish()]);
   }
 
-  redrawCanvas() {
-    var parent = this.dom.parentNode,
-      styles = getComputedStyle(parent),
-      w = parseInt(styles.getPropertyValue("width"), 10),
-      h = parseInt(styles.getPropertyValue("height"), 10);
-
-    this.dom.width = w;
-    this.dom.height = h;
-    this.background_dom.width = w;
-    this.background_dom.height = h;
-    if (this.overlay_dom) {
-      this.overlay_dom.width = w;
-      this.overlay_dom.height = h;
-    }
-
-    this.width = this.dom.width;
-    this.height = this.dom.height;
-    this.center_x = this.width / 2;
-    this.center_y = this.height / 2;
-    this.beam_length = Math.trunc(
-      Math.max(this.center_x, this.center_y) * RANGE_SCALE
-    );
-
-    this.#drawOverlay();
-
-    if (this.ready) {
-      this.context.configure({
-        device: this.device,
-        format: this.canvasFormat,
-        alphaMode: "premultiplied",
-      });
-      this.#updateUniforms();
-    }
-  }
-
-  // Format time as TimeZero-style DAYS.HH:MM:SS
-  // Accepts value in seconds
-  #formatSecondsAsTimeZero(totalSeconds) {
-    totalSeconds = Math.floor(totalSeconds);
-    const days = Math.floor(totalSeconds / 86400);
-    const remainingAfterDays = totalSeconds % 86400;
-    const hours = Math.floor(remainingAfterDays / 3600);
-    const minutes = Math.floor((remainingAfterDays % 3600) / 60);
-    const seconds = remainingAfterDays % 60;
-
-    const hh = hours.toString().padStart(2, "0");
-    const mm = minutes.toString().padStart(2, "0");
-    const ss = seconds.toString().padStart(2, "0");
-
-    return `${days}.${hh}:${mm}:${ss}`;
-  }
-
-  #drawStandbyOverlay(ctx) {
-    // Draw OFF, STANDBY or PREPARING text with ON-TIME and TX-Time in center of PPI
-    ctx.save();
-
-    // Large STANDBY text
-    ctx.fillStyle = "white";
-    ctx.font = "bold 36px/1 Verdana, Geneva, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-
-    // Add shadow for better readability
-    ctx.shadowColor = "black";
-    ctx.shadowBlur = 4;
-    ctx.shadowOffsetX = 2;
-    ctx.shadowOffsetY = 2;
-
-    // Calculate vertical position based on what we're showing
-    const standbyY =
-      this.onTimeSeconds > 0 || this.txTimeSeconds > 0
-        ? this.center_y - 40
-        : this.center_y;
-
-    ctx.fillText(this.powerMode.toUpperCase(), this.center_x, standbyY);
-
-    // Only show hours if capability exists
-    ctx.font = "bold 20px/1 Verdana, Geneva, sans-serif";
-
-    let yOffset = this.center_y + 10;
-
-    if (this.onTimeSeconds > 0) {
-      const onTimeStr = this.#formatSecondsAsTimeZero(this.onTimeSeconds);
-      ctx.fillText("ON-TIME: " + onTimeStr, this.center_x, yOffset);
-      yOffset += 30;
-    }
-
-    if (this.txTimeSeconds > 0) {
-      const txTimeStr = this.#formatSecondsAsTimeZero(this.txTimeSeconds);
-      ctx.fillText("TX-TIME: " + txTimeStr, this.center_x, yOffset);
-    }
-
-    ctx.restore();
-  }
-
-  #drawNoTransmitSector(ctx, sector, fillColor, strokeColor) {
-    if (!sector) return;
-
-    // Extend to three times the beam length (well beyond radar display)
-    const radius = this.beam_length * 3;
-    if (radius <= 0) return;
-
-    // Transform angles from radar coordinates (0 = north, clockwise) to canvas
-    const startAngle = sector.startAngle - Math.PI / 2;
-    const endAngle = sector.endAngle - Math.PI / 2;
-
-    // Check if it's a full circle (angles are equal or very close)
-    const isCircle = Math.abs(sector.endAngle - sector.startAngle) < 0.001;
-
-    ctx.beginPath();
-
-    if (isCircle) {
-      ctx.arc(this.center_x, this.center_y, radius, 0, 2 * Math.PI);
-    } else {
-      ctx.moveTo(this.center_x, this.center_y);
-      ctx.arc(this.center_x, this.center_y, radius, startAngle, endAngle);
-      ctx.closePath();
-    }
-
-    ctx.fillStyle = fillColor;
-    ctx.fill();
-    ctx.strokeStyle = strokeColor;
-    ctx.lineWidth = 1;
-    ctx.stroke();
-  }
-
-  #drawGuardZone(ctx, zone, fillColor, strokeColor) {
-    if (!zone) return;
-
-    const range = this.range || this.actual_range;
-    if (!range || range <= 0) return;
-
-    // Convert distances to pixels
-    const pixelsPerMeter = this.beam_length / range;
-    const innerRadius = zone.startDistance * pixelsPerMeter;
-    const outerRadius = zone.endDistance * pixelsPerMeter;
-
-    if (outerRadius <= 0) return;
-
-    // Transform angles from radar coordinates (0 = north, clockwise) to canvas
-    const startAngle = zone.startAngle - Math.PI / 2;
-    const endAngle = zone.endAngle - Math.PI / 2;
-
-    // Check if it's a full circle (angles are equal or very close)
-    const isCircle = Math.abs(zone.endAngle - zone.startAngle) < 0.001;
-
-    ctx.beginPath();
-
-    if (isCircle) {
-      // Draw full annulus (two circles)
-      ctx.arc(this.center_x, this.center_y, outerRadius, 0, 2 * Math.PI);
-      if (innerRadius > 0) {
-        ctx.moveTo(this.center_x + innerRadius, this.center_y);
-        ctx.arc(this.center_x, this.center_y, innerRadius, 0, 2 * Math.PI, true);
-      }
-    } else {
-      // Draw annular sector
-      ctx.arc(this.center_x, this.center_y, outerRadius, startAngle, endAngle);
-      if (innerRadius > 0) {
-        ctx.arc(this.center_x, this.center_y, innerRadius, endAngle, startAngle, true);
-      } else {
-        ctx.lineTo(this.center_x, this.center_y);
-      }
-      ctx.closePath();
-    }
-
-    ctx.fillStyle = fillColor;
-    ctx.fill();
-    ctx.strokeStyle = strokeColor;
-    ctx.lineWidth = 1;
-    ctx.stroke();
-  }
-
-  #drawOverlay() {
-    if (!this.overlay_ctx) return;
-
-    const ctx = this.overlay_ctx;
-    const range = this.range || this.actual_range;
-
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, this.width, this.height);
-
-    // Draw no-transmit sectors (light yellow, behind everything)
-    for (const sector of this.noTransmitSectors) {
-      this.#drawNoTransmitSector(ctx, sector, "rgba(255, 255, 200, 0.25)", "rgba(200, 200, 0, 0.6)");
-    }
-
-    // Draw guard zones
-    this.#drawGuardZone(ctx, this.guardZones[0], "rgba(144, 238, 144, 0.25)", "rgba(0, 128, 0, 0.6)");
-    this.#drawGuardZone(ctx, this.guardZones[1], "rgba(173, 216, 230, 0.25)", "rgba(0, 0, 255, 0.6)");
-
-    if (this.powerMode != "transmit") {
-      this.#drawStandbyOverlay(ctx);
-    }
-
-    // Draw range rings in bright green on top of radar
-    ctx.strokeStyle = "#00ff00";
-    ctx.lineWidth = 1.5;
-    ctx.fillStyle = "#00ff00";
-    ctx.font = "bold 14px/1 Verdana, Geneva, sans-serif";
-
-    for (let i = 1; i <= 4; i++) {
-      const radius = (i * this.beam_length) / 4;
-      ctx.beginPath();
-      ctx.arc(this.center_x, this.center_y, radius, 0, 2 * Math.PI);
-      ctx.stroke();
-
-      // Draw range labels
-      if (range) {
-        const text = formatRangeValue(is_metric(range), (range * i) / 4);
-        // Position labels at 45 degrees (upper right)
-        const labelX = this.center_x + radius * 0.707;
-        const labelY = this.center_y - radius * 0.707;
-        ctx.fillText(text, labelX + 5, labelY - 5);
-      }
-    }
-
-    // Draw degree markers (compass rose) around the 3rd range ring
-    const degreeRingRadius = (3 * this.beam_length) / 4;
-    const tickLength = 8;
-    const majorTickLength = 12;
-    ctx.font = "bold 12px/1 Verdana, Geneva, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-
-    // Get heading mode and true heading for compass rose rotation
-    let headingMode = getHeadingMode();
-
-    let trueHeadingDeg = this.lastHeading;
-    if (!trueHeadingDeg) {
-      const trueHeadingRad = getTrueHeading();
-
-      trueHeadingDeg = (trueHeadingRad * 180) / Math.PI;
-    }
-    if (!trueHeadingDeg) {
-      headingMode = "headingUp";
-    } else {
-      this.headingRotation = radians;
-      if (this.ready) {
-        this.#updateUniforms();
-      }
-    }
-
-    // In Heading Up mode: compass rose rotates so heading is at top
-    // In North Up mode: compass rose stays fixed with 0 (N) at top
-    const roseRotationDeg = headingMode === "headingUp" ? -trueHeadingDeg : 0;
-
-    for (let deg = 0; deg < 360; deg += 10) {
-      // Apply compass rose rotation
-      const displayDeg = deg + roseRotationDeg;
-
-      // Radar convention: 0° = top, angles increase clockwise
-      // Canvas: 0 radians = right (3 o'clock), increases counter-clockwise
-      // So we need: canvasAngle = -displayDeg + 90 (in degrees), or (90 - displayDeg) * PI/180
-      const radians = ((90 - displayDeg) * Math.PI) / 180;
-
-      const cos = Math.cos(radians);
-      const sin = Math.sin(radians);
-
-      // Determine tick length (longer for cardinal directions)
-      const isMajor = deg % 30 === 0;
-      const tick = isMajor ? majorTickLength : tickLength;
-
-      // Inner and outer points of tick mark
-      const innerRadius = degreeRingRadius - tick / 2;
-      const outerRadius = degreeRingRadius + tick / 2;
-
-      const x1 = this.center_x + innerRadius * cos;
-      const y1 = this.center_y - innerRadius * sin;
-      const x2 = this.center_x + outerRadius * cos;
-      const y2 = this.center_y - outerRadius * sin;
-
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
-      ctx.stroke();
-
-      // Draw degree labels at major ticks (every 30°)
-      if (isMajor) {
-        const labelRadius = degreeRingRadius + majorTickLength + 10;
-        const labelX = this.center_x + labelRadius * cos;
-        const labelY = this.center_y - labelRadius * sin;
-        ctx.fillText(deg.toString(), labelX, labelY);
-      }
-    }
-
-    // Draw North indicator (N) at 0° position
-    const northDeg = roseRotationDeg; // Where 0° (North) appears on screen
-    const northRadians = ((90 - northDeg) * Math.PI) / 180;
-    const northRadius = degreeRingRadius + majorTickLength + 25;
-    const northX = this.center_x + northRadius * Math.cos(northRadians);
-    const northY = this.center_y - northRadius * Math.sin(northRadians);
-    ctx.font = "bold 14px/1 Verdana, Geneva, sans-serif";
-    ctx.fillText("N", northX, northY);
-  }
-
   #updateUniforms() {
-    const range = this.range || this.actual_range || 1500;
-    const scale = (1.0 * this.actual_range) / range;
+    const range = this.range || this.actual_range || 1;
+    const actual = this.actual_range || range;
+    const scale = actual / range;
 
     const scaleX = scale * ((2 * this.beam_length) / this.width);
     const scaleY = scale * ((2 * this.beam_length) / this.height);
 
-    // Pack uniforms: scaleX, scaleY, spokesPerRev, maxSpokeLen, headingRotation
     const uniforms = new Float32Array([
       scaleX,
       scaleY,
       this.spokesPerRevolution || 2048,
       this.maxspokelength || 512,
-      this.headingRotation || 0, // Heading rotation in radians (for North Up mode)
+      this.headingRotation || 0,
       0,
       0,
-      0, // padding to 32 bytes
+      0,
     ]);
 
     this.device.queue.writeBuffer(this.uniformBuffer, 0, uniforms);
@@ -893,8 +345,6 @@ class render_webgpu {
 }
 
 // Direct polar-to-cartesian shader with color lookup
-// Radar convention: angle 0 = bow (up), angles increase CLOCKWISE
-// So angle spokesPerRev/4 = starboard (right), spokesPerRev/2 = stern (down)
 const shaderCode = `
 struct VertexOutput {
   @builtin(position) position: vec4<f32>,
@@ -906,7 +356,7 @@ struct Uniforms {
   scaleY: f32,
   spokesPerRev: f32,
   maxSpokeLen: f32,
-  headingRotation: f32,  // Rotation in radians for North Up mode
+  headingRotation: f32,
 }
 
 @group(0) @binding(3) var<uniform> uniforms: Uniforms;
@@ -914,7 +364,6 @@ struct Uniforms {
 @vertex
 fn vertexMain(@location(0) pos: vec2<f32>, @location(1) texCoord: vec2<f32>) -> VertexOutput {
   var output: VertexOutput;
-  // Apply scaling
   let scaledPos = vec2<f32>(pos.x * uniforms.scaleX, pos.y * uniforms.scaleY);
   output.position = vec4<f32>(scaledPos, 0.0, 1.0);
   output.texCoord = texCoord;
@@ -930,39 +379,10 @@ const TWO_PI: f32 = 6.28318530718;
 
 @fragment
 fn fragmentMain(@location(0) texCoord: vec2<f32>) -> @location(0) vec4<f32> {
-  // Convert cartesian (texCoord) to polar for sampling radar data
-  // texCoord is [0,1]x[0,1], center at (0.5, 0.5)
-  //
-  // IMPORTANT: In our vertex setup, texCoord.y=0 is BOTTOM, texCoord.y=1 is TOP
-  // (WebGPU clip space has Y pointing up)
-  // So centered.y is POSITIVE at TOP of screen, NEGATIVE at BOTTOM
   let centered = texCoord - vec2<f32>(0.5, 0.5);
-
-  // Calculate radius (0 at center, 1 at edge of unit circle)
   let r = length(centered) * 2.0;
 
-  // Calculate angle from center for clockwise rotation from top (bow)
-  //
-  // Our coordinate system (after centering):
-  // - Top of screen (bow):      centered = (0, +0.5)
-  // - Right of screen (stbd):   centered = (+0.5, 0)
-  // - Bottom of screen (stern): centered = (0, -0.5)
-  // - Left of screen (port):    centered = (-0.5, 0)
-  //
-  // Radar convention (from protobuf):
-  // - angle 0 = bow (top on screen)
-  // - angle increases clockwise: bow -> starboard -> stern -> port -> bow
-  //
-  // Use atan2(x, y) to get clockwise angle from top:
-  // - Top:    (0, 0.5)   -> atan2(0, 0.5) = 0
-  // - Right:  (0.5, 0)   -> atan2(0.5, 0) = PI/2
-  // - Bottom: (0, -0.5)  -> atan2(0, -0.5) = PI
-  // - Left:   (-0.5, 0)  -> atan2(-0.5, 0) = -PI/2 -> normalized to 3PI/2
   var theta = atan2(centered.x, centered.y);
-
-  // Apply heading rotation for North Up mode
-  // In North Up: we rotate the radar image by -heading, so we add heading to theta
-  // This samples the spoke data at (theta + heading), effectively rotating the display
   theta = theta - uniforms.headingRotation;
 
   if (theta < 0.0) {
@@ -972,21 +392,12 @@ fn fragmentMain(@location(0) texCoord: vec2<f32>) -> @location(0) vec4<f32> {
     theta = theta - TWO_PI;
   }
 
-  // Normalize to [0, 1] for texture V coordinate
   let normalizedTheta = theta / TWO_PI;
-
-  // Sample polar data (always sample, mask later to avoid non-uniform control flow)
-  // U = radius [0,1], V = angle [0,1] where 0=bow, 0.25=starboard, 0.5=stern, 0.75=port
   let radarValue = textureSample(polarData, texSampler, vec2<f32>(r, normalizedTheta)).r;
-
-  // Look up color from table
   let color = textureSample(colorTable, texSampler, vec2<f32>(radarValue, 0.0));
 
-  // Mask pixels outside the radar circle (use step instead of if)
   let insideCircle = step(r, 1.0);
-
-  // Use alpha from color table, but make background transparent
-  let hasData = step(0.004, radarValue);  // ~1/255 threshold
+  let hasData = step(0.004, radarValue);
   let alpha = hasData * color.a * insideCircle;
 
   return vec4<f32>(color.rgb * insideCircle, alpha);

@@ -12,24 +12,31 @@ div.myr_container {
 /* Control panel */
 div.myr_controller {
   display: block;
-  width: 200px;
-}
-
-div.myr_controller_left {
-  float: left;
+  width: 260px;
+  position: fixed;
+  right: 0;
+  top: 0;
   height: 100vh;
   max-height: 100vh;
-  overflow-y: scroll;
+  overflow-y: auto;
+  background-color: #111;
+  z-index: 200;
+  transform: translateX(100%);
+  transition: transform 250ms ease-out;
+  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.5);
+}
+
+div.myr_controller.myr_controller_open {
+  transform: translateX(0);
 }
 
 /* PPI viewer area */
 div.myr_ppi {
-  float: left;
-  display:flex;
-  flex-direction:column;
+  display: flex;
+  flex-direction: column;
   background-color: rgb(0, 0, 0);
   position: relative;
-  width: calc(100% - 200px);
+  width: 100%;
   height: 100vh;
   overflow: hidden;
 }
@@ -221,4 +228,94 @@ div.myr_ppi {
   text-align: center;
   white-space: nowrap;
   min-width: 48px;
+}
+
+/* ============================================
+   Hamburger Menu Button
+   ============================================ */
+
+.myr_hamburger_button {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  background: rgba(0, 0, 0, 0.7);
+  border: 2px solid #446;
+  border-radius: 8px;
+  cursor: pointer;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  transition: all 0.2s ease;
+}
+
+.myr_hamburger_button:hover {
+  background: rgba(30, 40, 60, 0.8);
+  border-color: #668;
+}
+
+.myr_hamburger_line {
+  width: 22px;
+  height: 3px;
+  background-color: #8cf;
+  border-radius: 2px;
+  transition: all 0.2s ease;
+}
+
+.myr_hamburger_button:hover .myr_hamburger_line {
+  background-color: #adf;
+}
+
+/* ============================================
+   Controls Panel Close Button
+   ============================================ */
+
+.myr_controls_header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 12px 8px 12px;
+  border-bottom: 1px solid #334;
+}
+
+.myr_controls_title {
+  font-size: 16px;
+  font-weight: bold;
+  color: rgb(100, 200, 180);
+}
+
+.myr_close_button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: transparent;
+  border: 2px solid #644;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.myr_close_button:hover {
+  background: rgba(100, 40, 40, 0.5);
+  border-color: #866;
+}
+
+.myr_close_button svg {
+  width: 16px;
+  height: 16px;
+  stroke: #a88;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.myr_close_button:hover svg {
+  stroke: #c99;
 }

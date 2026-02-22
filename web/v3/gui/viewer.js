@@ -1,11 +1,8 @@
 "use strict";
 
 export {
-  RANGE_SCALE,
-  formatRangeValue,
-  is_metric,
-  getHeadingMode,
-  getTrueHeading,
+  setZoneEditMode,
+  setSectorEditMode,
 };
 
 import {
@@ -23,86 +20,19 @@ import {
 import { isStandaloneMode, detectMode } from "./api.js";
 import "./protobuf/protobuf.min.js";
 
-import { render_webgpu } from "./render_webgpu.js";
-
-// Convert capability time value to seconds
-function convertCapabilityTimeToSeconds(value, units) {
-  switch (units) {
-    case "h":
-      return value * 3600;
-    case "min":
-      return value * 60;
-    case "s":
-    default:
-      return value;
-  }
-}
+import { WebGPURenderer } from "./render_webgpu.js";
+import { PPI } from "./ppi.js";
 
 var webSocket;
 var headingSocket;
 var RadarMessage;
-var renderer;
+var ppi;  // The PPI display instance
+var webgpuRenderer;  // The WebGPU backend renderer
 var capabilities;
 
 // Heading mode: "headingUp" or "northUp"
 var headingMode = "headingUp";
 var trueHeading = 0; // in radians
-
-
-function divides_near(a, b) {
-  let remainder = a % b;
-  let r = remainder <= 1.0 || remainder >= b - 1;
-  return r;
-}
-
-function is_metric(v) {
-  if (v <= 100) {
-    return divides_near(v, 25);
-  } else if (v <= 750) {
-    return divides_near(v, 50);
-  }
-  return divides_near(v, 500);
-}
-
-const NAUTICAL_MILE = 1852.0;
-
-function formatRangeValue(metric, v) {
-  if (metric) {
-    // Metric
-    v = Math.round(v);
-    if (v >= 1000) {
-      return v / 1000 + " km";
-    } else {
-      return v + " m";
-    }
-  } else {
-    if (v >= NAUTICAL_MILE - 1) {
-      if (divides_near(v, NAUTICAL_MILE)) {
-        return Math.floor((v + 1) / NAUTICAL_MILE) + " nm";
-      } else {
-        return v / NAUTICAL_MILE + " nm";
-      }
-    } else if (divides_near(v, NAUTICAL_MILE / 2)) {
-      return Math.floor((v + 1) / (NAUTICAL_MILE / 2)) + "/2 nm";
-    } else if (divides_near(v, NAUTICAL_MILE / 4)) {
-      return Math.floor((v + 1) / (NAUTICAL_MILE / 4)) + "/4 nm";
-    } else if (divides_near(v, NAUTICAL_MILE / 8)) {
-      return Math.floor((v + 1) / (NAUTICAL_MILE / 8)) + "/8 nm";
-    } else if (divides_near(v, NAUTICAL_MILE / 16)) {
-      return Math.floor((v + 1) / (NAUTICAL_MILE / 16)) + "/16 nm";
-    } else if (divides_near(v, NAUTICAL_MILE / 32)) {
-      return Math.floor((v + 1) / (NAUTICAL_MILE / 32)) + "/32 nm";
-    } else if (divides_near(v, NAUTICAL_MILE / 64)) {
-      return Math.floor((v + 1) / (NAUTICAL_MILE / 64)) + "/64 nm";
-    } else if (divides_near(v, NAUTICAL_MILE / 128)) {
-      return Math.floor((v + 1) / (NAUTICAL_MILE / 128)) + "/128 nm";
-    } else {
-      return v / NAUTICAL_MILE + " nm";
-    }
-  }
-}
-
-const RANGE_SCALE = 0.9; // Factor by which we fill the (w,h) canvas with the outer radar range ring
 
 registerRadarCallback(radarLoaded);
 registerControlCallback(controlUpdate);
@@ -130,22 +60,27 @@ window.onload = async function () {
     });
   });
 
-  // WebGPU only
-  renderer = new render_webgpu(
-    document.getElementById("myr_canvas_webgl"),
+  // Create WebGPU renderer (backend for spoke rendering)
+  webgpuRenderer = new WebGPURenderer(
+    document.getElementById("myr_canvas_webgl")
+  );
+
+  // Create PPI display (handles overlay, zones, spoke processing)
+  ppi = new PPI(
+    webgpuRenderer,
+    document.getElementById("myr_canvas_overlay"),
     document.getElementById("myr_canvas_background")
   );
 
-  // Wait for both WebGPU initialization AND protobuf loading before proceeding
-  // (radarLoaded callback needs renderer to be ready and protobuf for websocket messages)
-  await Promise.all([renderer.initPromise, protobufPromise]);
+  // Wait for WebGPU initialization AND protobuf loading before proceeding
+  await Promise.all([webgpuRenderer.initPromise, protobufPromise]);
   console.log("Both WebGPU and protobuf ready");
 
-  // Debug: expose renderer globally for console debugging
-  window.renderer = renderer;
+  // Debug: expose ppi globally for console debugging
+  window.ppi = ppi;
+  window.renderer = ppi; // Backwards compatibility
 
   // Process any pending radar data that arrived before renderer was ready
-  // (the callback might have been triggered by control.js before window.onload)
   if (pendingRadarData) {
     console.log("Processing deferred radar data");
     radarLoaded(pendingRadarData);
@@ -158,6 +93,9 @@ window.onload = async function () {
   // Subscribe to SignalK heading delta (only in SignalK mode)
   subscribeToHeading();
 
+  // Create hamburger menu button and setup controls toggle
+  createHamburgerMenu();
+
   // Create heading mode toggle button
   createHeadingModeToggle();
 
@@ -168,13 +106,12 @@ window.onload = async function () {
   createRangeLozenge();
 
   window.onresize = function () {
-    renderer.redrawCanvas();
+    ppi.redrawCanvas();
   };
 };
 
 // Subscribe to navigation.headingTrue via SignalK WebSocket
 function subscribeToHeading() {
-  // In standalone mode, SignalK is not available - skip heading subscription
   if (isStandaloneMode()) {
     console.log("Standalone mode: heading subscription disabled (no SignalK)");
     return;
@@ -187,7 +124,6 @@ function subscribeToHeading() {
 
   headingSocket.onopen = () => {
     console.log("Heading WebSocket connected");
-    // Subscribe to headingTrue
     const subscription = {
       context: "vessels.self",
       subscribe: [
@@ -230,22 +166,15 @@ function subscribeToHeading() {
   };
 }
 
-// Update renderer with current heading based on mode
+// Update PPI with current heading
 function updateHeadingDisplay(mode) {
-  if (renderer) {
-    return renderer.setHeadingMode(mode);
-  } else {
-    return mode;
+  if (ppi) {
+    ppi.setTrueHeading(trueHeading);
+    if (mode) {
+      return ppi.setHeadingMode(mode);
+    }
   }
-}
-
-// Getters for heading state (used by renderer)
-function getHeadingMode() {
-  return headingMode;
-}
-
-function getTrueHeading() {
-  return trueHeading;
+  return mode || headingMode;
 }
 
 // Create the heading mode toggle button
@@ -269,13 +198,11 @@ function createHeadingModeToggle() {
     }
     headingMode = updateHeadingDisplay(headingMode);
     if (headingMode === "headingUp") {
-      headingMode = "northUp";
-      toggleBtn.innerHTML = "N Up";
-    } else {
-      headingMode = "headingUp";
       toggleBtn.innerHTML = "H Up";
+    } else {
+      toggleBtn.innerHTML = "N Up";
     }
-    renderer.redrawCanvas();
+    ppi.redrawCanvas();
   });
 
   container.appendChild(toggleBtn);
@@ -291,7 +218,6 @@ function createPowerLozenge() {
   lozenge.className = "myr_power_lozenge myr_power_off";
   lozenge.title = "Click power icon to toggle radar power";
 
-  // Power button with SVG icon
   const powerBtn = document.createElement("button");
   powerBtn.className = "myr_power_lozenge_button";
   powerBtn.innerHTML = `<svg class="myr_power_icon" viewBox="0 0 24 24">
@@ -302,7 +228,6 @@ function createPowerLozenge() {
     togglePower();
   });
 
-  // User name display
   const nameDisplay = document.createElement("div");
   nameDisplay.id = "myr_power_lozenge_name";
   nameDisplay.className = "myr_power_lozenge_name";
@@ -319,7 +244,6 @@ function updatePowerLozenge(powerState, userName) {
   if (!lozenge) return;
 
   if (powerState !== undefined) {
-    // Update power state class
     lozenge.classList.remove(
       "myr_power_transmit",
       "myr_power_standby",
@@ -334,7 +258,6 @@ function updatePowerLozenge(powerState, userName) {
     }
   }
 
-  // Update user name if provided
   if (userName !== undefined) {
     const nameDisplay = document.getElementById("myr_power_lozenge_name");
     if (nameDisplay) {
@@ -343,7 +266,7 @@ function updatePowerLozenge(powerState, userName) {
   }
 }
 
-// Create the range lozenge on the viewer (left side, vertically centered)
+// Create the range lozenge on the viewer
 function createRangeLozenge() {
   const container = document.querySelector(".myr_ppi");
   if (!container) return;
@@ -353,7 +276,6 @@ function createRangeLozenge() {
   lozenge.className = "myr_range_lozenge";
   lozenge.title = "Click + to zoom in, - to zoom out";
 
-  // Zoom in button (shorter range) - on top
   const zoomInBtn = document.createElement("div");
   zoomInBtn.className = "myr_range_zoom";
   zoomInBtn.innerHTML = "+";
@@ -361,16 +283,14 @@ function createRangeLozenge() {
     zoomIn();
   });
 
-  // Range display - in the middle
   const rangeDisplay = document.createElement("div");
   rangeDisplay.id = "myr_range_display";
   rangeDisplay.className = "myr_range_display";
   rangeDisplay.textContent = "";
 
-  // Zoom out button (longer range) - on bottom
   const zoomOutBtn = document.createElement("div");
   zoomOutBtn.className = "myr_range_zoom";
-  zoomOutBtn.innerHTML = "−"; // Using minus sign character
+  zoomOutBtn.innerHTML = "−";
   zoomOutBtn.addEventListener("click", () => {
     zoomOut();
   });
@@ -387,6 +307,48 @@ function updateRangeDisplay() {
   if (rangeDisplay) {
     rangeDisplay.textContent = getCurrentRangeDisplay();
   }
+}
+
+// Create the hamburger menu button and setup controls toggle
+function createHamburgerMenu() {
+  const container = document.querySelector(".myr_ppi");
+  if (!container) return;
+
+  // Create hamburger button
+  const hamburgerBtn = document.createElement("button");
+  hamburgerBtn.type = "button";
+  hamburgerBtn.id = "myr_hamburger_button";
+  hamburgerBtn.className = "myr_hamburger_button";
+  hamburgerBtn.title = "Open radar controls";
+
+  // Three lines for hamburger icon
+  for (let i = 0; i < 3; i++) {
+    const line = document.createElement("span");
+    line.className = "myr_hamburger_line";
+    hamburgerBtn.appendChild(line);
+  }
+
+  // Get references to controls panel and close button
+  const controller = document.getElementById("myr_controller");
+  const closeBtn = document.getElementById("myr_close_controls");
+
+  // Toggle controls panel open
+  hamburgerBtn.addEventListener("click", () => {
+    if (controller) {
+      controller.classList.add("myr_controller_open");
+    }
+  });
+
+  // Close controls panel
+  if (closeBtn) {
+    closeBtn.addEventListener("click", () => {
+      if (controller) {
+        controller.classList.remove("myr_controller_open");
+      }
+    });
+  }
+
+  container.appendChild(hamburgerBtn);
 }
 
 // Check WebGPU and show error if not available
@@ -421,7 +383,6 @@ function showWebGPUError(failureReason, hasWebGPUApi, isSecure) {
   const hostname = window.location.hostname;
   const port = window.location.port || "80";
 
-  // Build error message based on failure reason
   let errorMessage = "";
   if (failureReason === "no-api" && !isSecure) {
     errorMessage = "WebGPU API not available - likely due to insecure context.";
@@ -467,9 +428,7 @@ function detectOS() {
   const ua = navigator.userAgent.toLowerCase();
   const platform = navigator.platform?.toLowerCase() || "";
 
-  // Check mobile/tablet FIRST (iPadOS reports as macOS in Safari)
   if (ua.includes("iphone") || ua.includes("ipad")) return "ios";
-  // Also detect iPad via touch + macOS combination (iPadOS 13+ desktop mode)
   if (
     navigator.maxTouchPoints > 1 &&
     (ua.includes("mac") || platform.includes("mac"))
@@ -477,7 +436,6 @@ function detectOS() {
     return "ios";
   if (ua.includes("android")) return "android";
 
-  // Desktop OS detection
   if (ua.includes("win") || platform.includes("win")) return "windows";
   if (ua.includes("mac") || platform.includes("mac")) return "macos";
   if (ua.includes("linux") || platform.includes("linux")) return "linux";
@@ -499,7 +457,6 @@ function getSecureContextOptionsHTML(browser, os, port) {
 
   let options = "";
 
-  // Only show localhost option for desktop
   if (!isMobile) {
     options += `
       <p><strong>Option 1 (easiest):</strong> Access via localhost instead:</p>
@@ -526,7 +483,6 @@ function getInsecureOriginHTML(browser, os) {
   const origin = window.location.origin;
   const hostname = window.location.hostname;
 
-  // iOS Safari has no way to add insecure origin exceptions
   if (os === "ios") {
     return `
       <div class="myr_code_instructions">
@@ -539,7 +495,6 @@ function getInsecureOriginHTML(browser, os) {
     `;
   }
 
-  // Android Chrome
   if (os === "android" && browser === "chrome") {
     return `
       <div class="myr_code_instructions">
@@ -580,7 +535,6 @@ function getInsecureOriginHTML(browser, os) {
 }
 
 function getBrowserInstructionsHTML(browser, os) {
-  // iOS/iPadOS Safari
   if (browser === "safari" && os === "ios") {
     return `
       <div class="myr_code_instructions">
@@ -657,76 +611,13 @@ function getBrowserInstructionsHTML(browser, os) {
   }
 }
 
-function getHardwareAccelerationHTML(browser, os) {
-  // iOS/iPadOS - no hardware acceleration toggle
-  if (os === "ios") {
-    return `
-      <div class="myr_code_instructions">
-        <p>On iOS/iPadOS, hardware acceleration cannot be disabled.</p>
-        <p>If WebGPU is not working:</p>
-        <p>• Ensure you have iOS/iPadOS 17 or later</p>
-        <p>• Try closing and reopening Safari</p>
-        <p>• Restart your device</p>
-      </div>
-    `;
-  }
-
-  switch (browser) {
-    case "chrome":
-      return `
-        <div class="myr_code_instructions">
-          <p>1. Open: <code>chrome://settings/system</code></p>
-          <p>2. Enable "Use graphics acceleration when available"</p>
-          <p>3. Relaunch Chrome</p>
-        </div>
-      `;
-    case "edge":
-      return `
-        <div class="myr_code_instructions">
-          <p>1. Open: <code>edge://settings/system</code></p>
-          <p>2. Enable "Use graphics acceleration when available"</p>
-          <p>3. Relaunch Edge</p>
-        </div>
-      `;
-    case "firefox":
-      return `
-        <div class="myr_code_instructions">
-          <p>1. Open: <code>about:preferences</code></p>
-          <p>2. Scroll to "Performance"</p>
-          <p>3. Uncheck "Use recommended performance settings"</p>
-          <p>4. Check "Use hardware acceleration when available"</p>
-          <p>5. Restart Firefox</p>
-        </div>
-      `;
-    case "safari":
-      return `
-        <div class="myr_code_instructions">
-          <p>Safari uses hardware acceleration by default on macOS.</p>
-          <p>If WebGPU is not working:</p>
-          <p>• Ensure you have macOS 14 (Sonoma) or later</p>
-          <p>• Check that WebGPU is enabled in Feature Flags</p>
-          <p>• Try restarting Safari</p>
-        </div>
-      `;
-    default:
-      return `
-        <div class="myr_code_instructions">
-          <p>Check your browser settings for "Hardware acceleration"</p>
-          <p>or "Use GPU" and ensure it is enabled.</p>
-          <p>Then restart the browser.</p>
-        </div>
-      `;
-  }
-}
-
 function restart(id) {
   setTimeout(loadRadar, 15000, id);
 }
 
-// Pending radar data if callback arrives before renderer is ready
+// Pending radar data if callback arrives before PPI is ready
 var pendingRadarData = null;
 
-//
 // r contains id, name, capabilities and spokeDataUrl
 function radarLoaded(r) {
   capabilities = r.capabilities;
@@ -734,15 +625,18 @@ function radarLoaded(r) {
   let spokesPerRevolution = capabilities.spokesPerRevolution;
   let prev_angle = -1;
 
-  // If renderer isn't ready yet, store data and return
-  // It will be processed when renderer.initPromise resolves
-  if (!renderer || !renderer.ready) {
+  // If PPI isn't ready yet, store data and return
+  if (!ppi || !webgpuRenderer || !webgpuRenderer.ready) {
     pendingRadarData = r;
     return;
   }
 
-  renderer.setLegend(capabilities.legend);
-  renderer.setSpokes(spokesPerRevolution, maxSpokeLength);
+  // Initialize PPI with radar capabilities
+  ppi.setLegend(capabilities.legend);
+  ppi.setSpokes(spokesPerRevolution, maxSpokeLength);
+
+  // Also initialize renderer with spokes (for texture sizing)
+  webgpuRenderer.setSpokes(spokesPerRevolution, maxSpokeLength);
 
   // Use provided spokeDataUrl or construct SignalK stream URL
   let spokeDataUrl = r.spokeDataUrl;
@@ -794,13 +688,10 @@ function radarLoaded(r) {
       if (message.spokes && message.spokes.length > 0) {
         for (let i = 0; i < message.spokes.length; i++) {
           let spoke = message.spokes[i];
-
-          // Gap-filling disabled for high spoke counts (8192) - not needed
-          // The texture-based renderers handle sparse data well
-          renderer.drawSpoke(spoke);
+          ppi.drawSpoke(spoke);
           prev_angle = spoke.angle;
         }
-        renderer.render();
+        ppi.render();
       }
     } catch (err) {
       console.error("Error processing WebSocket message:", err);
@@ -809,39 +700,34 @@ function radarLoaded(r) {
 }
 
 function controlUpdate(controlId, value) {
-  // Handle power state changes
   if (controlId === "power") {
     const powerState =
       getControl(controlId).descriptions[value.value].toLowerCase();
-    if (renderer) {
+    if (ppi) {
       const time = getOperatingTime();
-      // getOperatingTime() always returns values in seconds
-      renderer.setPowerMode(powerState, time.onTime, time.txTime);
+      ppi.setPowerMode(powerState, time.onTime, time.txTime);
     }
-    // Update power lozenge
     updatePowerLozenge(powerState);
   } else if (controlId === "userName") {
-    // Update power lozenge with new user name
     updatePowerLozenge(undefined, value.value);
   } else if (controlId === "guardZone1") {
-    if (renderer) {
-      renderer.setGuardZone(0, parseGuardZone(value));
+    if (ppi) {
+      ppi.setGuardZone(0, parseGuardZone(value));
     }
   } else if (controlId === "guardZone2") {
-    if (renderer) {
-      renderer.setGuardZone(1, parseGuardZone(value));
+    if (ppi) {
+      ppi.setGuardZone(1, parseGuardZone(value));
     }
   } else if (controlId.startsWith("noTransmitSector")) {
-    const index = parseInt(controlId.slice(-1)) - 1; // "noTransmitSector1" -> 0
-    if (index >= 0 && index < 4 && renderer) {
-      renderer.setNoTransmitSector(index, parseNoTransmitSector(value));
+    const index = parseInt(controlId.slice(-1)) - 1;
+    if (index >= 0 && index < 4 && ppi) {
+      ppi.setNoTransmitSector(index, parseNoTransmitSector(value));
     }
   } else {
-    // Check if this is a range control (by name)
     const control = getControl(controlId);
     if (control?.name === "Range") {
-      const range = typeof value === "object" ? value.value : value; // this is always in meters
-      renderer.setRange(range);
+      const range = typeof value === "object" ? value.value : value;
+      ppi.setRange(range);
       updateRangeDisplay();
     }
   }
@@ -851,10 +737,10 @@ function controlUpdate(controlId, value) {
 function parseGuardZone(cv) {
   if (!cv || !cv.enabled) return null;
   return {
-    startAngle: cv.value ?? 0,           // in radians (SI units from API)
-    endAngle: cv.endValue ?? 0,          // in radians
-    startDistance: cv.startDistance ?? 0, // in meters
-    endDistance: cv.endDistance ?? 0,     // in meters
+    startAngle: cv.value ?? 0,
+    endAngle: cv.endValue ?? 0,
+    startDistance: cv.startDistance ?? 0,
+    endDistance: cv.endDistance ?? 0,
   };
 }
 
@@ -862,8 +748,60 @@ function parseGuardZone(cv) {
 function parseNoTransmitSector(cv) {
   if (!cv || !cv.enabled) return null;
   return {
-    startAngle: cv.value ?? 0,   // in radians (SI units from API)
-    endAngle: cv.endValue ?? 0,  // in radians
+    startAngle: cv.value ?? 0,
+    endAngle: cv.endValue ?? 0,
   };
 }
 
+/**
+ * Enable/disable zone edit mode with drag handles on the viewer
+ */
+function setZoneEditMode(controlId, editing, onDragEnd = null) {
+  if (!ppi) return;
+
+  if (!editing) {
+    ppi.setEditingZone(null, null);
+    return;
+  }
+
+  let zoneIndex = null;
+  if (controlId === "guardZone1") {
+    zoneIndex = 0;
+  } else if (controlId === "guardZone2") {
+    zoneIndex = 1;
+  }
+
+  if (zoneIndex === null) return;
+
+  const wrappedCallback = onDragEnd
+    ? (index, zone) => onDragEnd(zone)
+    : null;
+
+  ppi.setEditingZone(zoneIndex, wrappedCallback);
+}
+
+/**
+ * Enable/disable sector edit mode with drag handles on the viewer
+ */
+function setSectorEditMode(controlId, editing, onDragEnd = null) {
+  if (!ppi) return;
+
+  if (!editing) {
+    ppi.setEditingSector(null, null);
+    return;
+  }
+
+  let sectorIndex = null;
+  const match = controlId.match(/noTransmitSector(\d)/);
+  if (match) {
+    sectorIndex = parseInt(match[1]) - 1;
+  }
+
+  if (sectorIndex === null || sectorIndex < 0 || sectorIndex > 3) return;
+
+  const wrappedCallback = onDragEnd
+    ? (index, sector) => onDragEnd(sector)
+    : null;
+
+  ppi.setEditingSector(sectorIndex, wrappedCallback);
+}
