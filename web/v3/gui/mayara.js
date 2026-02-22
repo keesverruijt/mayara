@@ -333,9 +333,6 @@ const RadarEntry = (radar) => {
     td({ class: 'myr_radar_actions' },
       a({ href: "viewer.html?id=" + radar.id, class: 'myr_radar_link myr_radar_link_primary' },
         'Open Radar Display'
-      ),
-      a({ href: "control.html?id=" + radar.id, class: 'myr_radar_link myr_radar_link_secondary' },
-        'Controls Only'
       )
     )
   );
