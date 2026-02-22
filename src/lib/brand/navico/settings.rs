@@ -60,11 +60,6 @@ pub fn new(
         .read_only(true)
         .wire_units(Units::Hours)
         .build(&mut controls);
-    new_numeric(ControlId::RotationSpeed, 0., 99.)
-        .wire_scale_step(0.1)
-        .read_only(true)
-        .wire_units(Units::RotationsPerMinute)
-        .build(&mut controls);
     new_string(ControlId::FirmwareVersion).build(&mut controls);
     new_auto(
         ControlId::SideLobeSuppression,

@@ -35,12 +35,6 @@ pub fn new(
         .wire_units(Units::Seconds)
         .build(&mut controls);
 
-    new_numeric(ControlId::RotationSpeed, 0., 99.)
-        .wire_scale_factor(10., true)
-        .read_only(true)
-        .wire_units(Units::RotationsPerMinute)
-        .build(&mut controls);
-
     new_string(ControlId::SerialNumber).build(&mut controls);
 
     // Furuno is nautical-only - no RangeUnits control, default is already 0 (Nautical)

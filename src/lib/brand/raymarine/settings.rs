@@ -49,12 +49,6 @@ pub fn new(
         .has_enabled()
         .build(&mut controls);
 
-    new_numeric(ControlId::RotationSpeed, 0., 99.)
-        .wire_scale_step(0.1) // 0.1 RPM
-        .read_only(true)
-        .wire_units(Units::RotationsPerMinute)
-        .build(&mut controls);
-
     match model {
         BaseModel::Quantum => {
             new_list(

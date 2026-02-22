@@ -316,26 +316,7 @@ impl RadarInfo {
         self.pixel_values = pixel_values;
     }
 
-    pub fn set_rotation_length(&mut self, millis: u32) -> u32 {
-        let diff = millis as f64;
-        let rpm = format!("{:.0}", (600_000. / diff));
-
-        log::debug!(
-            "{}: rotation speed elapsed {} = {} RPM",
-            self.key,
-            diff,
-            rpm
-        );
-
-        if diff < 10000. && diff > 300. {
-            let _ = self.controls.set_string(&ControlId::RotationSpeed, rpm);
-            diff as u32
-        } else {
-            0
-        }
-    }
-
-    pub fn full_rotation(&mut self) -> u32 {
+    fn full_rotation(&mut self) -> u32 {
         let now = Instant::now();
         let diff: Duration = now - self.rotation_timestamp;
         let diff = diff.as_millis() as f64;
