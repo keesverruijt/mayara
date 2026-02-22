@@ -22,6 +22,7 @@ pub mod settings;
 pub mod spoke;
 pub mod target;
 pub mod trail;
+pub(crate) mod units;
 
 use crate::brand::CommandSender;
 use crate::config::Persistence;
@@ -458,7 +459,6 @@ impl SharedRadars {
                 .persistent_data
                 .update_info_from_persistence(&mut new_info);
 
-            log::debug!("key '{}' info {:?}", &new_info.key, new_info);
             log::info!(
                 "Found radar: key '{}' name '{}'",
                 &new_info.key,

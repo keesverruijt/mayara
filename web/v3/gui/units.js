@@ -134,13 +134,6 @@ function toSI(units, value) {
 }
 
 function toUser(units, value) {
-  // Special case to prefer nm only if it matches a particular list
-  if (units === Units.Meters) {
-    let [probeUnit, probeValue] = toRangeValue(false, value);
-    if (probeUnit === Units.NauticalMiles) {
-      return [Units.NauticalMiles, probeValue];
-    }
-  }
   for (const [to, from, factor] of TO_USER_CONVERSIONS) {
     if (units === from) return [to, value * factor];
   }

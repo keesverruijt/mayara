@@ -168,7 +168,7 @@ impl TrailBuffer {
             }
         }
         self.motion_true = value;
-        log::info!("Trails motion set to {:?}", value);
+        log::debug!("Trails motion set to {:?}", value);
         Ok(())
     }
 
@@ -186,7 +186,7 @@ impl TrailBuffer {
             }
         } * 1000;
 
-        log::info!(
+        log::debug!(
             "Trails length {} -> {} ms",
             self.trail_length_ms,
             milli_seconds

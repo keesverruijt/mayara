@@ -211,7 +211,7 @@ impl ActiveSubscriptions {
             let (radar_id, control_id) = extract_path(&path_subscription.path);
             let mut paths = self.paths.get_mut(radar_id);
             if paths.is_none() {
-                log::info!("Creating radar '{}' self", radar_id);
+                log::debug!("Creating radar '{}' self", radar_id);
                 self.paths.insert(radar_id.to_string(), HashMap::new());
                 paths = self.paths.get_mut(radar_id);
             }

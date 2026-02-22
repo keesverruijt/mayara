@@ -1148,7 +1148,7 @@ impl NavicoReportReceiver {
             }
             _ => {
                 if self.model != model {
-                    log::info!("{}: Radar is model {}", self.common.key, model);
+                    log::debug!("{}: Radar is model {}", self.common.key, model);
                     let info2 = self.common.info.clone();
                     self.model = model;
                     super::settings::update_when_model_known(
@@ -1242,7 +1242,7 @@ impl NavicoReportReceiver {
             let start_angle = i16::from_le_bytes(blanking.start_angle);
             let end_angle = i16::from_le_bytes(blanking.end_angle);
             let enabled = Some(blanking.enabled > 0);
-            log::info!(
+            log::debug!(
                 "no_transmit_sector_{}: {}-{} en={:?}",
                 i,
                 start_angle,
@@ -1284,7 +1284,7 @@ impl NavicoReportReceiver {
         };
 
         if self.model != model {
-            log::info!("{}: Radar is model {}", self.common.key, model);
+            log::debug!("{}: Radar is model {}", self.common.key, model);
             let info2 = self.common.info.clone();
             self.model = model;
             super::settings::update_when_model_known(&mut self.common.info.controls, model, &info2);

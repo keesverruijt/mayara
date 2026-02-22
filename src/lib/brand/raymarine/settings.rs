@@ -5,9 +5,10 @@ use crate::{
     brand::raymarine::RaymarineModel,
     radar::RadarInfo,
     radar::settings::{
-        ControlId, HAS_AUTO_NOT_ADJUSTABLE, SharedControls, Units, new_auto, new_list, new_numeric,
+        ControlId, HAS_AUTO_NOT_ADJUSTABLE, SharedControls, new_auto, new_list, new_numeric,
         new_sector, new_string,
     },
+    radar::units::Units,
     stream::SignalKDelta,
 };
 

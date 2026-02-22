@@ -411,7 +411,7 @@ pub(super) fn process_status_report(receiver: &mut RaymarineReportReceiver, data
     let range_index = if hd { data[296] } else { report.range_id } as usize;
     let range_meters = receiver.common.info.ranges.get_distance(range_index);
     receiver.range_meters = range_meters as u32;
-    log::info!("{}: range_meters={}", receiver.common.key, range_meters);
+    log::debug!("{}: range_meters={}", receiver.common.key, range_meters);
 
     receiver
         .common

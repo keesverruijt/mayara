@@ -332,7 +332,7 @@ pub(super) fn process_info_report(receiver: &mut RaymarineReportReceiver, data: 
 
     match RaymarineModel::try_into(&model_serial) {
         Some(model) => {
-            log::info!(
+            log::debug!(
                 "{}: Detected model: {} with serial {}",
                 receiver.common.key,
                 model.name,

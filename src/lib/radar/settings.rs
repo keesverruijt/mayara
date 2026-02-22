@@ -2,9 +2,7 @@ use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
 use serde::{Deserialize, Deserializer, Serialize, de::Visitor, ser::Serializer};
 use serde_json::{Number, Value};
-use serde_string_enum::{DeserializeLabeledStringEnum, SerializeLabeledStringEnum};
 use std::cell::RefCell;
-use std::f64::consts::PI;
 use std::{
     borrow::Cow,
     collections::HashMap,
@@ -17,9 +15,10 @@ use strum::{EnumCount, EnumIter, EnumString, IntoStaticStr};
 use thiserror::Error;
 use utoipa::ToSchema;
 
+use super::NAUTICAL_MILE;
+use super::range::Range;
+use super::units::Units;
 use crate::Cli;
-use crate::radar::NAUTICAL_MILE;
-use crate::radar::range::Range;
 use crate::stream::SignalKDelta;
 use crate::{
     TargetMode,
@@ -485,7 +484,7 @@ impl SharedControls {
         }
         let radar_control_value = RadarControlValue::new(&locked.radar_id, control, None);
 
-        log::info!("Sending {:?} to SignalK", radar_control_value);
+        log::debug!("Sending {:?} to SignalK", radar_control_value);
         let mut sk_delta = SignalKDelta::new();
         if control.item.control_id == ControlId::RangeUnits {
             let range_control = locked
@@ -493,7 +492,7 @@ impl SharedControls {
                 .get(&ControlId::Range)
                 .expect("Range should always be set");
             sk_delta.add_meta_for_control(&locked.radar_id, &range_control);
-            log::info!("meta: {:?}", sk_delta);
+            log::debug!("meta: {:?}", sk_delta);
         }
         sk_delta.add_updates(vec![radar_control_value]);
         match locked.sk_client_tx.send(sk_delta.build().unwrap()) {
@@ -913,22 +912,13 @@ impl SharedControls {
 
         let mut locked = self.controls.write().unwrap();
         let ranges = &locked.all_ranges;
-        log::info!(
-            "set_valid_ranges: units={} ranges={:?}",
-            range_units,
-            ranges
-        );
+
         let filtered_ranges = match range_units {
             0 => &ranges.nautical, // Nautical (default)
             1 => &ranges.metric,   // Metric
             _ => &ranges.mixed,    // Mixed
         }
         .clone(); // to avoid borrow mut problem
-        log::info!(
-            "set_valid_ranges: units={} filtered={:?}",
-            range_units,
-            filtered_ranges,
-        );
 
         locked
             .controls
@@ -954,85 +944,6 @@ impl SharedControls {
 pub struct ControlUpdate {
     pub reply_tx: tokio::sync::mpsc::Sender<ControlValue>,
     pub control_value: ControlValue,
-}
-
-#[derive(
-    Copy,
-    PartialEq,
-    SerializeLabeledStringEnum,
-    DeserializeLabeledStringEnum,
-    Clone,
-    Debug,
-    ToSchema,
-)]
-pub enum Units {
-    #[string = ""]
-    None,
-    #[string = "m"]
-    Meters,
-    #[string = "km"]
-    KiloMeters,
-    #[string = "nm"]
-    NauticalMiles,
-    #[string = "m/s"]
-    MetersPerSecond,
-    #[string = "kn"]
-    Knots,
-    #[string = "deg"]
-    Degrees,
-    #[string = "rad"]
-    Radians,
-    #[string = "rad/s"]
-    RadiansPerSecond,
-    #[string = "rpm"]
-    RotationsPerMinute,
-    #[string = "s"]
-    Seconds,
-    #[string = "min"]
-    Minutes,
-    #[string = "h"]
-    Hours,
-}
-
-impl Units {
-    pub(crate) fn to_si(&self, value: f64) -> (Units, f64) {
-        let (units, factor) = match self {
-            Units::Degrees => (Units::Radians, PI / 180.),
-            Units::Hours => (Units::Seconds, 3600.),
-            Units::Minutes => (Units::Seconds, 60.),
-            Units::KiloMeters => (Units::Meters, 1000.),
-            Units::Knots => (Units::MetersPerSecond, 1852. / 3600.),
-            Units::Meters => (Units::Meters, 1.),
-            Units::MetersPerSecond => (Units::MetersPerSecond, 1.),
-            Units::NauticalMiles => (Units::Meters, 1852.),
-            Units::None => unreachable!("Units::None"),
-            Units::Radians => (Units::Radians, 1.),
-            Units::RadiansPerSecond => (Units::RadiansPerSecond, 1.),
-            Units::RotationsPerMinute => (Units::RotationsPerMinute, (2. * PI) / 60.),
-            Units::Seconds => (Units::Seconds, 1.),
-        };
-        (units, value * factor)
-    }
-
-    pub(crate) fn from_si(&self, value: f64) -> f64 {
-        let factor = match self {
-            Units::Degrees => 180. / PI,
-            Units::Hours => 1. / 3600.,
-            Units::Minutes => 1. / 60.,
-            Units::KiloMeters => 0.001,
-            Units::Knots => 3600. / 1852.,
-            Units::Meters => 1.,
-            Units::MetersPerSecond => 1.,
-            Units::NauticalMiles => 1. / 1852.,
-            Units::None => unreachable!("Units::None"),
-            Units::Radians => 1.,
-            Units::RadiansPerSecond => 1.,
-            Units::RotationsPerMinute => 60. / (2. * PI),
-            Units::Seconds => 1.,
-        };
-
-        value * factor
-    }
 }
 
 // This is what we send back and forth internally between (web) clients and radar managers for v1
@@ -1668,7 +1579,6 @@ impl Control {
             descriptions.insert(range.distance() as i32, format!("{}", range));
         }
 
-        log::info!("New valid ranges: {:?}", values);
         self.item.min_value = Some(values[0] as f64);
         self.item.max_value = Some(values[values.len() - 1] as f64);
         self.item.step_value = None;
@@ -1788,11 +1698,16 @@ impl Control {
             // One of the reasons we use f64 is because Navico wire format for some things is
             // tenths of degrees. To make things uniform we map these to a float with .1 precision.
 
-            log::trace!("{} map value {}", self.item.control_id, value);
+            log::info!(
+                "{} map value {} scale_factor {}",
+                self.item.control_id,
+                value,
+                wire_scale_factor
+            );
             value = value / wire_scale_factor;
 
             auto_value = auto_value.map(|v| v / wire_scale_factor);
-            log::trace!("{} map value to scaled {}", self.item.control_id, value);
+            log::info!("{} map value to scaled {}", self.item.control_id, value);
         }
 
         let wire_value = value;
@@ -1801,7 +1716,7 @@ impl Control {
             .wire_units
             .map(|u| u.to_si(value).1)
             .unwrap_or(value);
-        log::trace!(
+        log::info!(
             "value {} {} -> {} {}",
             wire_value,
             self.item.wire_units.unwrap_or(Units::None),

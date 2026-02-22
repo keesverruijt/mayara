@@ -151,11 +151,15 @@ function convertControlToUserUnits(id, control) {
 
   if (cloned.units) {
     let units = cloned.units;
-    ["minValue", "maxValue", "stepValue"].forEach((prop) => {
-      if (prop in cloned) {
-        [units, cloned[prop]] = toUser(cloned.units, cloned[prop]);
-      }
-    });
+    if (units === "m" && cloned.maxValue < 100) {
+      // leave this in meters
+    } else {
+      ["minValue", "maxValue", "stepValue"].forEach((prop) => {
+        if (prop in cloned) {
+          [units, cloned[prop]] = toUser(cloned.units, cloned[prop]);
+        }
+      });
+    }
     cloned.user_units = units;
   }
 
@@ -511,7 +515,7 @@ function buildControls() {
 
   // Group controls by category
   const baseControls = [];
-  const extendedControls = [];
+  const advancedControls = [];
   const configControls = [];
   const infoControls = [];
 
@@ -519,7 +523,7 @@ function buildControls() {
     // Skip power control - it's handled by the power lozenge on the viewer
     if (k === "power") continue;
     // Skip range control - it's handled by the range lozenge on the viewer
-    if (v.name === "Range") continue;
+    if (k === "range") continue;
 
     const control = { ...v, controlId: k };
     if (control.isReadOnly || control.readOnly) {
@@ -527,7 +531,7 @@ function buildControls() {
     } else if (control.category === "installation") {
       configControls.push(control);
     } else if (control.category === "advanced") {
-      extendedControls.push(control);
+      advancedControls.push(control);
     } else {
       baseControls.push(control);
     }
@@ -536,7 +540,7 @@ function buildControls() {
   // Sort by id
   const sortById = (a, b) => (a.id || 0) - (b.id || 0);
   baseControls.sort(sortById);
-  extendedControls.sort(sortById);
+  advancedControls.sort(sortById);
   configControls.sort(sortById);
   infoControls.sort(sortById);
 
@@ -561,18 +565,18 @@ function buildControls() {
     }
   }
 
-  // Build extended controls section
-  if (extendedControls.length > 0) {
-    const extSection = div(
-      { class: "myr_control_section myr_extended_section" },
+  // Build advanced controls section
+  if (advancedControls.length > 0) {
+    const advancedSection = div(
+      { class: "myr_control_section myr_advanced_section" },
       div({ class: "myr_section_header" }, "Advanced Controls")
     );
-    van.add(controlsEl, extSection);
+    van.add(controlsEl, advancedSection);
 
-    for (const control of extendedControls) {
+    for (const control of advancedControls) {
       const k = control.controlId;
       const v = control;
-      van.add(extSection, buildSingleControl(k, v));
+      van.add(advancedSection, buildSingleControl(k, v));
       if (v.hasAuto) {
         van.add(get_element_by_server_id(k).parentNode, AutoButton(k));
       }
@@ -865,18 +869,10 @@ async function sendControlToServer(controlId, message) {
   console.log(`Sending control: ${controlId} = ${JSON.stringify(message)}`);
 
   const success = await apiSetControl(radarId, controlId, message);
-
-  if (success) {
-    const control = getControl(controlId);
-    if (control?.category === "installation") {
-      const storageKey = myr_capabilities?.key || radarId;
-      saveInstallationSetting(storageKey, controlId, message.value);
-    }
-  }
 }
 
 // ============================================================================
-// ID Conversion Helpers (from v1)
+// ID Conversion Helpers
 // ============================================================================
 
 function get_element_by_server_id(id) {
@@ -904,7 +900,7 @@ function html_to_value_id(id) {
 }
 
 // ============================================================================
-// WebSocket State Streaming (v3 Signal K protocol)
+// WebSocket State Streaming (v2 Signal K protocol)
 // ============================================================================
 
 let reconnectAttempts = 0;
@@ -1231,22 +1227,10 @@ function togglePower() {
 // ============================================================================
 
 /**
- * Find the range control ID (it may be "range" or a numeric ID)
- */
-function getRangeControlId() {
-  if (!myr_capabilities?.controls) return null;
-  for (const [k, v] of Object.entries(myr_capabilities.controls)) {
-    if (v.name === "Range") return k;
-  }
-  return null;
-}
-
-/**
  * Get current range value and valid values
  */
 function getRangeInfo() {
-  const controlId = getRangeControlId();
-  if (!controlId) return null;
+  const controlId = "range";
 
   const control = myr_capabilities.controls[controlId];
   const currentValue = myr_control_values[controlId]?.value;

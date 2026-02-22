@@ -56,7 +56,7 @@ pub(super) fn pixel_to_blob(legend: &Legend) -> PixelToBlobType {
             };
         }
     }
-    log::info!("Created pixel_to_blob from legend {:?}", legend);
+    log::debug!("Created pixel_to_blob from legend {:?}", legend);
     lookup
 }
 
@@ -157,7 +157,7 @@ impl RaymarineReportReceiver {
             let timeout = self.report_request_timeout;
             tokio::select! {
                 _ = subsys.on_shutdown_requested() => {
-                    log::info!("{}: shutdown", self.common.key);
+                    log::debug!("{}: shutdown", self.common.key);
                     return Err(RadarError::Shutdown);
                 },
                 _ = sleep_until(timeout) => {

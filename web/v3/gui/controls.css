@@ -564,6 +564,7 @@ div.myr_range_buttons {
 
 .myr_info_value {
   font-size: 13px;
+  border: 2px;
   color: rgb(124, 124, 237);
   font-family: 'Consolas', 'Monaco', monospace;
 }

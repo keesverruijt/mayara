@@ -291,7 +291,7 @@ impl NavicoLocator {
                 Ok(data) => {
                     log::debug!("{} sent NavicoBeaconDual {:?}", from, data);
                     if let Some(serial_no) = c_string(&data.header.serial_no) {
-                        log::info!(
+                        log::debug!(
                             "{} locating dual-range radar @ {}",
                             from,
                             data.header.radar_addr
@@ -358,7 +358,7 @@ impl NavicoLocator {
                 Ok(data) => {
                     log::debug!("{} sent NavicoBeaconSingle {:?}", from, data);
                     if let Some(serial_no) = c_string(&data.header.serial_no) {
-                        log::info!(
+                        log::debug!(
                             "{} locating single-range radar @ {}",
                             from,
                             data.header.radar_addr
@@ -404,7 +404,7 @@ impl NavicoLocator {
                     log::debug!("{} sent BR24Beacon {:?}", from, data);
 
                     if let Some(serial_no) = c_string(&data.serial_no) {
-                        log::info!("{} locating BR24 @ {}", from, data.radar_addr);
+                        log::debug!("{} locating BR24 @ {}", from, data.radar_addr);
                         let radar_addr: SocketAddrV4 = from.clone();
 
                         let radar_data: SocketAddrV4 = data.data.into();

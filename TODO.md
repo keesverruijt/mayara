@@ -1,6 +1,15 @@
 ### TODO.md
 
 
+Gui changes to do:
+
+- doppler on kills image
+- antenna height is NaN NM?
+- fix padding/border in read only values
+- check why hours are rounded to a half hour
+- fix double enable checkboxes in NoTransmitSector
+
+
 A list of things still to do before this code has caught back up with Dirk's vibe coded version:
 
 1. Check and finagle the Furuno code back into operation. It should work, but hasn't been tested.

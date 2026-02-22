@@ -304,7 +304,7 @@ impl CommandSender for Command {
                 cmd.extend_from_slice(&value.to_le_bytes());
             }
             ControlId::AntennaHeight => {
-                let value = deci_value as u16;
+                let value = (value * 1000.) as u16;
                 cmd.extend_from_slice(&[0x30, 0xc1, 0x01, 0, 0, 0]);
                 cmd.extend_from_slice(&value.to_le_bytes());
                 cmd.extend_from_slice(&[0, 0]);

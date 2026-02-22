@@ -130,7 +130,7 @@ impl FurunoReportReceiver {
         loop {
             tokio::select! {
                 _ = subsys.on_shutdown_requested() => {
-                    log::info!("{}: shutdown", self.common.key);
+                    log::debug!("{}: shutdown", self.common.key);
                     return Err(RadarError::Shutdown);
                 },
 

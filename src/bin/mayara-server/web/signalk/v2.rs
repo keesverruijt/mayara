@@ -473,7 +473,7 @@ async fn control_stream_handler(
     Query(params): Query<SignalKWebSocket>,
     ws: WebSocketUpgrade,
 ) -> Response {
-    log::info!(
+    log::debug!(
         "stream request for \"/signalk/v2/api/vessels/self/radars/stream\" from {} params={:?}",
         addr,
         params
@@ -556,7 +556,7 @@ async fn ws_signalk_delta(
     let (reply_tx, mut reply_rx) = tokio::sync::mpsc::channel::<ControlValue>(ControlId::COUNT);
     let mut meta_radar_data_sent = Vec::new();
 
-    log::info!(
+    log::debug!(
         "Starting /signalk/v2/api/vessels/self/radars/stream websocket subscribe={:?} send_cached_values={:?}",
         subscribe,
         send_cached_values
@@ -813,7 +813,7 @@ async fn send_all_subscribed(
     if subscriptions.mode == Subscribe::Some {
         rcvs.retain(|x| subscriptions.is_subscribed(x, true));
     }
-    log::info!("Sending {} subscribed controls", rcvs.len());
+    log::debug!("Sending {} subscribed controls", rcvs.len());
     if rcvs.len() > 0 {
         let mut delta: SignalKDelta = SignalKDelta::new();
         delta.add_updates(rcvs);

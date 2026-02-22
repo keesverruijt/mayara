@@ -7,9 +7,10 @@ use crate::{
     Cli,
     radar::RadarInfo,
     radar::settings::{
-        AutomaticValue, ControlId, HAS_AUTO_NOT_ADJUSTABLE, SharedControls, Units, new_auto,
-        new_list, new_numeric, new_sector, new_string,
+        AutomaticValue, ControlId, HAS_AUTO_NOT_ADJUSTABLE, SharedControls, new_auto, new_list,
+        new_numeric, new_sector, new_string,
     },
+    radar::units::Units,
     stream::SignalKDelta,
 };
 
@@ -29,7 +30,7 @@ pub fn new(
             .set_string(model.unwrap().to_string());
     }
 
-    new_numeric(ControlId::AntennaHeight, 0., 99.)
+    new_numeric(ControlId::AntennaHeight, 0., 60.)
         .wire_scale_factor(1000., false)
         .wire_scale_step(0.1) // Allow control in decimeters
         .wire_units(Units::Meters)
