@@ -89,6 +89,8 @@ pub enum ControlId {
     TrailsMotion,
     DopplerTrailsOnly,
     ClearTrails,
+    GuardZone1,
+    GuardZone2,
     DopplerAutoTrack,
     ClearTargets,
     // TimedIdle,
@@ -226,6 +228,8 @@ impl ControlId {
             ControlId::FirmwareVersion => "Version of the radar firmware",
             ControlId::Ftc => "FTC",
             ControlId::Gain => "How sensitive the radar is to returning echoes",
+            ControlId::GuardZone1 => "First guard zone for target detection",
+            ControlId::GuardZone2 => "Second guard zone for target detection",
             ControlId::InterferenceRejection => "Reduces interference from other radars",
             ControlId::LocalInterferenceRejection => {
                 "How much local interference rejection is applied"
@@ -293,6 +297,8 @@ impl ControlId {
             ControlId::FirmwareVersion => "Firmware version",
             ControlId::Ftc => "FTC",
             ControlId::Gain => "Gain",
+            ControlId::GuardZone1 => "Guard zone",
+            ControlId::GuardZone2 => "Guard zone (2)",
             ControlId::InterferenceRejection => "Interference rejection",
             ControlId::LocalInterferenceRejection => "Local interference rejection",
             ControlId::BirdMode => "Bird mode",
@@ -356,6 +362,8 @@ impl ControlId {
             ControlId::Range => ControlDestination::Command,
             ControlId::Mode => ControlDestination::Command,
             ControlId::Gain => ControlDestination::Command,
+            ControlId::GuardZone1 => ControlDestination::Command,
+            ControlId::GuardZone2 => ControlDestination::Command,
             ControlId::Sea => ControlDestination::Command,
             ControlId::SeaState => ControlDestination::Command,
             ControlId::Rain => ControlDestination::Command,
@@ -585,6 +593,14 @@ impl SharedControls {
         //.send_always()
         .set_valid_values([1, 2].to_vec())
         .build(&mut controls); // Only allow setting to Standby (index 1) and Transmit (index 2)
+
+        // Guard zones - generic controls for all radars
+        new_zone(ControlId::GuardZone1, -180., 180., 100000.)
+            .wire_units(Units::Degrees)
+            .build(&mut controls);
+        new_zone(ControlId::GuardZone2, -180., 180., 100000.)
+            .wire_units(Units::Degrees)
+            .build(&mut controls);
 
         SharedControls {
             controls: Arc::new(RwLock::new(Controls::new_base(
@@ -1316,6 +1332,10 @@ pub struct ControlValue {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_value: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_distance: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_distance: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub allowed: Option<bool>,
@@ -1332,6 +1352,8 @@ impl ControlValue {
             auto: None,
             auto_value: None,
             end_value: None,
+            start_distance: None,
+            end_distance: None,
             enabled: None,
             allowed: None,
             error: None,
@@ -1346,6 +1368,8 @@ impl ControlValue {
             auto: b.auto,
             auto_value: b.auto_value,
             end_value: b.end_value,
+            start_distance: b.start_distance,
+            end_distance: b.end_distance,
             enabled: b.enabled,
             allowed: b.allowed,
             error: b.error,
@@ -1360,6 +1384,8 @@ impl ControlValue {
             auto: control.auto,
             auto_value: control.auto_value(),
             end_value: control.end_value(),
+            start_distance: control.start_distance(),
+            end_distance: control.end_distance(),
             enabled: control.enabled,
             allowed: control.allowed,
             error,
@@ -1468,6 +1494,10 @@ pub struct RadarControlValue {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_value: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_distance: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_distance: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub allowed: Option<bool>,
@@ -1486,6 +1516,8 @@ impl RadarControlValue {
             auto: control.auto,
             auto_value: control.auto_value(),
             end_value: control.end_value(),
+            start_distance: control.start_distance(),
+            end_distance: control.end_distance(),
             enabled: control.enabled,
             allowed: control.allowed,
             error,
@@ -1518,6 +1550,8 @@ impl From<RadarControlValue> for ControlValue {
             auto: rcv.auto,
             auto_value: rcv.auto_value,
             end_value: rcv.end_value,
+            start_distance: rcv.start_distance,
+            end_distance: rcv.end_distance,
             enabled: rcv.enabled,
             allowed: rcv.allowed,
             error: rcv.error,
@@ -1540,6 +1574,10 @@ pub struct BareControlValue {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_value: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_distance: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_distance: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub allowed: Option<bool>,
@@ -1555,6 +1593,8 @@ impl BareControlValue {
             auto: None,
             auto_value: None,
             end_value: None,
+            start_distance: None,
+            end_distance: None,
             enabled: None,
             allowed: None,
             error: Some(error),
@@ -1569,6 +1609,8 @@ impl From<RadarControlValue> for BareControlValue {
             auto: rcv.auto,
             auto_value: rcv.auto_value,
             end_value: rcv.end_value,
+            start_distance: rcv.start_distance,
+            end_distance: rcv.end_distance,
             enabled: rcv.enabled,
             allowed: rcv.allowed,
             error: rcv.error,
@@ -1584,6 +1626,8 @@ impl From<ControlValue> for BareControlValue {
             auto: cv.auto,
             auto_value: cv.auto_value,
             end_value: cv.end_value,
+            start_distance: cv.start_distance,
+            end_distance: cv.end_distance,
             enabled: cv.enabled,
             allowed: cv.allowed,
             error: cv.error,
@@ -1877,6 +1921,43 @@ pub(crate) fn new_sector(control_id: ControlId, min_value: f64, max_value: f64) 
     }
 }
 
+/// Create a zone control with start/end angles and start/end distances.
+/// Angles are in the specified range (typically -180..180 degrees).
+/// Distances are in meters (0..max_distance).
+pub(crate) fn new_zone(
+    control_id: ControlId,
+    min_angle: f64,
+    max_angle: f64,
+    max_distance: f64,
+) -> ControlBuilder {
+    let min_value = Some(min_angle);
+    let max_value = Some(max_angle);
+    let mut control = Control::new(ControlDefinition::new(
+        control_id,
+        ControlDataType::Zone,
+        min_value,
+        None,
+        true, // Zones always have enabled
+        min_value,
+        max_value,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        false,
+    ));
+    // Store max_distance in a way that can be accessed later
+    // For now, we use step_value to store max_distance (will be exposed via API)
+    control.item.max_distance = Some(max_distance);
+    ControlBuilder {
+        control,
+        frozen: false,
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Control {
@@ -1888,6 +1969,10 @@ pub struct Control {
     pub auto_value: Option<f64>,
     #[serde(skip)]
     pub end_value: Option<f64>,
+    #[serde(skip)]
+    pub start_distance: Option<f64>,
+    #[serde(skip)]
+    pub end_distance: Option<f64>,
     #[serde(skip)]
     pub description: Option<String>,
     #[serde(skip)]
@@ -1908,6 +1993,8 @@ impl Control {
             value,
             auto_value: None,
             end_value: None,
+            start_distance: None,
+            end_distance: None,
             auto: None,
             enabled: None,
             description: None,
@@ -1978,11 +2065,29 @@ impl Control {
     }
 
     pub fn end_value(&self) -> Option<Value> {
-        if self.item.data_type != ControlDataType::Sector {
+        if self.item.data_type != ControlDataType::Sector
+            && self.item.data_type != ControlDataType::Zone
+        {
             return None;
         }
 
         self.end_value.map(|v| self.to_number(v))
+    }
+
+    pub fn start_distance(&self) -> Option<Value> {
+        if self.item.data_type != ControlDataType::Zone {
+            return None;
+        }
+
+        self.start_distance.map(|v| Value::Number(Number::from_f64(v).unwrap()))
+    }
+
+    pub fn end_distance(&self) -> Option<Value> {
+        if self.item.data_type != ControlDataType::Zone {
+            return None;
+        }
+
+        self.end_distance.map(|v| Value::Number(Number::from_f64(v).unwrap()))
     }
 
     pub(crate) fn auto_as_f64(&self) -> Option<f64> {
@@ -2351,6 +2456,7 @@ pub enum ControlDataType {
     String,
     Button,
     Sector,
+    Zone,
 }
 
 #[derive(Clone, Debug)]
@@ -2402,6 +2508,8 @@ pub struct ControlDefinition {
     is_read_only: bool,
     #[serde(skip)]
     is_send_always: bool, // Whether the controlvalue is sent out to client in all state messages
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) max_distance: Option<f64>, // For Zone controls: maximum distance in meters
 }
 
 fn is_false(v: &bool) -> bool {
@@ -2456,6 +2564,7 @@ impl ControlDefinition {
             valid_values,
             is_read_only,
             is_send_always,
+            max_distance: None,
         }
     }
 }
@@ -2608,7 +2717,7 @@ mod test {
         }
 
         // Check without optional fields and with v1 ID
-        let json = r#"{"id":"5","value":49}"#;
+        let json = r#"{"id":"4","value":49}"#;
 
         match serde_json::from_str::<ControlValue>(&json) {
             Ok(cv) => {
