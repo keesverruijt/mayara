@@ -287,6 +287,8 @@
   padding: 20px;
   margin-bottom: 25px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  max-height: 60vh;
+  overflow-y: auto;
 }
 
 .myr_warning_title {
@@ -481,4 +483,78 @@
 .myr_recordings_link {
   margin-top: 15px;
   text-align: right;
+}
+
+/* ============================================
+   Rendering Info Section (when WebGPU available)
+   ============================================ */
+
+.myr_rendering_info {
+  background: linear-gradient(135deg, rgba(40, 80, 60, 0.9), rgba(30, 60, 50, 0.9));
+  border: 1px solid rgba(100, 200, 180, 0.4);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 25px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+}
+
+.myr_info_title {
+  font-size: 18px;
+  font-weight: bold;
+  color: rgb(100, 200, 180);
+  margin-bottom: 15px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.myr_info_title::before {
+  content: "i";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: rgba(100, 200, 180, 0.3);
+  border-radius: 50%;
+  font-weight: bold;
+  font-style: italic;
+  font-size: 14px;
+}
+
+.myr_info_content {
+  color: rgba(200, 230, 220, 0.9);
+}
+
+.myr_render_option {
+  margin-bottom: 12px;
+  padding: 12px 15px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  border-left: 3px solid rgba(100, 200, 180, 0.5);
+}
+
+.myr_render_option:first-child {
+  border-left-color: rgb(100, 200, 180);
+}
+
+.myr_render_option strong {
+  color: rgb(150, 220, 200);
+}
+
+.myr_render_option p {
+  margin: 6px 0 0 0;
+  font-size: 14px;
+  color: rgba(180, 210, 200, 0.9);
+  line-height: 1.4;
+}
+
+/* Warning subtitle (for WebGPU not available) */
+.myr_warning_subtitle {
+  margin-bottom: 15px;
+  padding: 10px 15px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  font-size: 15px;
+  color: rgba(255, 255, 255, 0.9);
 }

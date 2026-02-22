@@ -3,6 +3,9 @@ import { fetchRadars, fetchInterfaces, isStandaloneMode, detectMode } from "./ap
 
 const { a, tr, td, div, p, strong, details, summary, code, br, span } = van.tags;
 
+// Global WebGPU availability flag
+let webGPUAvailable = false;
+
 // Network requirements for different radar brands
 const NETWORK_REQUIREMENTS = {
   furuno: {
@@ -67,45 +70,44 @@ function isSecureContext() {
   return window.isSecureContext;
 }
 
-// Check WebGPU support and show appropriate warnings
+// Check WebGPU support and update global flag
 async function checkWebGPUSupport() {
-  const warningDiv = document.getElementById('webgpu_warning');
-  if (!warningDiv) return true;
-
-  const os = detectOS();
-  const browser = detectBrowser();
-  const isSecure = isSecureContext();
   const hasWebGPUApi = !!navigator.gpu;
-
-  // Track why WebGPU failed
-  let failureReason = null;
-  let hasWorkingAdapter = false;
 
   if (hasWebGPUApi) {
     try {
       const adapter = await navigator.gpu.requestAdapter();
       if (adapter) {
-        // WebGPU fully working!
-        warningDiv.style.display = 'none';
+        webGPUAvailable = true;
         return true;
-      } else {
-        failureReason = 'no-adapter'; // API exists but no GPU adapter found
       }
     } catch (e) {
       console.warn('WebGPU adapter request failed:', e);
-      failureReason = 'adapter-error';
     }
-  } else {
-    // API doesn't exist - could be secure context issue or browser doesn't support it
-    failureReason = isSecure ? 'no-api' : 'insecure-context';
   }
 
-  // Build warning message based on situation
+  webGPUAvailable = false;
+  return false;
+}
+
+// Show WebGPU warning in the info section
+function showWebGPUWarning() {
+  const warningDiv = document.getElementById('webgpu_warning');
+  if (!warningDiv) return;
+
+  const os = detectOS();
+  const browser = detectBrowser();
+  const isSecure = isSecureContext();
+
   warningDiv.style.display = 'block';
   warningDiv.innerHTML = '';
 
   const title = div({ class: 'myr_warning_title' }, 'WebGPU Not Available');
   van.add(warningDiv, title);
+
+  van.add(warningDiv, p({ class: 'myr_warning_subtitle' },
+    'The preferred rendering method (WebGPU) is not available. Opening the display will use the alternate method (WebGL).'
+  ));
 
   const content = div({ class: 'myr_warning_content' });
   van.add(warningDiv, content);
@@ -145,8 +147,28 @@ async function checkWebGPUSupport() {
     strong('Enable WebGPU / Hardware Acceleration'),
     getBrowserInstructions(browser, os)
   ));
+}
 
-  return false;
+// Show info about rendering methods when WebGPU is available
+function showRenderingInfo() {
+  const infoDiv = document.getElementById('webgpu_warning');
+  if (!infoDiv) return;
+
+  infoDiv.style.display = 'block';
+  infoDiv.className = 'myr_rendering_info';
+  infoDiv.innerHTML = '';
+
+  van.add(infoDiv, div({ class: 'myr_info_title' }, 'Rendering Options'));
+  van.add(infoDiv, div({ class: 'myr_info_content' },
+    div({ class: 'myr_render_option' },
+      strong('Open Radar Display'), ' (Recommended)',
+      p('Uses WebGPU for GPU-accelerated rendering. More efficient, lower CPU usage, smoother display.')
+    ),
+    div({ class: 'myr_render_option' },
+      strong('Alternate Radar Display'),
+      p('Uses WebGL for rendering. Compatible fallback for systems without WebGPU support.')
+    )
+  ));
 }
 
 function getInsecureOriginInstructions(browser, os) {
@@ -328,14 +350,29 @@ const RadarEntry = (radar) => {
     displayName = `${brand} ${name}`;
   }
 
-  return tr({ class: 'myr_radar_row' },
-    td({ class: 'myr_radar_name' }, displayName),
-    td({ class: 'myr_radar_actions' },
-      a({ href: "viewer.html?id=" + radar.id, class: 'myr_radar_link myr_radar_link_primary' },
-        'Open Radar Display'
+  // Show different links based on WebGPU availability
+  if (webGPUAvailable) {
+    return tr({ class: 'myr_radar_row' },
+      td({ class: 'myr_radar_name' }, displayName),
+      td({ class: 'myr_radar_actions' },
+        a({ href: "viewer.html?id=" + radar.id, class: 'myr_radar_link myr_radar_link_primary' },
+          'Open Radar Display'
+        ),
+        a({ href: "viewer.html?id=" + radar.id + "&renderer=webgl", class: 'myr_radar_link myr_radar_link_secondary' },
+          'Alternate Display'
+        )
       )
-    )
-  );
+    );
+  } else {
+    return tr({ class: 'myr_radar_row' },
+      td({ class: 'myr_radar_name' }, displayName),
+      td({ class: 'myr_radar_actions' },
+        a({ href: "viewer.html?id=" + radar.id, class: 'myr_radar_link myr_radar_link_primary' },
+          'Open Radar Display'
+        )
+      )
+    );
+  }
 };
 
 // Track previous radar count to avoid unnecessary DOM rebuilds
@@ -505,7 +542,14 @@ async function loadInterfaces() {
 
 window.onload = async function () {
   // Check WebGPU support first
-  await checkWebGPUSupport();
+  const hasWebGPU = await checkWebGPUSupport();
+
+  // Show appropriate info/warning based on WebGPU availability
+  if (hasWebGPU) {
+    showRenderingInfo();
+  } else {
+    showWebGPUWarning();
+  }
 
   // Detect mode
   await detectMode();
