@@ -334,18 +334,15 @@ const EnabledButton = (id) =>
   div(
     { class: "myr_enabled_button" },
     label(
-      {
-        for: control_prefix + id + enabled_postfix,
-        class: "myr_enabled_label",
-      },
-      "Enabled"
-    ),
-    input({
-      type: "checkbox",
-      class: "myr_enabled",
-      id: control_prefix + id + enabled_postfix,
-      onchange: (e) => do_change_enabled(e.target),
-    })
+      { class: "myr_checkbox_label" },
+      input({
+        type: "checkbox",
+        class: "myr_enabled",
+        id: control_prefix + id + enabled_postfix,
+        onchange: (e) => do_change_enabled(e.target),
+      }),
+      " Enabled"
+    )
   );
 
 const SelectValue = (id, name, validValues, descriptions) => {
@@ -488,6 +485,218 @@ function updateSectorUI(id, control, cv) {
   }
 }
 
+/**
+ * Zone control - displays start/end angles and start/end distances
+ * Shows read-only summary with Edit button; edit mode shows all fields with Cancel/Save
+ * Server sends: value (start angle in radians), endValue (end angle in radians),
+ *               startDistance (meters), endDistance (meters), enabled
+ */
+const ZoneValue = (id, name, control) => {
+  const prefix = `myr_control_${id}`;
+
+  const minAngle = control.minValue ?? -180;
+  const maxAngle = control.maxValue ?? 180;
+  const maxDist = control.maxDistance ?? 100000;
+
+  function enterEditMode() {
+    const container = document.getElementById(`myr_${id}`);
+    const displaySection = container.querySelector(".myr_zone_display");
+    const editSection = container.querySelector(".myr_zone_edit");
+
+    // Copy current values to edit fields
+    const cv = myr_control_values[id] || {};
+    const [, startAngle] = toUser(control.units, cv.value);
+    const [, endAngle] = toUser(control.units, cv.endValue);
+
+    document.getElementById(`${prefix}_edit_start_angle`).value = startAngle ?? 0;
+    document.getElementById(`${prefix}_edit_end_angle`).value = endAngle ?? 0;
+    document.getElementById(`${prefix}_edit_start_dist`).value = Math.round(cv.startDistance ?? 0);
+    document.getElementById(`${prefix}_edit_end_dist`).value = Math.round(cv.endDistance ?? 0);
+    document.getElementById(`${prefix}_edit_enabled`).checked = cv.enabled ?? false;
+
+    displaySection.style.display = "none";
+    editSection.style.display = "block";
+  }
+
+  function exitEditMode() {
+    const container = document.getElementById(`myr_${id}`);
+    const displaySection = container.querySelector(".myr_zone_display");
+    const editSection = container.querySelector(".myr_zone_edit");
+
+    displaySection.style.display = "block";
+    editSection.style.display = "none";
+  }
+
+  function saveZone() {
+    const startDeg = parseInt(document.getElementById(`${prefix}_edit_start_angle`)?.value) || 0;
+    const endDeg = parseInt(document.getElementById(`${prefix}_edit_end_angle`)?.value) || 0;
+    const startDist = parseInt(document.getElementById(`${prefix}_edit_start_dist`)?.value) || 0;
+    const endDist = parseInt(document.getElementById(`${prefix}_edit_end_dist`)?.value) || 0;
+    const enabledVal = document.getElementById(`${prefix}_edit_enabled`)?.checked ?? false;
+
+    // Convert degrees to radians for server
+    const startRad = (startDeg * Math.PI) / 180;
+    const endRad = (endDeg * Math.PI) / 180;
+
+    apiSetControl(radarId, id, {
+      value: startRad,
+      endValue: endRad,
+      startDistance: startDist,
+      endDistance: endDist,
+      enabled: enabledVal,
+    });
+
+    exitEditMode();
+  }
+
+  return div(
+    { class: "myr_control myr_zone_control", id: `myr_${id}` },
+    // Hidden input for get_element_by_server_id to find
+    input({ type: "hidden", id: `${control_prefix}${id}` }),
+    span({ class: "myr_control_label" }, name),
+    // Read-only display section
+    div(
+      { class: "myr_zone_display" },
+      div(
+        { class: "myr_zone_summary" },
+        div(
+          { class: "myr_zone_summary_row" },
+          span({ class: "myr_zone_summary_label" }, "Angle: "),
+          span({ id: `${prefix}_display_angle` }, "0° - 0°")
+        ),
+        div(
+          { class: "myr_zone_summary_row" },
+          span({ class: "myr_zone_summary_label" }, "Distance: "),
+          span({ id: `${prefix}_display_dist` }, "0 - 0 m")
+        ),
+        div(
+          { class: "myr_zone_summary_row" },
+          span({ class: "myr_zone_summary_label" }, "Enabled: "),
+          span({ id: `${prefix}_display_enabled` }, "No")
+        )
+      ),
+      button(
+        {
+          type: "button",
+          class: "myr_zone_edit_btn",
+          onclick: enterEditMode,
+        },
+        "Edit"
+      )
+    ),
+    // Edit section (hidden by default)
+    div(
+      { class: "myr_zone_edit", style: "display: none;" },
+      div(
+        { class: "myr_zone_row" },
+        div(
+          { class: "myr_zone_field" },
+          label({ for: `${prefix}_edit_start_angle` }, "Start°"),
+          input({
+            type: "number",
+            id: `${prefix}_edit_start_angle`,
+            min: minAngle,
+            max: maxAngle,
+            value: 0,
+          })
+        ),
+        div(
+          { class: "myr_zone_field" },
+          label({ for: `${prefix}_edit_end_angle` }, "End°"),
+          input({
+            type: "number",
+            id: `${prefix}_edit_end_angle`,
+            min: minAngle,
+            max: maxAngle,
+            value: 0,
+          })
+        )
+      ),
+      div(
+        { class: "myr_zone_row" },
+        div(
+          { class: "myr_zone_field" },
+          label({ for: `${prefix}_edit_start_dist` }, "Inner (m)"),
+          input({
+            type: "number",
+            id: `${prefix}_edit_start_dist`,
+            min: 0,
+            max: maxDist,
+            value: 0,
+          })
+        ),
+        div(
+          { class: "myr_zone_field" },
+          label({ for: `${prefix}_edit_end_dist` }, "Outer (m)"),
+          input({
+            type: "number",
+            id: `${prefix}_edit_end_dist`,
+            min: 0,
+            max: maxDist,
+            value: 0,
+          })
+        )
+      ),
+      div(
+        { class: "myr_zone_enabled" },
+        label(
+          { class: "myr_checkbox_label" },
+          input({
+            type: "checkbox",
+            id: `${prefix}_edit_enabled`,
+          }),
+          " Enabled"
+        )
+      ),
+      div(
+        { class: "myr_zone_buttons" },
+        button(
+          {
+            type: "button",
+            class: "myr_zone_cancel_btn",
+            onclick: exitEditMode,
+          },
+          "Cancel"
+        ),
+        button(
+          {
+            type: "button",
+            class: "myr_zone_save_btn",
+            onclick: saveZone,
+          },
+          "Save"
+        )
+      )
+    )
+  );
+};
+
+/**
+ * Update zone control UI from server state (read-only display)
+ */
+function updateZoneUI(id, control, cv) {
+  const prefix = `myr_control_${id}`;
+
+  // Update display values
+  const angleDisplay = document.getElementById(`${prefix}_display_angle`);
+  const distDisplay = document.getElementById(`${prefix}_display_dist`);
+  const enabledDisplay = document.getElementById(`${prefix}_display_enabled`);
+
+  if (angleDisplay) {
+    const [, startAngle] = toUser(control.units, cv.value);
+    const [, endAngle] = toUser(control.units, cv.endValue);
+    angleDisplay.textContent = `${startAngle ?? 0}° - ${endAngle ?? 0}°`;
+  }
+  if (distDisplay) {
+    const startDist = Math.round(cv.startDistance ?? 0);
+    const endDist = Math.round(cv.endDistance ?? 0);
+    distDisplay.textContent = `${startDist} - ${endDist} m`;
+  }
+  if (enabledDisplay) {
+    enabledDisplay.textContent = cv.enabled ? "Yes" : "No";
+  }
+}
+
 function buildControls() {
   let controlsEl = document.getElementById("myr_controls");
   if (!controlsEl) return;
@@ -533,7 +742,7 @@ function buildControls() {
       if (v.hasAuto) {
         van.add(get_element_by_server_id(k).parentNode, AutoButton(k));
       }
-      if (v.hasEnabled && !v.isReadOnly) {
+      if (v.hasEnabled && !v.isReadOnly && v.dataType !== "sector" && v.dataType !== "zone") {
         van.add(get_element_by_server_id(k).parentNode, EnabledButton(k));
       }
     }
@@ -549,6 +758,8 @@ function buildSingleControl(k, v) {
     return StringValue(k, v.name);
   } else if (v.dataType === "sector") {
     return SectorValue(k, v.name, v);
+  } else if (v.dataType === "zone") {
+    return ZoneValue(k, v.name, v);
   } else if ("validValues" in v && "descriptions" in v) {
     return SelectValue(k, v.name, v.validValues, v.descriptions);
   } else if (
@@ -603,6 +814,8 @@ function setControlValue(cv) {
       i.innerHTML = html;
     } else if (control && control.dataType === "sector") {
       updateSectorUI(cv.id, control, cv);
+    } else if (control && control.dataType === "zone") {
+      updateZoneUI(cv.id, control, cv);
     } else {
       // Update numeric display
       let n = document.getElementById(control_prefix + cv.id + "_display");

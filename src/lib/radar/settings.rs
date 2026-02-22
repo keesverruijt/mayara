@@ -19,6 +19,7 @@ use super::NAUTICAL_MILE;
 use super::range::Range;
 use super::units::Units;
 use crate::Cli;
+use crate::config::GuardZone;
 use crate::stream::SignalKDelta;
 use crate::{
     TargetMode,
@@ -362,8 +363,8 @@ impl ControlId {
             ControlId::Range => ControlDestination::Command,
             ControlId::Mode => ControlDestination::Command,
             ControlId::Gain => ControlDestination::Command,
-            ControlId::GuardZone1 => ControlDestination::Command,
-            ControlId::GuardZone2 => ControlDestination::Command,
+            ControlId::GuardZone1 => ControlDestination::Internal,
+            ControlId::GuardZone2 => ControlDestination::Internal,
             ControlId::Sea => ControlDestination::Command,
             ControlId::SeaState => ControlDestination::Command,
             ControlId::Rain => ControlDestination::Command,
@@ -770,7 +771,16 @@ impl SharedControls {
                 );
                 match cv.id.get_destination() {
                     ControlDestination::Internal => {
-                        if let Some(value) = cv.value {
+                        // Handle zone controls specially - they have multiple values
+                        if c.item.data_type == ControlDataType::Zone {
+                            let start_angle = cv.value.as_ref().and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            let end_angle = cv.end_value.as_ref().and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            let start_distance = cv.start_distance.as_ref().and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            let end_distance = cv.end_distance.as_ref().and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            self.set_zone(&cv.id, start_angle, end_angle, start_distance, end_distance, cv.enabled)
+                                .map(|_| ())
+                                .map_err(|e| RadarError::ControlError(e))
+                        } else if let Some(value) = cv.value {
                             self.set_value(&cv.id, value)
                                 .map(|_| ())
                                 .map_err(|e| RadarError::ControlError(e))
@@ -1205,6 +1215,35 @@ impl SharedControls {
         }
     }
 
+    /// Set a zone control with start/end angles and start/end distances
+    pub fn set_zone(
+        &self,
+        control_id: &ControlId,
+        start_angle: f64,
+        end_angle: f64,
+        start_distance: f64,
+        end_distance: f64,
+        enabled: Option<bool>,
+    ) -> Result<Option<()>, ControlError> {
+        let control = {
+            let mut locked = self.controls.write().unwrap();
+            if let Some(control) = locked.controls.get_mut(control_id) {
+                Ok(control
+                    .set_zone(start_angle, end_angle, start_distance, end_distance, enabled)?
+                    .map(|_| control.clone()))
+            } else {
+                Err(ControlError::NotSupported(*control_id))
+            }
+        }?;
+
+        if let Some(control) = control {
+            self.send_to_all_clients(&control);
+            Ok(Some(()))
+        } else {
+            Ok(None)
+        }
+    }
+
     #[allow(dead_code)]
     fn get_description(control: &Control) -> Option<String> {
         if let (Some(value), Some(descriptions)) = (control.value, &control.item().descriptions) {
@@ -1268,6 +1307,29 @@ impl SharedControls {
 
     pub fn model_name(&self) -> Option<String> {
         self.get(&ControlId::ModelName).and_then(|c| c.description)
+    }
+
+    pub fn guard_zone(&self, control_id: &ControlId) -> Option<GuardZone> {
+        self.get(control_id).and_then(|c| {
+            Some(GuardZone {
+                start_angle: c.value?,
+                end_angle: c.end_value?,
+                start_distance: c.start_distance?,
+                end_distance: c.end_distance?,
+                enabled: c.enabled.unwrap_or(false),
+            })
+        })
+    }
+
+    pub fn set_guard_zone(&self, control_id: &ControlId, zone: &GuardZone) {
+        let mut locked = self.controls.write().unwrap();
+        if let Some(control) = locked.controls.get_mut(control_id) {
+            control.value = Some(zone.start_angle);
+            control.end_value = Some(zone.end_angle);
+            control.start_distance = Some(zone.start_distance);
+            control.end_distance = Some(zone.end_distance);
+            control.enabled = Some(zone.enabled);
+        }
     }
 
     pub(crate) fn set_valid_ranges(&self, ranges: &Ranges) {
@@ -1935,7 +1997,7 @@ pub(crate) fn new_zone(
     let mut control = Control::new(ControlDefinition::new(
         control_id,
         ControlDataType::Zone,
-        min_value,
+        Some(0.),
         None,
         true, // Zones always have enabled
         min_value,
@@ -1949,9 +2011,11 @@ pub(crate) fn new_zone(
         false,
         false,
     ));
-    // Store max_distance in a way that can be accessed later
-    // For now, we use step_value to store max_distance (will be exposed via API)
     control.item.max_distance = Some(max_distance);
+    control.value = Some(0.);
+    control.end_value = Some(0.);
+    control.start_distance = Some(0.);
+    control.end_distance = Some(0.);
     ControlBuilder {
         control,
         frozen: false,
@@ -2079,7 +2143,8 @@ impl Control {
             return None;
         }
 
-        self.start_distance.map(|v| Value::Number(Number::from_f64(v).unwrap()))
+        self.start_distance
+            .map(|v| Value::Number(Number::from_f64(v).unwrap()))
     }
 
     pub fn end_distance(&self) -> Option<Value> {
@@ -2087,7 +2152,8 @@ impl Control {
             return None;
         }
 
-        self.end_distance.map(|v| Value::Number(Number::from_f64(v).unwrap()))
+        self.end_distance
+            .map(|v| Value::Number(Number::from_f64(v).unwrap()))
     }
 
     pub(crate) fn auto_as_f64(&self) -> Option<f64> {
@@ -2157,7 +2223,7 @@ impl Control {
             // One of the reasons we use f64 is because Navico wire format for some things is
             // tenths of degrees. To make things uniform we map these to a float with .1 precision.
 
-            log::info!(
+            log::debug!(
                 "{} map value {} scale_factor {}",
                 self.item.control_id,
                 value,
@@ -2166,7 +2232,7 @@ impl Control {
             value = value / wire_scale_factor;
 
             auto_value = auto_value.map(|v| v / wire_scale_factor);
-            log::info!("{} map value to scaled {}", self.item.control_id, value);
+            log::debug!("{} map value to scaled {}", self.item.control_id, value);
         }
 
         let wire_value = value;
@@ -2175,7 +2241,7 @@ impl Control {
             .wire_units
             .map(|u| u.to_si(value).1)
             .unwrap_or(value);
-        log::info!(
+        log::debug!(
             "value {} {} -> {} {}",
             wire_value,
             self.item.wire_units.unwrap_or(Units::None),
@@ -2347,6 +2413,57 @@ impl Control {
         if self.value != Some(start) || self.end_value != Some(end) || self.enabled != enabled {
             self.value = Some(start);
             self.end_value = Some(end);
+            self.enabled = enabled;
+            self.needs_refresh = false;
+
+            Ok(Some(()))
+        } else if self.needs_refresh || self.item.is_send_always {
+            self.needs_refresh = false;
+            Ok(Some(()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Set a zone control with start/end angles and start/end distances
+    ///
+    /// Angles are in wire units (degrees) and will be converted to SI (radians).
+    /// Distances are always in meters.
+    pub fn set_zone(
+        &mut self,
+        mut start_angle: f64,
+        mut end_angle: f64,
+        start_distance: f64,
+        end_distance: f64,
+        enabled: Option<bool>,
+    ) -> Result<Option<()>, ControlError> {
+        if self.item.data_type != ControlDataType::Zone {
+            return Err(ControlError::NotSupported(self.item.control_id));
+        }
+
+        // Convert angles to SI units (radians)
+        start_angle = self
+            .item
+            .wire_units
+            .map(|u| u.to_si(start_angle).1)
+            .unwrap_or(start_angle);
+        end_angle = self
+            .item
+            .wire_units
+            .map(|u| u.to_si(end_angle).1)
+            .unwrap_or(end_angle);
+
+        let changed = self.value != Some(start_angle)
+            || self.end_value != Some(end_angle)
+            || self.start_distance != Some(start_distance)
+            || self.end_distance != Some(end_distance)
+            || self.enabled != enabled;
+
+        if changed {
+            self.value = Some(start_angle);
+            self.end_value = Some(end_angle);
+            self.start_distance = Some(start_distance);
+            self.end_distance = Some(end_distance);
             self.enabled = enabled;
             self.needs_refresh = false;
 

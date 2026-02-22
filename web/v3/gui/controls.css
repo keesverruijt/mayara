@@ -34,8 +34,12 @@ div.myr_button::after {
   display: table;
 }
 
-label.myr_auto_label,label.myr_enabled_label,input.myr_auto,input.myr_enabled {
+label.myr_auto_label,input.myr_auto {
   float: left;
+}
+
+.myr_enabled_button {
+  margin-top: 8px;
 }
 
 /* Auto toggle button */
@@ -655,6 +659,140 @@ div.myr_range_buttons {
   height: 18px;
   cursor: pointer;
   accent-color: #4a8;
+}
+
+/* Zone control (Guard Zones) */
+.myr_zone_control {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Zone display (read-only) section */
+.myr_zone_display {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.myr_zone_summary {
+  flex: 1;
+}
+
+.myr_zone_summary_row {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 13px;
+}
+
+.myr_zone_summary_label {
+  color: #888;
+}
+
+.myr_zone_summary_row span:last-child {
+  color: #adf;
+  font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.myr_zone_edit_btn {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: bold;
+  border: 2px solid #446;
+  border-radius: 4px;
+  cursor: pointer;
+  background-color: #223;
+  color: #8af;
+  transition: all 0.2s ease;
+}
+
+.myr_zone_edit_btn:hover {
+  border-color: #668;
+  background-color: #334;
+}
+
+/* Zone edit section */
+.myr_zone_edit {
+  margin-top: 8px;
+}
+
+.myr_zone_row {
+  display: flex;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.myr_zone_field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.myr_zone_field label {
+  font-size: 11px;
+  color: #888;
+}
+
+.myr_zone_field input[type="number"] {
+  width: 100%;
+  padding: 4px 6px;
+  font-size: 14px;
+  background-color: #224;
+  border: 1px solid #446;
+  border-radius: 4px;
+  color: #adf;
+  box-sizing: border-box;
+}
+
+.myr_zone_field input[type="number"]:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.myr_zone_enabled {
+  margin-top: 8px;
+}
+
+.myr_zone_buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  justify-content: flex-end;
+}
+
+.myr_zone_cancel_btn,
+.myr_zone_save_btn {
+  padding: 6px 16px;
+  font-size: 12px;
+  font-weight: bold;
+  border: 2px solid #446;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.myr_zone_cancel_btn {
+  background-color: #322;
+  border-color: #644;
+  color: #a88;
+}
+
+.myr_zone_cancel_btn:hover {
+  background-color: #433;
+  border-color: #866;
+}
+
+.myr_zone_save_btn {
+  background-color: #232;
+  border-color: #464;
+  color: #8a8;
+}
+
+.myr_zone_save_btn:hover {
+  background-color: #343;
+  border-color: #686;
 }
 
 /* ============================================

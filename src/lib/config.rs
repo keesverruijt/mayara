@@ -11,6 +11,7 @@ use std::time::SystemTime;
 
 use crate::radar::RadarInfo;
 use crate::radar::range::Ranges;
+use crate::radar::settings::ControlId;
 
 pub fn get_project_dirs() -> ProjectDirs {
     directories::ProjectDirs::from("net", "verruijt", "mayara")
@@ -19,6 +20,15 @@ pub fn get_project_dirs() -> ProjectDirs {
 
 fn default_range_units() -> i32 {
     0 // Nautical (default)
+}
+
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+pub struct GuardZone {
+    pub start_angle: f64,    // Start angle in radians (SI)
+    pub end_angle: f64,      // End angle in radians (SI)
+    pub start_distance: f64, // Inner distance in meters
+    pub end_distance: f64,   // Outer distance in meters
+    pub enabled: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
@@ -33,6 +43,12 @@ pub struct Radar {
     // Data that is computed and not immediately known when starting
     pub model_name: Option<String>, // Descriptive model name (4G, HALO)
     pub ranges: Option<Vec<i32>>,   // Detected ranges
+
+    // Guard zones
+    #[serde(default)]
+    pub guard_zone_1: Option<GuardZone>,
+    #[serde(default)]
+    pub guard_zone_2: Option<GuardZone>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
@@ -182,6 +198,18 @@ impl Persistence {
             modified = true;
         }
 
+        let guard_zone_1 = radar_info.controls.guard_zone(&ControlId::GuardZone1);
+        if radar.guard_zone_1 != guard_zone_1 {
+            radar.guard_zone_1 = guard_zone_1;
+            modified = true;
+        }
+
+        let guard_zone_2 = radar_info.controls.guard_zone(&ControlId::GuardZone2);
+        if radar.guard_zone_2 != guard_zone_2 {
+            radar.guard_zone_2 = guard_zone_2;
+            modified = true;
+        }
+
         if modified {
             self.save();
         }
@@ -200,6 +228,12 @@ impl Persistence {
                 if ranges.len() > 0 {
                     info.set_ranges(Ranges::new_by_distance(ranges));
                 }
+            }
+            if let Some(zone) = &p.guard_zone_1 {
+                info.controls.set_guard_zone(&ControlId::GuardZone1, zone);
+            }
+            if let Some(zone) = &p.guard_zone_2 {
+                info.controls.set_guard_zone(&ControlId::GuardZone2, zone);
             }
         }
     }
