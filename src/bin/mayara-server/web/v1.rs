@@ -20,7 +20,7 @@ use super::{
 
 use mayara::{
     radar::settings::{ApiVersion, Control, ControlId, ControlValue},
-    radar::{Legend, RadarError},
+    radar::{Legend, RadarError, SharedRadars},
 };
 
 pub(super) const RADAR_URI: &str = "/v1/api/radars";
@@ -163,10 +163,11 @@ async fn control_handler(
     match state.radars.get_by_key(&params.id) {
         Some(radar) => {
             let shutdown_rx = state.shutdown_tx.subscribe();
+            let radars = state.radars.clone();
 
             // finalize the upgrade process by returning upgrade callback.
             // we can customize the callback by sending additional info such as address.
-            ws.on_upgrade(move |socket| control_stream(socket, radar, ApiVersion::V1, shutdown_rx))
+            ws.on_upgrade(move |socket| control_stream(socket, radar, radars, ApiVersion::V1, shutdown_rx))
         }
         None => RadarError::NoSuchRadar(params.id).into_response(),
     }
@@ -178,6 +179,7 @@ async fn control_handler(
 async fn control_stream(
     mut socket: WebSocket,
     radar: RadarInfo,
+    radars: SharedRadars,
     api_version: ApiVersion,
     mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
 ) {
@@ -270,7 +272,15 @@ async fn control_stream(
                                     log::debug!("Received ControlValue {:?}", control_value);
                                     match radar.controls.process_client_request(control_value.clone(), reply_tx.clone())
                                     {
-                                        Ok(()) => { log::debug!("ControlValue {} handled", message); }
+                                        Ok(()) => {
+                                            log::debug!("ControlValue {} handled", message);
+                                            // Save persistence for guard zone controls
+                                            if control_value.id == ControlId::GuardZone1
+                                                || control_value.id == ControlId::GuardZone2
+                                            {
+                                                radars.save_persistence(&radar.key());
+                                            }
+                                        }
                                         Err(e) => {
                                             log::warn!("ControlValue {} error: {}", message, e);
                                             control_value.error = Some(e.to_string());

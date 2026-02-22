@@ -566,9 +566,9 @@ const ZoneValue = (id, name, control) => {
         "Edit"
       )
     ),
-    // Read-only display section
+    // Read-only display section (clickable to enter edit mode)
     div(
-      { class: "myr_zone_display" },
+      { class: "myr_zone_display", onclick: enterEditMode },
       div(
         { class: "myr_zone_summary" },
         div(

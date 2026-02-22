@@ -282,7 +282,7 @@ async fn set_control_value(
     );
 
     // Get the radar info and control without holding the lock across await
-    let (controls, control_value) = {
+    let (controls, control_value, radar_key) = {
         match state.radars.get_by_key(&radar_id) {
             Some(radar) => {
                 // Look up the control by name
@@ -301,7 +301,7 @@ async fn set_control_value(
 
                 let control_value = ControlValue::from_request(control.item().control_id, request);
                 log::debug!("Map request to controlValue {:?}", control_value);
-                (radar.controls.clone(), control_value)
+                (radar.controls.clone(), control_value, radar.key())
             }
             None => {
                 return RadarError::NoSuchRadar(radar_id).into_response();
@@ -313,9 +313,18 @@ async fn set_control_value(
     // Create a channel for the reply
     let (reply_tx, mut reply_rx) = tokio::sync::mpsc::channel(1);
 
+    // Check if this is a guard zone control before processing
+    let is_guard_zone = control_value.id == ControlId::GuardZone1
+        || control_value.id == ControlId::GuardZone2;
+
     // Send the control request
     if let Err(e) = controls.process_client_request(control_value, reply_tx) {
         return (StatusCode::BAD_REQUEST, e.to_string()).into_response();
+    }
+
+    // Save persistence for guard zone controls
+    if is_guard_zone {
+        state.radars.save_persistence(&radar_key);
     }
 
     // Wait briefly for a reply (error response)
@@ -773,9 +782,19 @@ async fn handle_control_request(
     if let Some(radar_id) = rcv.parse_path() {
         if let Some(radar) = radars.get_by_key(&radar_id) {
             let control_value: ControlValue = rcv.into();
-            radar
+            let result = radar
                 .controls
-                .process_client_request(control_value.clone(), reply_tx)
+                .process_client_request(control_value.clone(), reply_tx);
+
+            // Save persistence for guard zone controls on success
+            if result.is_ok()
+                && (control_value.id == ControlId::GuardZone1
+                    || control_value.id == ControlId::GuardZone2)
+            {
+                radars.save_persistence(&radar.key());
+            }
+
+            result
         } else {
             log::warn!(
                 "No radar '{}' active; ControlValue '{}' ignored",

@@ -515,6 +515,15 @@ impl SharedRadars {
         radars.info.get(key).cloned()
     }
 
+    /// Save persistence for a radar by key
+    /// This should be called when a control value changes that needs to be persisted
+    pub fn save_persistence(&self, key: &str) {
+        let mut radars = self.radars.write().unwrap();
+        if let Some(radar_info) = radars.info.get(key).cloned() {
+            radars.persistent_data.store(&radar_info);
+        }
+    }
+
     pub fn remove(&self, key: &str) {
         let mut radars = self.radars.write().unwrap();
 

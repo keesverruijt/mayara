@@ -667,9 +667,15 @@ div.myr_range_buttons {
   flex-direction: column;
 }
 
-/* Zone display (read-only) section */
+/* Zone display (read-only) section - clickable to enter edit mode */
 .myr_zone_display {
   margin-top: 4px;
+  cursor: pointer;
+}
+
+.myr_zone_display:hover {
+  background-color: rgba(68, 102, 136, 0.2);
+  border-radius: 4px;
 }
 
 .myr_zone_summary {
