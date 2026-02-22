@@ -553,7 +553,19 @@ const ZoneValue = (id, name, control) => {
     { class: "myr_control myr_zone_control", id: `myr_${id}` },
     // Hidden input for get_element_by_server_id to find
     input({ type: "hidden", id: `${control_prefix}${id}` }),
-    span({ class: "myr_control_label" }, name),
+    // Header with label and Edit button
+    div(
+      { class: "myr_control_header" },
+      span({ class: "myr_control_label" }, name),
+      button(
+        {
+          type: "button",
+          class: "myr_zone_edit_btn",
+          onclick: enterEditMode,
+        },
+        "Edit"
+      )
+    ),
     // Read-only display section
     div(
       { class: "myr_zone_display" },
@@ -574,14 +586,6 @@ const ZoneValue = (id, name, control) => {
           span({ class: "myr_zone_summary_label" }, "Enabled: "),
           span({ id: `${prefix}_display_enabled` }, "No")
         )
-      ),
-      button(
-        {
-          type: "button",
-          class: "myr_zone_edit_btn",
-          onclick: enterEditMode,
-        },
-        "Edit"
       )
     ),
     // Edit section (hidden by default)

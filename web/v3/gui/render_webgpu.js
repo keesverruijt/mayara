@@ -11,7 +11,7 @@ import {
 import { SpokeProcessorFactory } from "./spoke_processor.js";
 
 class render_webgpu {
-  constructor(canvas_dom, canvas_background_dom, drawBackground) {
+  constructor(canvas_dom, canvas_background_dom) {
     this.dom = canvas_dom;
     this.background_dom = canvas_background_dom;
     this.background_ctx = this.background_dom.getContext("2d");
@@ -20,7 +20,6 @@ class render_webgpu {
     this.overlay_ctx = this.overlay_dom
       ? this.overlay_dom.getContext("2d")
       : null;
-    this.drawBackgroundCallback = drawBackground;
 
     this.actual_range = 0;
     this.lastHeading = null;
@@ -44,6 +43,10 @@ class render_webgpu {
 
     // Standby mode state
     this.powerMode = "off";
+
+    // Guard zones and no-transmit sectors
+    this.guardZones = [null, null];
+    this.noTransmitSectors = [null, null, null, null];
     this.onTimeSeconds = 0;
     this.txTimeSeconds = 0;
 
@@ -279,6 +282,30 @@ class render_webgpu {
       this.#createSpokeProcessor();
       // Clear display when switching modes
       this.clearRadarDisplay();
+    }
+  }
+
+  /**
+   * Set a guard zone for display
+   * @param {number} index - Zone index (0 or 1)
+   * @param {object|null} zone - Zone data {startAngle, endAngle, startDistance, endDistance} or null to disable
+   */
+  setGuardZone(index, zone) {
+    if (index >= 0 && index < 2) {
+      this.guardZones[index] = zone;
+      this.redrawCanvas();
+    }
+  }
+
+  /**
+   * Set a no-transmit sector for display
+   * @param {number} index - Sector index (0-3)
+   * @param {object|null} sector - Sector data {startAngle, endAngle} or null to disable
+   */
+  setNoTransmitSector(index, sector) {
+    if (index >= 0 && index < 4) {
+      this.noTransmitSectors[index] = sector;
+      this.redrawCanvas();
     }
   }
 
@@ -641,6 +668,84 @@ class render_webgpu {
     ctx.restore();
   }
 
+  #drawNoTransmitSector(ctx, sector, fillColor, strokeColor) {
+    if (!sector) return;
+
+    // Extend to three times the beam length (well beyond radar display)
+    const radius = this.beam_length * 3;
+    if (radius <= 0) return;
+
+    // Transform angles from radar coordinates (0 = north, clockwise) to canvas
+    const startAngle = sector.startAngle - Math.PI / 2;
+    const endAngle = sector.endAngle - Math.PI / 2;
+
+    // Check if it's a full circle (angles are equal or very close)
+    const isCircle = Math.abs(sector.endAngle - sector.startAngle) < 0.001;
+
+    ctx.beginPath();
+
+    if (isCircle) {
+      ctx.arc(this.center_x, this.center_y, radius, 0, 2 * Math.PI);
+    } else {
+      ctx.moveTo(this.center_x, this.center_y);
+      ctx.arc(this.center_x, this.center_y, radius, startAngle, endAngle);
+      ctx.closePath();
+    }
+
+    ctx.fillStyle = fillColor;
+    ctx.fill();
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  #drawGuardZone(ctx, zone, fillColor, strokeColor) {
+    if (!zone) return;
+
+    const range = this.range || this.actual_range;
+    if (!range || range <= 0) return;
+
+    // Convert distances to pixels
+    const pixelsPerMeter = this.beam_length / range;
+    const innerRadius = zone.startDistance * pixelsPerMeter;
+    const outerRadius = zone.endDistance * pixelsPerMeter;
+
+    if (outerRadius <= 0) return;
+
+    // Transform angles from radar coordinates (0 = north, clockwise) to canvas
+    const startAngle = zone.startAngle - Math.PI / 2;
+    const endAngle = zone.endAngle - Math.PI / 2;
+
+    // Check if it's a full circle (angles are equal or very close)
+    const isCircle = Math.abs(zone.endAngle - zone.startAngle) < 0.001;
+
+    ctx.beginPath();
+
+    if (isCircle) {
+      // Draw full annulus (two circles)
+      ctx.arc(this.center_x, this.center_y, outerRadius, 0, 2 * Math.PI);
+      if (innerRadius > 0) {
+        ctx.moveTo(this.center_x + innerRadius, this.center_y);
+        ctx.arc(this.center_x, this.center_y, innerRadius, 0, 2 * Math.PI, true);
+      }
+    } else {
+      // Draw annular sector
+      ctx.arc(this.center_x, this.center_y, outerRadius, startAngle, endAngle);
+      if (innerRadius > 0) {
+        ctx.arc(this.center_x, this.center_y, innerRadius, endAngle, startAngle, true);
+      } else {
+        ctx.lineTo(this.center_x, this.center_y);
+      }
+      ctx.closePath();
+    }
+
+    ctx.fillStyle = fillColor;
+    ctx.fill();
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
   #drawOverlay() {
     if (!this.overlay_ctx) return;
 
@@ -649,6 +754,15 @@ class render_webgpu {
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.width, this.height);
+
+    // Draw no-transmit sectors (light yellow, behind everything)
+    for (const sector of this.noTransmitSectors) {
+      this.#drawNoTransmitSector(ctx, sector, "rgba(255, 255, 200, 0.25)", "rgba(200, 200, 0, 0.6)");
+    }
+
+    // Draw guard zones
+    this.#drawGuardZone(ctx, this.guardZones[0], "rgba(144, 238, 144, 0.25)", "rgba(0, 128, 0, 0.6)");
+    this.#drawGuardZone(ctx, this.guardZones[1], "rgba(173, 216, 230, 0.25)", "rgba(0, 0, 255, 0.6)");
 
     if (this.powerMode != "transmit") {
       this.#drawStandbyOverlay(ctx);

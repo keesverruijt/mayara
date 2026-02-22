@@ -43,11 +43,11 @@ var headingSocket;
 var RadarMessage;
 var renderer;
 var capabilities;
-var noTransmitAngles = Array();
 
 // Heading mode: "headingUp" or "northUp"
 var headingMode = "headingUp";
 var trueHeading = 0; // in radians
+
 
 function divides_near(a, b) {
   let remainder = a % b;
@@ -133,8 +133,7 @@ window.onload = async function () {
   // WebGPU only
   renderer = new render_webgpu(
     document.getElementById("myr_canvas_webgl"),
-    document.getElementById("myr_canvas_background"),
-    drawBackground
+    document.getElementById("myr_canvas_background")
   );
 
   // Wait for both WebGPU initialization AND protobuf loading before proceeding
@@ -824,6 +823,19 @@ function controlUpdate(controlId, value) {
   } else if (controlId === "userName") {
     // Update power lozenge with new user name
     updatePowerLozenge(undefined, value.value);
+  } else if (controlId === "guardZone1") {
+    if (renderer) {
+      renderer.setGuardZone(0, parseGuardZone(value));
+    }
+  } else if (controlId === "guardZone2") {
+    if (renderer) {
+      renderer.setGuardZone(1, parseGuardZone(value));
+    }
+  } else if (controlId.startsWith("noTransmitSector")) {
+    const index = parseInt(controlId.slice(-1)) - 1; // "noTransmitSector1" -> 0
+    if (index >= 0 && index < 4 && renderer) {
+      renderer.setNoTransmitSector(index, parseNoTransmitSector(value));
+    }
   } else {
     // Check if this is a range control (by name)
     const control = getControl(controlId);
@@ -835,30 +847,23 @@ function controlUpdate(controlId, value) {
   }
 }
 
-function drawBackground(obj, txt) {
-  obj.background_ctx.setTransform(1, 0, 0, 1, 0, 0);
-  obj.background_ctx.clearRect(0, 0, obj.width, obj.height);
-
-  // No transmit zones (drawn on background, behind radar)
-  obj.background_ctx.fillStyle = "lightgrey";
-  if (typeof noTransmitAngles == "array") {
-    noTransmitAngles.forEach((e) => {
-      if (e && e[0]) {
-        obj.background_ctx.beginPath();
-        obj.background_ctx.arc(
-          obj.center_x,
-          obj.center_y,
-          obj.beam_length * 2,
-          (2 * Math.PI * e[0]) / obj.spokesPerRevolution,
-          (2 * Math.PI * e[1]) / obj.spokesPerRevolution
-        );
-        obj.background_ctx.fill();
-      }
-    });
-  }
-
-  // Title text
-  obj.background_ctx.fillStyle = "lightblue";
-  obj.background_ctx.font = "bold 16px/1 Verdana, Geneva, sans-serif";
-  obj.background_ctx.fillText(txt, 5, 20);
+// Parse guard zone control value into drawing parameters
+function parseGuardZone(cv) {
+  if (!cv || !cv.enabled) return null;
+  return {
+    startAngle: cv.value ?? 0,           // in radians (SI units from API)
+    endAngle: cv.endValue ?? 0,          // in radians
+    startDistance: cv.startDistance ?? 0, // in meters
+    endDistance: cv.endDistance ?? 0,     // in meters
+  };
 }
+
+// Parse no-transmit sector control value into drawing parameters
+function parseNoTransmitSector(cv) {
+  if (!cv || !cv.enabled) return null;
+  return {
+    startAngle: cv.value ?? 0,   // in radians (SI units from API)
+    endAngle: cv.endValue ?? 0,  // in radians
+  };
+}
+

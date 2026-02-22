@@ -669,10 +669,7 @@ div.myr_range_buttons {
 
 /* Zone display (read-only) section */
 .myr_zone_display {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
+  margin-top: 4px;
 }
 
 .myr_zone_summary {
@@ -696,10 +693,10 @@ div.myr_range_buttons {
 }
 
 .myr_zone_edit_btn {
-  padding: 6px 12px;
-  font-size: 12px;
+  padding: 4px 10px;
+  font-size: 11px;
   font-weight: bold;
-  border: 2px solid #446;
+  border: 1px solid #446;
   border-radius: 4px;
   cursor: pointer;
   background-color: #223;
