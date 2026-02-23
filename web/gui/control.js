@@ -31,7 +31,6 @@ import {
   setControl as apiSetControl,
   detectMode,
   isStandaloneMode,
-  saveInstallationSetting,
   isPlaybackRadar,
 } from "./api.js";
 import { setZoneEditMode, setSectorEditMode } from "./viewer.js";
