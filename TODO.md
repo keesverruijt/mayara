@@ -1,29 +1,27 @@
 ### TODO.md
 
+GUI parts that do not work yet before we can call this a full replacement of `radar_pi`:
 
-Gui changes to do:
+* Guard zones can be created and edited but they are not actively supported yet.
+* (M)ARPA target tracking is not actively supported yet.
+* EBL/VRM handling
 
-- fix padding/border in read only values
-- check why hours are rounded to a half hour
-- fix double enable checkboxes in NoTransmitSector
-- check doppler packets sent when no chartplotter present
-- move radar controls for trails and targets into separate groups
+Bugs:
 
-A list of things still to do before this code has caught back up with Dirk's vibe coded version:
+* Rotation of the PPI window doesn't work, image is always HeadsUp whereas heading check marks
+  are north up.
 
-1. Check and finagle the Furuno code back into operation. It should work, but hasn't been tested.
+Server side:
+
+* check doppler packets sent when no chartplotter present and disallow doppler status when
+  no heading is on radar spokes.
+* Check and finagle the Furuno code back into operation. It should work, but hasn't been tested.
    (-> Dirk)
-
-2. Re-implement the radar recording and playback. Consider basing this on the Signal K playback
-   method.
-
-3. Re-implement the debugger. Or a better one?
-   Kees: I did not really see the point of it, TBH
+* Re-implement the radar recording and playback. 
+* Re-implement the debugger. Or a better one?  Kees: I did not really see the point of it, TBH
 
 Also:
 
 * Tests, tests!
-* Target acquisition (M)ARPA using internal matching code
-* Guard zones (internal)
 * Timed Transmit
 * Garmin support (on hold until developer shows up)
