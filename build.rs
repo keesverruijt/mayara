@@ -23,64 +23,29 @@ fn main() {
         .cargo_out_dir("lib/protos")
         .run_from_script();
 
-    let mut v1_api = PathBuf::from("web");
-    v1_api.push("v1");
-    v1_api.push("api");
-    fs::create_dir_all(&v1_api).unwrap();
-    v1_api.push("RadarMessage.proto");
-    fs::copy(&src_path, &v1_api).unwrap();
-
     let mut v3_api = PathBuf::from("web");
-    v3_api.push("v3");
     v3_api.push("api");
     fs::create_dir_all(&v3_api).unwrap();
     v3_api.push("RadarMessage.proto");
     fs::copy(&src_path, &v3_api).unwrap();
 
-    /*
-    let body = reqwest::blocking::get(
-        "https://cdn.rawgit.com/dcodeIO/protobuf.js/6.11.0/dist/protobuf.min.js",
-    )
-    .unwrap()
-    .text()
-    .unwrap();
-    let out_dir = env::var_os("OUT_DIR").unwrap();
-    let mut dest_path = PathBuf::from(&out_dir);
-    dest_path.push("bin");
-    dest_path.push("web");
-    dest_path.push("imports");
-    fs::create_dir_all(&dest_path).unwrap();
-    dest_path.push("protobuf.min.js");
-    fs::write(&dest_path, body).unwrap();
-
-    let body = reqwest::blocking::get(
-        "https://cdn.rawgit.com/dcodeIO/protobuf.js/6.11.0/dist/protobuf.js",
-    )
-    .unwrap()
-    .text()
-    .unwrap();
-    let out_dir = env::var_os("OUT_DIR").unwrap();
-    let mut dest_path = PathBuf::from(&out_dir);
-    dest_path.push("bin");
-    dest_path.push("web");
-    dest_path.push("imports");
-    dest_path.push("protobuf.js");
-    fs::write(&dest_path, body).unwrap();
-    */
-
-
     // Skip GUI download in dev mode - we serve from filesystem instead
     let is_dev = env::var("CARGO_FEATURE_DEV").is_ok();
 
     // Download GUI from npm if not present (skip in dev mode)
-    let gui_dir = PathBuf::from("web").join("v3").join("gui");
+    let gui_dir = PathBuf::from("web").join("gui");
+    let mayara_gui_project_dir = PathBuf::from("..").join("mayara-gui");
+
+    if !is_dev && !gui_dir.join("viewer.js").exists() && mayara_gui_project_dir.join("viewer.js").exists() {
+        println!("cargo:warning=Copying GUI from ../mayara-gui/...");
+        copy_gui_files(&mayara_gui_project_dir, &gui_dir);
+    }
+
     if !is_dev && !gui_dir.join("index.html").exists() {
         println!("cargo:warning=Downloading GUI from npm...");
-
         // Create temp dir for npm install
         let npm_dir = PathBuf::from(&out_dir).join("npm_temp");
         fs::create_dir_all(&npm_dir).unwrap();
-
         // Run npm install - use npm.cmd on Windows
         let npm_cmd = if cfg!(windows) { "npm.cmd" } else { "npm" };
         let status = Command::new(npm_cmd)
@@ -88,15 +53,12 @@ fn main() {
             .current_dir(&npm_dir)
             .status()
             .expect("npm not found - please install Node.js");
-
         if !status.success() {
             panic!("Failed to download GUI from npm");
         }
-
         // Copy GUI files from node_modules to OUT_DIR/gui
         let src = npm_dir.join("node_modules/@marineyachtradar/mayara-gui");
         copy_gui_files(&src, &gui_dir);
-
         // Cleanup npm temp
         let _ = fs::remove_dir_all(&npm_dir);
     }

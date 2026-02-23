@@ -34,13 +34,11 @@ use utoipa::ToSchema;
 
 mod axum_fix;
 mod signalk;
-mod v1;
 
 use axum_fix::{Message, WebSocket, WebSocketUpgrade};
 use mayara::{
     Cli, InterfaceApi, PACKAGE, VERSION,
-    radar::settings::set_api_version,
-    radar::{RadarError, RadarInfo, SharedRadars},
+    radar::{RadarError, SharedRadars},
     start_session,
 };
 
@@ -91,8 +89,7 @@ impl Web {
         let shutdown_tx = self.shutdown_tx.clone(); // Clone as self used in with_state() and with_graceful_shutdown() below
 
         let router = Router::new().route("/", get(endpoints));
-        let router = v1::routes(router); //.route_service("/v1", generated_assets_v1);
-        let router = signalk::v2::routes(router); //.route_service("/v3", generated_assets_v3);
+        let router = signalk::v2::routes(router);
 
         let app = router
             .fallback_service(serve_assets)
@@ -181,14 +178,6 @@ async fn endpoints(State(state): State<Web>, headers: hyper::header::HeaderMap) 
             id: PACKAGE,
         },
     };
-    endpoints.endpoints.insert(
-        "mayara_v1".to_string(),
-        Endpoint {
-            version: "v1".to_string(),
-            http: format!("http://{}{}", host, v1::RADAR_URI),
-            ws: format!("ws://{}{}", host, v1::CONTROL_URI),
-        },
-    );
     endpoints.endpoints.insert(
         "v2".to_string(),
         Endpoint {
