@@ -184,20 +184,6 @@ export function isStandaloneMode() {
 }
 
 /**
- * Map power control values to SignalK RadarStatus
- * SignalK expects: 'off' | 'standby' | 'transmit' | 'warming'
- */
-function mapPowerValue(value) {
-  // Handle numeric or string values
-  const v = String(value);
-  if (v === "0" || v === "off" || v === "Off") return "standby";
-  if (v === "1" || v === "on" || v === "On") return "transmit";
-  // Pass through if already a valid RadarStatus
-  if (["off", "standby", "transmit", "warming"].includes(v)) return v;
-  return v;
-}
-
-/**
  * Send a control command to a radar via REST API (v5 format)
  *
  * SignalK Radar API v5 format:
@@ -262,7 +248,7 @@ export function isPlaybackRadar(radarId) {
 // compatibility with v2 GUI code but will not work with the v3 backend.
 // ============================================================================
 
-const RECORDINGS_API = "/v2/api/recordings";
+const RECORDINGS_API = "/v2/api/vessels/self/radars/recordings";
 
 /**
  * List available recordings
