@@ -61,7 +61,8 @@ const RADAR_CONTROL_URI: &str =
     tags(
         (name = "Radars", description = "Radar discovery and capabilities"),
         (name = "Controls", description = "Read and modify radar control settings"),
-        (name = "Configuration", description = "Server and network configuration")
+        (name = "Configuration", description = "Server and network configuration"),
+        (name = "Stream", description = "Real-time WebSocket stream for control updates")
     ),
     paths(
         get_radars,
@@ -70,6 +71,7 @@ const RADAR_CONTROL_URI: &str =
         get_control_values,
         get_control_value,
         set_control_value,
+        control_stream_docs,
     ),
     components(schemas(
         RadarControlIdParam,
@@ -79,7 +81,12 @@ const RADAR_CONTROL_URI: &str =
         RadarInterfaces,
         Interfaces,
         Capabilities,
-        BareControlValue
+        BareControlValue,
+        // WebSocket message types
+        SignalKDelta,
+        Subscription,
+        Desubscription,
+        RadarControlValue,
     ))
 )]
 struct ApiDoc;
@@ -108,6 +115,12 @@ async fn openapi_json() -> impl IntoResponse {
     )
 }
 
+/// Generate the OpenAPI specification as a JSON string
+pub fn generate_openapi_json() -> String {
+    let spec = ApiDoc::openapi();
+    serde_json::to_string_pretty(&spec).unwrap()
+}
+
 /// Information about a detected radar, including WebSocket URLs for data streams
 #[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -116,7 +129,7 @@ async fn openapi_json() -> impl IntoResponse {
     "brand": "Navico",
     "model": "HALO",
     "spokeDataUrl": "ws://192.168.1.100:8080/signalk/v2/api/vessels/self/radars/nav1034A/spokes",
-    "streamUrl": "ws://192.168.1.100:8080/signalk/v2/api/vessels/self/radars/stream",
+    "streamUrl": "ws://192.168.1.100:8080/signalk/v1/stream",
     "radarIpAddress": "192.168.1.50"
 }))]
 struct RadarApiV3 {
@@ -136,7 +149,7 @@ struct RadarApiV3 {
     )]
     spoke_data_url: String,
     /// WebSocket URL for Signal K control stream (JSON)
-    #[schema(example = "ws://192.168.1.100:8080/signalk/v2/api/vessels/self/radars/stream")]
+    #[schema(example = "ws://192.168.1.100:8080/signalk/v1/stream")]
     stream_url: String,
     /// IP address of the radar unit on the network
     #[schema(value_type = String, example = "192.168.1.50")]
@@ -153,7 +166,7 @@ struct RadarApiV3 {
             "brand": "Navico",
             "model": "HALO",
             "spokeDataUrl": "ws://192.168.1.100:8080/signalk/v2/api/vessels/self/radars/nav1034A/spokes",
-            "streamUrl": "ws://192.168.1.100:8080/signalk/v2/api/vessels/self/radars/stream",
+            "streamUrl": "ws://192.168.1.100:8080/signalk/v1/stream",
             "radarIpAddress": "192.168.1.50"
         }
     }
@@ -703,16 +716,123 @@ where
         radars: serde_json::to_value(value).unwrap(),
     })
 }
-///
-/// Stream handler implementing the Signal K Stream procotol
-///
+// =============================================================================
+// WebSocket Stream Handler
+// =============================================================================
 
-#[derive(Deserialize, Debug)]
+/// Query parameters for WebSocket stream connection
+#[derive(Deserialize, Debug, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct SignalKWebSocket {
+    /// Initial subscription mode: 'all' (default), 'self', or 'none'
+    #[schema(example = "all")]
     subscribe: Option<String>,
+    /// Send cached control values on connect: 'true' (default) or 'false'
+    #[schema(example = "true")]
     send_cached_values: Option<String>,
 }
+
+/// Documentation endpoint for the WebSocket stream (not actually called)
+#[utoipa::path(
+    get,
+    path = "/signalk/v1/stream",
+    summary = "Real-time control stream (WebSocket)",
+    description = "WebSocket endpoint for real-time bidirectional radar control communication.\n\n\
+## Connection\n\
+Connect via WebSocket to receive real-time control value updates.\n\n\
+## Query Parameters\n\
+- `subscribe`: Initial subscription mode\n\
+  - `all` (default): Subscribe to all control updates\n\
+  - `self`: Subscribe to updates for the current vessel\n\
+  - `none`: No initial subscriptions\n\
+- `sendCachedValues`: Send current values on connect\n\
+  - `true` (default): Send all current control values immediately\n\
+  - `false`: Only send future updates\n\n\
+## Client → Server Messages\n\n\
+### Set Control Value\n\
+Send a control command to change a radar setting:\n\
+```json\n\
+{\n\
+  \"path\": \"radars.nav1034A.controls.gain\",\n\
+  \"value\": 50\n\
+}\n\
+```\n\n\
+For guard zones, include additional fields:\n\
+```json\n\
+{\n\
+  \"path\": \"radars.nav1034A.controls.guardZone1\",\n\
+  \"value\": 0,\n\
+  \"endValue\": 90,\n\
+  \"startDistance\": 100,\n\
+  \"endDistance\": 500,\n\
+  \"enabled\": true\n\
+}\n\
+```\n\n\
+### Subscribe to Updates\n\
+Subscribe to specific control paths with optional rate limiting:\n\
+```json\n\
+{\n\
+  \"subscribe\": [\n\
+    {\"path\": \"radars.*.controls.*\", \"period\": 1000},\n\
+    {\"path\": \"radars.nav1034A.controls.gain\", \"policy\": \"instant\"}\n\
+  ]\n\
+}\n\
+```\n\n\
+Path patterns support wildcards:\n\
+- `radars.*.controls.*` - all controls on all radars\n\
+- `radars.nav1034A.controls.*` - all controls on specific radar\n\
+- `*.gain` - gain control on all radars\n\n\
+Subscription options:\n\
+- `period`: Update interval in milliseconds (for fixed policy)\n\
+- `minPeriod`: Minimum interval between updates\n\
+- `policy`: Delivery policy\n\
+  - `instant`: Send immediately when value changes\n\
+  - `ideal`: Rate-limit to minPeriod\n\
+  - `fixed`: Send at fixed intervals\n\n\
+### Unsubscribe\n\
+```json\n\
+{\n\
+  \"desubscribe\": [{\"path\": \"radars.*.controls.gain\"}]\n\
+}\n\
+```\n\n\
+## Server → Client Messages\n\n\
+### Delta Updates\n\
+Control value changes are sent as delta messages:\n\
+```json\n\
+{\n\
+  \"updates\": [{\n\
+    \"$source\": \"mayara\",\n\
+    \"timestamp\": \"2024-01-15T10:30:00Z\",\n\
+    \"values\": [\n\
+      {\"path\": \"radars.nav1034A.controls.gain\", \"value\": 50},\n\
+      {\"path\": \"radars.nav1034A.controls.sea\", \"value\": 30, \"auto\": true}\n\
+    ]\n\
+  }]\n\
+}\n\
+```\n\n\
+### Metadata\n\
+On first connection, metadata describing each control is sent:\n\
+```json\n\
+{\n\
+  \"updates\": [{\n\
+    \"$source\": \"mayara\",\n\
+    \"meta\": [\n\
+      {\"path\": \"radars.nav1034A.controls.gain\", \"value\": {\"controlId\": \"gain\", \"type\": \"numeric\", ...}}\n\
+    ]\n\
+  }]\n\
+}\n\
+```",
+    params(
+        ("subscribe" = Option<String>, Query, description = "Initial subscription mode: 'all', 'self', or 'none'"),
+        ("sendCachedValues" = Option<String>, Query, description = "Send cached values on connect: 'true' or 'false'")
+    ),
+    responses(
+        (status = 101, description = "Switching Protocols - WebSocket connection established")
+    ),
+    tag = "Stream"
+)]
+#[allow(dead_code)]
+async fn control_stream_docs() {}
 
 async fn control_stream_handler(
     State(state): State<Web>,

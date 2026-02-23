@@ -28,6 +28,8 @@ use utoipa::ToSchema;
 mod axum_fix;
 mod signalk;
 
+pub use signalk::v2::generate_openapi_json;
+
 use axum_fix::{Message, WebSocket, WebSocketUpgrade};
 use mayara::{
     Cli, InterfaceApi, PACKAGE, VERSION,

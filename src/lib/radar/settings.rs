@@ -1555,35 +1555,61 @@ impl ControlValue {
     }
 }
 
-// This is the represenation of a control value used by the Signal K (web) services
-// It is the same as the V1 ControlValue but it contains a path instead of just a
-// control Id.
-#[derive(Deserialize, Serialize, Clone, Debug)]
+/// Client-to-server message to set a radar control value via WebSocket stream.
+///
+/// Used in the `/signalk/v1/stream` WebSocket to send control commands.
+/// The path identifies which radar and control to modify.
+#[derive(Deserialize, Serialize, Clone, Debug, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(example = json!({
+    "path": "radars.nav1034A.controls.gain",
+    "value": 50
+}))]
 pub struct RadarControlValue {
     #[serde(skip)]
+    #[schema(ignore)]
     pub radar_id: Option<String>,
     #[serde(skip)]
+    #[schema(ignore)]
     pub control_id: Option<ControlId>,
-    pub path: String, // "radars.{id}.controls.{control_id}"
+    /// Full path to the control: "radars.{radarId}.controls.{controlId}"
+    #[schema(example = "radars.nav1034A.controls.gain")]
+    pub path: String,
+    /// The value to set (type depends on control: number, boolean, or string)
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Value, example = json!(50))]
     pub value: Option<serde_json::Value>,
+    /// Units for the value (e.g., "degrees", "meters")
     #[serde(skip_serializing)]
+    #[schema(ignore)]
     pub units: Option<Units>,
+    /// Enable/disable automatic mode for controls that support it
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = false)]
     pub auto: Option<bool>,
+    /// Current auto-computed value (read-only, server-to-client only)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_value: Option<f64>,
+    /// End angle for guard zones (degrees)
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = 90.0)]
     pub end_value: Option<f64>,
+    /// Start distance for guard zones (meters)
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = 100.0)]
     pub start_distance: Option<f64>,
+    /// End distance for guard zones (meters)
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = 500.0)]
     pub end_distance: Option<f64>,
+    /// Enable/disable the control (for guard zones)
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = true)]
     pub enabled: Option<bool>,
+    /// Whether the control is currently allowed (read-only)
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub allowed: Option<bool>,
+    /// Error message if the control command failed (read-only)
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }

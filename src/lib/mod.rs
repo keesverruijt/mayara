@@ -90,6 +90,10 @@ pub struct Cli {
     /// Multi-radar mode keeps locators running even when one radar is found
     #[arg(long, default_value_t = false)]
     pub multiple_radar: bool,
+
+    /// Output OpenAPI specification to stdout and exit
+    #[arg(long, default_value_t = false)]
+    pub openapi: bool,
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Hash, ToSchema)]

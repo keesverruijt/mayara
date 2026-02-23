@@ -7,6 +7,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use strum::{EnumString, IntoEnumIterator, VariantNames};
+use utoipa::ToSchema;
 use wildmatch::WildMatch;
 
 use crate::{
@@ -15,8 +16,20 @@ use crate::{
     radar::{RadarError, SharedRadars},
 };
 
-#[derive(Serialize, Clone, Debug)]
+/// Server-to-client delta message containing control value updates
+#[derive(Serialize, Clone, Debug, ToSchema)]
+#[schema(example = json!({
+    "updates": [{
+        "$source": "mayara",
+        "timestamp": "2024-01-15T10:30:00Z",
+        "values": [
+            {"path": "radars.nav1034A.controls.gain", "value": 50},
+            {"path": "radars.nav1034A.controls.sea", "value": 30, "auto": true}
+        ]
+    }]
+}))]
 pub struct SignalKDelta {
+    /// Array of update batches, each containing changed control values
     updates: Vec<DeltaUpdate>,
 }
 
@@ -91,25 +104,37 @@ impl SignalKDelta {
     }
 }
 
-#[derive(Serialize, Clone, Debug)]
+/// A batch of control value updates within a SignalKDelta message
+#[derive(Serialize, Clone, Debug, ToSchema)]
 struct DeltaUpdate {
+    /// Source identifier (always "mayara")
     #[serde(
         rename = "$source",
         skip_deserializing,
         skip_serializing_if = "Option::is_none"
     )]
+    #[schema(example = "mayara")]
     source: Option<String>,
+    /// ISO 8601 timestamp when the update was generated
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = String, example = "2024-01-15T10:30:00Z")]
     timestamp: Option<DateTime<Utc>>,
+    /// Control metadata (schema definitions, sent once per radar)
     #[serde(skip_serializing_if = "Vec::is_empty")]
     meta: Vec<DeltaMeta>,
+    /// Control value changes
     #[serde(skip_serializing_if = "Vec::is_empty")]
     values: Vec<DeltaValue>,
 }
 
-#[derive(Serialize, Clone, Debug)]
+/// A single control value update
+#[derive(Serialize, Clone, Debug, ToSchema)]
+#[schema(example = json!({"path": "radars.nav1034A.controls.gain", "value": 50}))]
 struct DeltaValue {
+    /// Full path to the control (e.g., "radars.nav1034A.controls.gain")
+    #[schema(example = "radars.nav1034A.controls.gain")]
     path: String,
+    /// The control value
     value: BareControlValue,
 }
 
@@ -134,9 +159,13 @@ impl DeltaUpdate {
     }
 }
 
-#[derive(Serialize, Clone, Debug)]
+/// Control metadata containing schema definitions
+#[derive(Serialize, Clone, Debug, ToSchema)]
 pub struct DeltaMeta {
+    /// Full path to the control
+    #[schema(example = "radars.nav1034A.controls.gain")]
     path: String,
+    /// Control definition including type, range, and valid values
     value: ControlDefinition,
 }
 
@@ -427,33 +456,62 @@ fn extract_path(mut path: &str) -> (&str, &str) {
     ("*", path)
 }
 
-#[derive(Deserialize, Debug, Serialize)]
+/// Client-to-server message to subscribe to control value updates
+#[derive(Deserialize, Debug, Serialize, ToSchema)]
+#[schema(example = json!({
+    "subscribe": [
+        {"path": "radars.*.controls.*", "period": 1000},
+        {"path": "radars.nav1034A.controls.gain", "policy": "instant"}
+    ]
+}))]
 pub struct Subscription {
+    /// List of path subscriptions
     subscribe: Vec<PathSubscribe>,
 }
 
-#[derive(Deserialize, Debug)]
+/// Client-to-server message to unsubscribe from control value updates
+#[derive(Deserialize, Debug, ToSchema)]
+#[schema(example = json!({
+    "desubscribe": [{"path": "radars.*.controls.gain"}]
+}))]
 pub struct Desubscription {
+    /// List of paths to unsubscribe from
     desubscribe: Vec<PathSubscribe>,
 }
 
-#[derive(Deserialize, Debug, Clone, Serialize)]
-#[serde(rename = "camelCase")]
-struct PathSubscribe {
+/// A single path subscription specification
+#[derive(Deserialize, Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PathSubscribe {
+    /// Path pattern to subscribe to. Supports wildcards:
+    /// - `radars.*.controls.*` - all controls on all radars
+    /// - `radars.nav1034A.controls.gain` - specific control
+    /// - `*.gain` - gain control on all radars
+    #[schema(example = "radars.*.controls.*")]
     path: String,
+    /// Update period in milliseconds (for fixed policy)
+    #[schema(example = 1000)]
     period: Option<u64>,
+    /// Delivery policy: instant (immediate), ideal (rate-limited), fixed (periodic)
     #[serde(default, deserialize_with = "deserialize_policy")]
     policy: Option<Policy>,
+    /// Minimum period between updates in milliseconds
+    #[schema(example = 200)]
     min_period: Option<u64>,
     #[serde(skip)]
+    #[schema(ignore)]
     last_sent: Option<SystemTime>,
 }
 
-#[derive(Clone, Serialize, PartialEq, Debug, EnumString, VariantNames)]
+/// Subscription delivery policy
+#[derive(Clone, Serialize, PartialEq, Debug, EnumString, VariantNames, ToSchema)]
 #[strum(serialize_all = "camelCase")]
 pub enum Policy {
+    /// Send updates immediately when values change
     Instant,
+    /// Rate-limit updates to minPeriod
     Ideal,
+    /// Send updates at fixed intervals (period)
     Fixed,
 }
 
