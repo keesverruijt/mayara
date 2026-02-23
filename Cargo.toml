@@ -81,12 +81,12 @@ tokio-util = "0.7.13"
 tower = "0.5.2"
 tower-http = { version = "0.6", features = ["trace"] }
 tungstenite = { git = "https://github.com/keesverruijt/tungstenite-rs.git", branch = "permessage-deflate", features = [ "deflate" ] }
-axum-openapi3 = "0.2.1"
 itoa = "1.0.17"
-utoipa = "5.4.0"
+utoipa = { version = "5", features = ["macros", "axum_extras", "chrono", "time", "url", "repr" ] }
 serde_string_enum = "0.2.1"
 unicase = "2.9.0"
 wildmatch = "2.6.1"
+utoipa-swagger-ui = { version = "9.0.2", features = ["url", "axum"] }
 # tungstenite = { path = "../tungstenite-rs", features = [ "handshake", "deflate" ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

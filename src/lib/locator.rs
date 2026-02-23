@@ -20,7 +20,7 @@ use tokio_graceful_shutdown::SubsystemHandle;
 
 use crate::brand::{LocatorId, RadarLocator, create_brand_listeners};
 use crate::radar::{RadarError, SharedRadars};
-use crate::{Brand, Cli, InterfaceApi, InterfaceId, RadarInterfaceApi, network};
+use crate::{Brand, Cli, InterfaceApi, InterfaceId, InterfaceStatus, RadarInterfaceApi, network};
 
 const LOCATOR_PACKET_BUFFER_LEN: usize = 300; // Long enough for any location packet
 
@@ -305,7 +305,7 @@ impl Locator {
                                     if_api.insert(
                                         InterfaceId::new(&itf.name),
                                         RadarInterfaceApi::new(
-                                            Some("Wireless ignored".to_owned()),
+                                            InterfaceStatus::WirelessIgnored,
                                             Some(nic_ip),
                                             Some(nic_netmask),
                                             None,
@@ -402,7 +402,7 @@ impl Locator {
                                 if_api.insert(
                                     InterfaceId::new(&itf.name),
                                     RadarInterfaceApi::new(
-                                        None,
+                                        InterfaceStatus::Ok,
                                         Some(nic_ip),
                                         Some(nic_netmask),
                                         Some(listeners),
@@ -439,7 +439,7 @@ impl Locator {
                         if_api.insert(
                             InterfaceId::new(&itf.name),
                             RadarInterfaceApi::new(
-                                Some("No IPv4 address".to_owned()),
+                                InterfaceStatus::NoIPv4Address,
                                 None,
                                 None,
                                 None,

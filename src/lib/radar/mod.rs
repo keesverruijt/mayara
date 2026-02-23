@@ -16,6 +16,7 @@ use std::{
 use thiserror::Error;
 use tokio::sync::broadcast;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
+use utoipa::ToSchema;
 
 pub mod range;
 pub mod settings;
@@ -103,7 +104,7 @@ impl IntoResponse for RadarError {
 //
 // This order of pixeltypes is also how they are stored in the legend.
 //
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Clone, Debug, ToSchema)]
 #[serde(rename_all = "camelCase")]
 enum PixelType {
     Normal,
@@ -113,7 +114,7 @@ enum PixelType {
     History,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, ToSchema)]
 struct Color {
     r: u8,
     g: u8,
@@ -140,13 +141,13 @@ impl Serialize for Color {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct Lookup {
     r#type: PixelType,
     color: Color,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Legend {
     pub doppler_approaching: Option<u8>,

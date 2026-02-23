@@ -1159,7 +1159,11 @@ function connectStateStream(streamUrl, radarIdParam) {
   stateWebSocket.onopen = () => {
     console.log("State stream connected");
     reconnectAttempts = 0;
+    // Power state will be updated when we receive the first control values
   };
+
+  // Set power to off while connecting
+  notifyPowerOff();
 
   stateWebSocket.onmessage = (event) => {
     try {
@@ -1237,11 +1241,13 @@ function connectStateStream(streamUrl, radarIdParam) {
 
   stateWebSocket.onerror = (error) => {
     console.error("State stream error:", error);
+    notifyPowerOff();
   };
 
   stateWebSocket.onclose = () => {
     console.log("State stream closed");
     stateWebSocket = null;
+    notifyPowerOff();
 
     reconnectAttempts++;
     const delay = Math.min(
@@ -1266,6 +1272,27 @@ function disconnectStateStream() {
     stateWebSocket = null;
   }
   reconnectAttempts = 0;
+}
+
+/**
+ * Notify callbacks that power is off (stream disconnected/error)
+ */
+function notifyPowerOff() {
+  // Create a synthetic power control value indicating "off" state
+  // Power value 0 typically means "off" in the radar control system
+  const powerControl = myr_capabilities?.controls?.power;
+  if (powerControl) {
+    // Find the "off" value - typically 0 or the first validValue
+    const offValue = powerControl.validValues?.[0] ?? 0;
+    controlCallbacks.forEach((cb) => {
+      cb("power", { id: "power", value: offValue });
+    });
+  } else {
+    // If no power control defined yet, just notify with value 0
+    controlCallbacks.forEach((cb) => {
+      cb("power", { id: "power", value: 0 });
+    });
+  }
 }
 
 // ============================================================================

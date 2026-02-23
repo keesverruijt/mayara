@@ -11,6 +11,7 @@ use std::{
 };
 use tokio::sync::{broadcast, mpsc};
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
+use utoipa::ToSchema;
 
 pub mod brand;
 pub mod config;
@@ -91,7 +92,7 @@ pub struct Cli {
     pub multiple_radar: bool,
 }
 
-#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Hash, ToSchema)]
 pub enum Brand {
     Furuno,
     Garmin,
@@ -147,32 +148,80 @@ impl std::fmt::Display for Brand {
     }
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, ToSchema)]
+enum InterfaceStatus {
+    Ok,
+    NoIPv4Address,
+    WirelessIgnored,
+}
+
+/// Information about a network interface and its radar listeners
+#[derive(Serialize, Clone, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(example = json!({
+    "ip": "192.168.1.100",
+    "netmask": "255.255.255.0",
+    "listeners": {
+        "Furuno": "No match for 172.31.255.255",
+        "Navico": "Active",
+        "Raymarine": "Listening"
+    }
+}))]
 struct RadarInterfaceApi {
+    // Interface status: null (ok), "No IPv4 address" or "Wireless ignored"
+    status: InterfaceStatus,
+    /// IPv4 address assigned to this interface
     #[serde(skip_serializing_if = "Option::is_none")]
-    status: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, example = "192.168.1.100")]
     ip: Option<Ipv4Addr>,
+    /// Network mask for this interface
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, example = "255.255.255.0")]
     netmask: Option<Ipv4Addr>,
+    /// Map of radar brand to listener status message
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<HashMap<String, String>>, example = json!({"Navico": "Active"}))]
     listeners: Option<HashMap<Brand, String>>,
 }
 
-#[derive(Clone, Eq, PartialEq, Hash)]
+/// Network interface identifier (e.g., "en0", "eth0")
+#[derive(Clone, Eq, PartialEq, Hash, ToSchema)]
+#[schema(as = String, example = "en0")]
 struct InterfaceId {
     name: String,
 }
-#[derive(Serialize, Clone)]
+
+/// API response containing network interface information for radar detection
+#[derive(Serialize, Clone, ToSchema)]
+#[schema(example = json!({
+    "brands": ["Navico", "Furuno"],
+    "interfaces": {
+        "en0": {
+            "status": "up",
+            "ip": "192.168.1.100",
+            "netmask": "255.255.255.0",
+            "listeners": {
+                "Navico": "Active",
+                "Furuno": "No match for 172.31.255.255"
+            }
+        },
+        "en1": {
+            "status": "Wireless ignored"
+        }
+    }
+}))]
 pub struct InterfaceApi {
+    /// Set of radar brands that have been compiled into this server
+    #[schema(example = json!(["Navico", "Furuno"]))]
     brands: HashSet<Brand>,
+    /// Map of network interface name to its radar listener information
+    #[schema(value_type = HashMap<String, RadarInterfaceApi>)]
     interfaces: HashMap<InterfaceId, RadarInterfaceApi>,
 }
 
 impl RadarInterfaceApi {
     fn new(
-        status: Option<String>,
+        status: InterfaceStatus,
         ip: Option<Ipv4Addr>,
         netmask: Option<Ipv4Addr>,
         listeners: Option<HashMap<Brand, String>>,

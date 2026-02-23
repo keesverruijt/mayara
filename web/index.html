@@ -4,9 +4,39 @@
     <title>Mayara - Marine Yacht Radar server</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta http-equiv="refresh" content="0; url=/gui/index.html" />
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            max-width: 600px;
+            margin: 40px auto;
+            padding: 0 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #333;
+        }
+        ul {
+            list-style: none;
+            padding: 0;
+        }
+        li {
+            margin: 10px 0;
+        }
+        a {
+            color: #0066cc;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
 </head>
 <body>
-    <p>Redirecting to <a href="/gui/index.html">GUI</a>...</p>
+    <h1>Mayara - Marine Yacht Radar server</h1>
+    <ul>
+        <li><a href="/gui/index.html">Radar Display</a></li>
+        <li><a href="/swagger-ui/">API Documentation (Swagger UI)</a></li>
+        <li><a href="/signalk/v2/api/vessels/self/radars/resources/openapi.json">OpenAPI Specification (JSON)</a></li>
+    </ul>
 </body>
 </html>

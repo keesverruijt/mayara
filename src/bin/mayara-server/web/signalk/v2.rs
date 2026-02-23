@@ -5,15 +5,6 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use axum_openapi3::{
-    AddRoute,      // `add` method for Router to add routes also to the openapi spec
-    build_openapi, // function for building the openapi spec
-    endpoint,      // function for cleaning the openapi cache (mostly used for testing)
-    utoipa::{
-        ToSchema,
-        openapi::{InfoBuilder, OpenApiBuilder},
-    },
-};
 use chrono::{DateTime, Utc};
 use futures::SinkExt;
 use http::StatusCode;
@@ -30,13 +21,19 @@ use tokio::sync::{
     broadcast::{self},
     mpsc,
 };
+use utoipa::OpenApi;
+use utoipa::ToSchema;
+use utoipa_swagger_ui::{Config as SwaggerConfig, SwaggerUi};
 
 use crate::web::spokes_handler;
 
 use super::super::{Message, Web, WebSocket, WebSocketUpgrade};
 use mayara::{
-    radar::settings::{BareControlValue, Control, ControlId, ControlValue, RadarControlValue},
-    radar::{Legend, RadarError, RadarInfo, SharedRadars},
+    InterfaceApi,
+    radar::{
+        Legend, RadarError, RadarInfo, SharedRadars,
+        settings::{BareControlValue, Control, ControlId, ControlValue, RadarControlValue},
+    },
     stream::{ActiveSubscriptions, Desubscription, SignalKDelta, Subscribe, Subscription},
 };
 
@@ -45,49 +42,138 @@ const VERSION: &str = mayara::VERSION;
 pub(crate) const BASE_URI: &str = "/signalk/v2/api/vessels/self/radars";
 pub(crate) const CONTROL_URI: &str = "/signalk/v2/api/vessels/self/radars/stream";
 pub(crate) const SPOKES_URI: &str = "/signalk/v2/api/vessels/self/radars/{id}/spokes"; // plus radar_id
+const OPENAPI_URI: &str = "/signalk/v2/api/vessels/self/radars/resources/openapi.json";
+const RADAR_CAPABILITIES_URI: &str = "/signalk/v2/api/vessels/self/radars/{radar_id}/capabilities";
+const INTERFACES_URI: &str = "/signalk/v2/api/vessels/self/radars/interfaces";
+const RADAR_CONTROLS_URI: &str = "/signalk/v2/api/vessels/self/radars/{radar_id}/controls";
+const RADAR_CONTROL_URI: &str =
+    "/signalk/v2/api/vessels/self/radars/{radar_id}/controls/{control_id}";
+
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "Mayara Radar API",
+        version = "2.0.0",
+        description = "REST API for controlling marine radars. Supports Navico (Simrad, B&G, Lowrance), \
+                       Furuno, and Raymarine radar systems. Provides endpoints for discovering radars, \
+                       reading and setting control values, and accessing radar data via WebSocket streams."
+    ),
+    tags(
+        (name = "Radars", description = "Radar discovery and capabilities"),
+        (name = "Controls", description = "Read and modify radar control settings"),
+        (name = "Configuration", description = "Server and network configuration")
+    ),
+    paths(
+        get_radars,
+        get_interfaces,
+        get_radar,
+        get_control_values,
+        get_control_value,
+        set_control_value,
+    ),
+    components(schemas(
+        RadarControlIdParam,
+        FullSignalKResponse,
+        RadarsResponse,
+        RadarApiV3,
+        RadarInterfaces,
+        Interfaces,
+        Capabilities,
+        BareControlValue
+    ))
+)]
+struct ApiDoc;
 
 pub(crate) fn routes(axum: axum::Router<Web>) -> axum::Router<Web> {
-    axum.add(get_radars())
-        .add(get_interfaces())
+    axum.route(BASE_URI, get(get_radars))
+        .route(INTERFACES_URI, get(get_interfaces))
         .route(CONTROL_URI, get(control_stream_handler))
         .route(SPOKES_URI, get(spokes_handler))
-        .add(get_radar())
-        .add(get_control_values())
-        .add(get_control_value())
-        .add(set_control_value())
-        .add(openapi())
+        .route(RADAR_CAPABILITIES_URI, get(get_radar))
+        .route(RADAR_CONTROLS_URI, get(get_control_values))
+        .route(
+            RADAR_CONTROL_URI,
+            get(get_control_value).put(set_control_value),
+        )
+        .route(OPENAPI_URI, get(openapi_json))
+        .merge(SwaggerUi::new("/swagger-ui").config(SwaggerConfig::new([OPENAPI_URI])))
 }
 
-#[endpoint(
-    method = "GET",
-    path = "/signalk/v2/api/vessels/self/radars/resources/openapi.json",
-    description = "OpenAPI spec"
-)]
-async fn openapi(State(_state): State<Web>) -> impl IntoResponse {
-    // `build_openapi` caches the openapi spec, so it's not necessary to call it every time
-    let openapi = build_openapi(|| {
-        OpenApiBuilder::new().info(InfoBuilder::new().title(PROVIDER).version(VERSION))
-    });
-
-    Json(openapi)
+async fn openapi_json() -> impl IntoResponse {
+    let spec = ApiDoc::openapi();
+    let json = serde_json::to_string_pretty(&spec).unwrap();
+    (
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        json,
+    )
 }
 
-#[derive(Serialize)]
+/// Information about a detected radar, including WebSocket URLs for data streams
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(example = json!({
+    "name": "HALO 034A",
+    "brand": "Navico",
+    "model": "HALO",
+    "spokeDataUrl": "ws://192.168.1.100:8080/signalk/v2/api/vessels/self/radars/nav1034A/spokes",
+    "streamUrl": "ws://192.168.1.100:8080/signalk/v2/api/vessels/self/radars/stream",
+    "radarIpAddress": "192.168.1.50"
+}))]
 struct RadarApiV3 {
+    /// User-defined name or auto-detected model name
+    #[schema(example = "HALO 034A")]
     name: String,
+    /// Radar manufacturer brand (Navico, Furuno, Raymarine, Garmin)
+    #[schema(example = "Navico")]
     brand: String,
+    /// Radar model name if detected
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = "HALO")]
     model: Option<String>,
+    /// WebSocket URL for receiving raw radar spoke data (binary)
+    #[schema(
+        example = "ws://192.168.1.100:8080/signalk/v2/api/vessels/self/radars/nav1034A/spokes"
+    )]
     spoke_data_url: String,
+    /// WebSocket URL for Signal K control stream (JSON)
+    #[schema(example = "ws://192.168.1.100:8080/signalk/v2/api/vessels/self/radars/stream")]
     stream_url: String,
+    /// IP address of the radar unit on the network
+    #[schema(value_type = String, example = "192.168.1.50")]
     radar_ip_address: Ipv4Addr,
 }
 
-#[endpoint(
-    method = "GET",
+/// Response containing all active radars keyed by radar ID
+#[derive(Serialize, ToSchema)]
+#[schema(example = json!({
+    "version": "3.0.0",
+    "radars": {
+        "nav1034A": {
+            "name": "HALO 034A",
+            "brand": "Navico",
+            "model": "HALO",
+            "spokeDataUrl": "ws://192.168.1.100:8080/signalk/v2/api/vessels/self/radars/nav1034A/spokes",
+            "streamUrl": "ws://192.168.1.100:8080/signalk/v2/api/vessels/self/radars/stream",
+            "radarIpAddress": "192.168.1.50"
+        }
+    }
+}))]
+struct RadarsResponse {
+    version: &'static str,
+    #[schema(value_type = HashMap<String, RadarApiV3>)]
+    radars: Value,
+}
+
+#[utoipa::path(
+    get,
     path = "/signalk/v2/api/vessels/self/radars",
-    description = "Get all radars that have been detected and are online"
+    summary = "List all active radars",
+    description = "Returns all radars that have been detected on the network and are currently online. \
+                   Each radar entry includes WebSocket URLs for accessing spoke data and control streams.",
+    responses(
+        (status = 200, body = RadarsResponse, description = "Map of radar IDs to radar information")
+    ),
+    tag = "Radars"
 )]
 async fn get_radars(
     State(state): State<Web>,
@@ -129,10 +215,46 @@ async fn get_radars(
     wrap_response(api).into_response()
 }
 
-#[endpoint(
-    method = "GET",
+/// Wrapper for radar interface information following Signal K structure
+#[derive(Serialize, ToSchema)]
+#[schema(example = json!({
+    "radars": {
+        "interfaces": {
+            "brands": ["Navico", "Furuno", "Raymarine"],
+            "interfaces": {
+                "en0": {
+                    "ip": "192.168.1.100",
+                    "netmask": "255.255.255.0",
+                    "listeners": {
+                        "Furuno": "No match for 172.31.255.255",
+                        "Navico": "Active",
+                        "Raymarine": "Listening"
+                    }
+                }
+            }
+        }
+    }
+}))]
+struct RadarInterfaces {
+    radars: Interfaces,
+}
+
+/// Container for interface API data
+#[derive(Serialize, ToSchema)]
+struct Interfaces {
+    interfaces: InterfaceApi,
+}
+
+#[utoipa::path(
+    get,
     path = "/signalk/v2/api/vessels/self/radars/interfaces",
-    description = "Get information which network interfaces are usable by which radar brand"
+    summary = "List network interfaces",
+    description = "Returns information about which network interfaces are available and which radar brands \
+                   are listening on each interface. Useful for diagnosing network configuration issues.",
+    responses(
+        (status = 200, body = RadarInterfaces, description = "Network interface status for each radar brand")
+    ),
+    tag = "Configuration"
 )]
 async fn get_interfaces(
     State(state): State<Web>,
@@ -149,25 +271,74 @@ async fn get_interfaces(
     let (tx, mut rx) = mpsc::channel(1);
     state.tx_interface_request.send(Some(tx)).unwrap();
     match rx.recv().await {
-        Some(api) => wrap_response(wrap("interfaces", api)).into_response(),
+        Some(api) => wrap_response(RadarInterfaces {
+            radars: Interfaces { interfaces: api },
+        })
+        .into_response(),
         _ => Json(Vec::<String>::new()).into_response(),
     }
 }
 
-#[derive(Serialize)]
+/// Static capabilities and configuration of a radar unit
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(example = json!({
+    "maxRange": 74080,
+    "minRange": 50,
+    "supportedRanges": [50, 75, 100, 250, 500, 750, 1000, 1500, 2000, 3000, 4000, 6000, 8000, 12000, 16000, 24000, 36000, 48000, 64000, 74080],
+    "spokesPerRevolution": 2048,
+    "maxSpokeLength": 1024,
+    "pixelValues": 16,
+    "legend": {
+        "dopplerApproaching": 18,
+        "dopplerReceding": 19,
+        "historyStart": 20,
+        "lowReturn": 1,
+        "mediumReturn": 8,
+        "strongReturn": 13,
+        "targetBorder": 17,
+        "pixelColors": 16
+    },
+    "hasDoppler": true,
+    "hasDualRange": true,
+    "hasDualRadar": false,
+    "noTransmitSectors": 2,
+    "controls": {}
+}))]
 struct Capabilities {
+    /// Maximum supported range in meters
+    #[schema(example = 74080)]
     max_range: u32,
+    /// Minimum supported range in meters
+    #[schema(example = 50)]
     min_range: u32,
+    /// List of all supported range values in meters
+    #[schema(example = json!([50, 75, 100, 250, 500, 750, 1000, 1500, 2000, 3000]))]
     supported_ranges: Vec<u32>,
+    /// Number of spokes (radial lines) per full rotation
+    #[schema(example = 2048)]
     spokes_per_revolution: u16,
+    /// Maximum number of samples per spoke
+    #[schema(example = 1024)]
     max_spoke_length: u16,
+    /// Number of distinct pixel intensity values
+    #[schema(example = 16)]
     pixel_values: u8,
+    /// Color mapping legend for interpreting spoke data (pixel value to color/type mapping)
     legend: Legend,
+    /// Whether this radar supports Doppler velocity detection
+    #[schema(example = true)]
     has_doppler: bool,
+    /// Whether this radar supports simultaneous dual-range operation
+    #[schema(example = true)]
     has_dual_range: bool,
+    /// Whether this is part of a dual-radar system
+    #[schema(example = false)]
     has_dual_radar: bool,
+    /// Number of configurable no-transmit sectors
+    #[schema(example = 2)]
     no_transmit_sectors: u8,
+    /// Map of control IDs to their definitions and current state
     controls: HashMap<ControlId, Control>,
 }
 
@@ -206,10 +377,21 @@ impl Capabilities {
     }
 }
 
-#[endpoint(
-    method = "GET",
+#[utoipa::path(
+    get,
     path = "/signalk/v2/api/vessels/self/radars/{radar_id}/capabilities",
-    description = "Get all static information about a specific radar"
+    summary = "Get radar capabilities",
+    description = "Returns static information about a specific radar including supported ranges, \
+                   spoke resolution, Doppler support, and available controls. This information \
+                   does not change during radar operation.",
+    params(
+        ("radar_id" = String, Path, description = "Radar identifier (e.g., 'nav1034A')", example = "nav1034A")
+    ),
+    responses(
+        (status = 200, body = Capabilities, description = "Radar capabilities and control definitions"),
+        (status = 404, description = "Radar not found")
+    ),
+    tag = "Radars"
 )]
 async fn get_radar(
     Path(radar_id): Path<String>,
@@ -257,16 +439,36 @@ async fn get_radar(
 #[derive(Deserialize, ToSchema)]
 #[allow(dead_code)] // Instantiation hidden in extractor
 struct RadarControlIdParam {
+    /// Radar identifier (e.g., 'nav1034A')
+    #[schema(example = "nav1034A")]
     radar_id: String,
+    /// Control identifier (e.g., 'gain', 'range', 'sea')
+    #[schema(example = "gain")]
     control_id: String,
 }
 
-/// PUT /v2/api/vessels/self/radars/{radar_id}/controls/{control_id}
-/// Sets a control value on the radar
-#[endpoint(
-    method = "PUT",
+#[utoipa::path(
+    put,
     path = "/signalk/v2/api/vessels/self/radars/{radar_id}/controls/{control_id}",
-    description = "Set the value of a radar control"
+    summary = "Set a control value",
+    description = "Sets the value of a specific radar control. The request body varies by control type: \
+                   simple controls use 'value', controls with auto mode use 'value' and 'auto', \
+                   guard zones use 'value', 'endValue', 'startDistance', 'endDistance', and 'enabled'.",
+    params(
+        ("radar_id" = String, Path, description = "Radar identifier", example = "nav1034A"),
+        ("control_id" = String, Path, description = "Control identifier (e.g., gain, range, sea, guardZone1, ...)", example = "gain")
+    ),
+    request_body(
+        content = BareControlValue,
+        description = "Control value to set",
+        example = json!({"value": 50, "auto": false})
+    ),
+    responses(
+        (status = 200, description = "Control value set successfully"),
+        (status = 400, description = "Invalid control name or value out of range"),
+        (status = 404, description = "Radar not found")
+    ),
+    tag = "Controls"
 )]
 async fn set_control_value(
     Path(params): Path<RadarControlIdParam>,
@@ -313,17 +515,19 @@ async fn set_control_value(
     // Create a channel for the reply
     let (reply_tx, mut reply_rx) = tokio::sync::mpsc::channel(1);
 
-    // Check if this is a guard zone control before processing
-    let is_guard_zone = control_value.id == ControlId::GuardZone1
-        || control_value.id == ControlId::GuardZone2;
+    // Check if this control should trigger persistence save
+    let needs_persistence = matches!(
+        control_value.id,
+        ControlId::GuardZone1 | ControlId::GuardZone2 | ControlId::UserName
+    );
 
     // Send the control request
     if let Err(e) = controls.process_client_request(control_value, reply_tx) {
         return (StatusCode::BAD_REQUEST, e.to_string()).into_response();
     }
 
-    // Save persistence for guard zone controls
-    if is_guard_zone {
+    // Save persistence for controls that need it
+    if needs_persistence {
         state.radars.save_persistence(&radar_key);
     }
 
@@ -346,10 +550,21 @@ async fn set_control_value(
     StatusCode::OK.into_response()
 }
 
-#[endpoint(
-    method = "GET",
+#[utoipa::path(
+    get,
     path = "/signalk/v2/api/vessels/self/radars/{radar_id}/controls/{control_id}",
-    description = "Get the value of a radar control"
+    summary = "Get a control value",
+    description = "Returns the current value and state of a specific radar control.",
+    params(
+        ("radar_id" = String, Path, description = "Radar identifier", example = "nav1034A"),
+        ("control_id" = String, Path, description = "Control identifier", example = "Gain")
+    ),
+    responses(
+        (status = 200, body = BareControlValue, description = "Current control value and state"),
+        (status = 400, description = "Unknown control name"),
+        (status = 404, description = "Radar not found")
+    ),
+    tag = "Controls"
 )]
 async fn get_control_value(
     Path(params): Path<RadarControlIdParam>,
@@ -407,16 +622,42 @@ async fn get_control_value(
 //           "value": 4.32693662,
 //
 
+/// Signal K formatted response wrapper
 #[derive(Serialize, ToSchema)]
+#[schema(example = json!({
+    "version": "3.0.0",
+    "radars": {
+        "nav1034A": {
+            "controls": {
+                "gain": {"value": 50, "auto": false},
+                "sea": {"value": 30, "auto": true, "autoValue": 25, "allowed": true},
+                "range": {"value": 3000}
+            }
+        }
+    }
+}))]
 struct FullSignalKResponse {
+    /// API version
+    #[schema(example = "3.0.0")]
     version: &'static str,
+    /// Radar data nested by radar ID
     radars: Value,
 }
 
-#[endpoint(
-    method = "GET",
+#[utoipa::path(
+    get,
     path = "/signalk/v2/api/vessels/self/radars/{radar_id}/controls",
-    description = "Get the value of all radar controls for a radar"
+    summary = "Get all control values",
+    description = "Returns the current values of all radar controls for a specific radar. \
+                   Controls include settings like Gain, Sea, Rain, Range, and operational modes.",
+    params(
+        ("radar_id" = String, Path, description = "Radar identifier", example = "nav1034A")
+    ),
+    responses(
+        (status = 200, body = FullSignalKResponse, description = "All control values keyed by control name"),
+        (status = 404, description = "Radar not found")
+    ),
+    tag = "Controls"
 )]
 #[axum::debug_handler]
 async fn get_control_values(
@@ -786,10 +1027,12 @@ async fn handle_control_request(
                 .controls
                 .process_client_request(control_value.clone(), reply_tx);
 
-            // Save persistence for guard zone controls on success
+            // Save persistence for controls that need it
             if result.is_ok()
-                && (control_value.id == ControlId::GuardZone1
-                    || control_value.id == ControlId::GuardZone2)
+                && matches!(
+                    control_value.id,
+                    ControlId::GuardZone1 | ControlId::GuardZone2 | ControlId::UserName
+                )
             {
                 radars.save_persistence(&radar.key());
             }

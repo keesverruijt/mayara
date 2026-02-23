@@ -5,13 +5,6 @@ use axum::{
     routing::get,
 };
 use axum_embed::ServeEmbed;
-use axum_openapi3::utoipa::openapi::{InfoBuilder, OpenApiBuilder};
-// use axum_openapi3::utoipa::*; // Needed for ToSchema and IntoParams derive
-use axum_openapi3::{
-    build_openapi, // function for building the openapi spec
-    endpoint,      // macro for defining endpoints
-    reset_openapi, // function for cleaning the openapi cache (mostly used for testing)
-};
 use http::Uri;
 use log::{debug, trace};
 use miette::Result;
@@ -76,8 +69,6 @@ impl Web {
     }
 
     pub async fn run(self, subsys: SubsystemHandle) -> Result<(), WebError> {
-        reset_openapi(); // clean the openapi cache. Mostly used for testing
-
         let port = self.args.port.clone();
         let listener =
             TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port))
@@ -188,20 +179,6 @@ async fn endpoints(State(state): State<Web>, headers: hyper::header::HeaderMap) 
     );
 
     Json(endpoints)
-}
-
-#[endpoint(
-    method = "GET",
-    path = "/signalk/v2/api/vessels/self/radars/resource/openapi.json",
-    description = "OpenAPI spec"
-)]
-async fn openapi(State(_state): State<Web>) -> impl IntoResponse {
-    // `build_openapi` caches the openapi spec, so it's not necessary to call it every time
-    let openapi = build_openapi(|| {
-        OpenApiBuilder::new().info(InfoBuilder::new().title("mayara").version(VERSION))
-    });
-
-    Json(openapi)
 }
 
 #[derive(Deserialize)]

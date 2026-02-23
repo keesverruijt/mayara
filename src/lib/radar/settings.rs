@@ -59,6 +59,7 @@ pub fn get_api_version() -> ApiVersion {
     EnumString,
     IntoStaticStr,
     EnumCount,
+    ToSchema,
 )]
 #[repr(u8)]
 #[strum(ascii_case_insensitive, serialize_all = "camelCase")]
@@ -81,21 +82,21 @@ pub enum ControlId {
     // Scaling,
     Doppler,
     DopplerMode,
-    DopplerSpeedThreshold,
     // Client Only, not here: ColorPalette,
     // Client Only, not here: Orientation,
     // Client Only, not here: Position,
     // Client Only, not here: Symbology,
+    DopplerAutoTrack,
+    ClearTargets,
+    GuardZone1,
+    GuardZone2,
     TargetTrails,
     TrailsMotion,
     DopplerTrailsOnly,
     ClearTrails,
-    GuardZone1,
-    GuardZone2,
-    DopplerAutoTrack,
-    ClearTargets,
     // TimedIdle,
     // TimedRun,
+    DopplerSpeedThreshold,
     NoiseRejection,
     TargetBoost,
     TargetExpansion,
@@ -181,10 +182,13 @@ impl ControlId {
             | ControlId::SeaState
             | ControlId::Rain
             | ControlId::Doppler
-            | ControlId::DopplerMode
+            | ControlId::DopplerMode => Category::Base,
+            ControlId::DopplerAutoTrack | ControlId::ClearTargets => Category::Targets,
+            ControlId::GuardZone1 | ControlId::GuardZone2 => Category::GuardZones,
+            ControlId::DopplerTrailsOnly
             | ControlId::TargetTrails
-            | ControlId::ClearTargets
-            | ControlId::ClearTrails => Category::Base,
+            | ControlId::ClearTrails
+            | ControlId::TrailsMotion => Category::Trails,
             ControlId::AccentLight
             | ControlId::AntennaHeight
             | ControlId::BearingAlignment
@@ -193,7 +197,8 @@ impl ControlId {
             | ControlId::NoTransmitSector3
             | ControlId::NoTransmitSector4
             | ControlId::RangeUnits => Category::Installation,
-            ControlId::ModelName
+            ControlId::UserName
+            | ControlId::ModelName
             | ControlId::WarmupTime
             | ControlId::FirmwareVersion
             | ControlId::OperatingTime
@@ -204,7 +209,21 @@ impl ControlId {
             | ControlId::SignalStrength
             | ControlId::Spokes
             | ControlId::SpokeLength => Category::Info,
-            _ => Category::Advanced,
+            ControlId::NoiseRejection
+            | ControlId::TargetBoost
+            | ControlId::TargetExpansion
+            | ControlId::InterferenceRejection
+            | ControlId::TargetSeparation
+            | ControlId::LocalInterferenceRejection
+            | ControlId::ScanSpeed
+            | ControlId::SideLobeSuppression
+            | ControlId::Tune
+            | ControlId::Ftc
+            | ControlId::MainBangSuppression
+            | ControlId::SeaClutterCurve
+            | ControlId::DisplayTiming
+            | ControlId::SpokeProcessing
+            | ControlId::DopplerSpeedThreshold => Category::Advanced,
         }
     }
 
@@ -730,6 +749,18 @@ impl SharedControls {
         Ok((cv_units, cv_value))
     }
 
+    fn convert_f64_to_wire(
+        cv_units: Option<Units>,
+        cv_value: Option<f64>,
+        control: &Control,
+    ) -> Result<Option<f64>, RadarError> {
+        let value_as_value = cv_value
+            .and_then(|v| Number::from_f64(v))
+            .map(Value::Number);
+        let (_, result) = Self::convert_to_wire_number(cv_units, value_as_value, control)?;
+        Ok(result.and_then(|v| v.as_f64()))
+    }
+
     // process_client_request()
     //
     // In theory this could be from anywhere that somebody holds a SharedControls reference,
@@ -749,13 +780,10 @@ impl SharedControls {
                 let cv_orig = control_value.clone();
                 let (units, value) =
                     Self::convert_to_wire_number(control_value.units, control_value.value, &c)?;
-                let (_, end_value) =
-                    Self::convert_to_wire_number(control_value.units, control_value.end_value, &c)?;
-                let (_, auto_value) = Self::convert_to_wire_number(
-                    control_value.units,
-                    control_value.auto_value,
-                    &c,
-                )?;
+                let end_value =
+                    Self::convert_f64_to_wire(control_value.units, control_value.end_value, &c)?;
+                let auto_value =
+                    Self::convert_f64_to_wire(control_value.units, control_value.auto_value, &c)?;
                 let cv = ControlValue {
                     units,
                     value,
@@ -773,13 +801,21 @@ impl SharedControls {
                     ControlDestination::Internal => {
                         // Handle zone controls specially - they have multiple values
                         if c.item.data_type == ControlDataType::Zone {
-                            let start_angle = cv.value.as_ref().and_then(|v| v.as_f64()).unwrap_or(0.0);
-                            let end_angle = cv.end_value.as_ref().and_then(|v| v.as_f64()).unwrap_or(0.0);
-                            let start_distance = cv.start_distance.as_ref().and_then(|v| v.as_f64()).unwrap_or(0.0);
-                            let end_distance = cv.end_distance.as_ref().and_then(|v| v.as_f64()).unwrap_or(0.0);
-                            self.set_zone(&cv.id, start_angle, end_angle, start_distance, end_distance, cv.enabled)
-                                .map(|_| ())
-                                .map_err(|e| RadarError::ControlError(e))
+                            let start_angle =
+                                cv.value.as_ref().and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            let end_angle = cv.end_value.unwrap_or(0.0);
+                            let start_distance = cv.start_distance.unwrap_or(0.0);
+                            let end_distance = cv.end_distance.unwrap_or(0.0);
+                            self.set_zone(
+                                &cv.id,
+                                start_angle,
+                                end_angle,
+                                start_distance,
+                                end_distance,
+                                cv.enabled,
+                            )
+                            .map(|_| ())
+                            .map_err(|e| RadarError::ControlError(e))
                         } else if let Some(value) = cv.value {
                             self.set_value(&cv.id, value)
                                 .map(|_| ())
@@ -1229,7 +1265,13 @@ impl SharedControls {
             let mut locked = self.controls.write().unwrap();
             if let Some(control) = locked.controls.get_mut(control_id) {
                 Ok(control
-                    .set_zone(start_angle, end_angle, start_distance, end_distance, enabled)?
+                    .set_zone(
+                        start_angle,
+                        end_angle,
+                        start_distance,
+                        end_distance,
+                        enabled,
+                    )?
                     .map(|_| control.clone()))
             } else {
                 Err(ControlError::NotSupported(*control_id))
@@ -1390,13 +1432,13 @@ pub struct ControlValue {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub auto_value: Option<serde_json::Value>,
+    pub auto_value: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub end_value: Option<serde_json::Value>,
+    pub end_value: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub start_distance: Option<serde_json::Value>,
+    pub start_distance: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub end_distance: Option<serde_json::Value>,
+    pub end_distance: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
@@ -1503,34 +1545,13 @@ impl ControlValue {
     }
 
     pub fn auto_as_f64(&self) -> Result<f64, RadarError> {
-        if let Some(value) = &self.auto_value {
-            match value {
-                Value::String(s) => {
-                    // TODO enum style
-                    s.parse::<f64>().map_err(|_| RadarError::EnumerationFailed)
-                }
-                Value::Bool(b) => Ok(if *b { 1. } else { 0. }),
-                Value::Number(n) => n.as_f64().ok_or(RadarError::EnumerationFailed),
-                _ => Err(RadarError::EnumerationFailed),
-            }
-            .map_err(|_| RadarError::CannotSetControlId(self.id))
-        } else {
-            Err(RadarError::CannotSetControlId(self.id))
-        }
+        self.auto_value
+            .ok_or(RadarError::CannotSetControlId(self.id))
     }
 
     pub fn end_as_f64(&self) -> Result<f64, RadarError> {
-        if let Some(value) = &self.end_value {
-            match value {
-                Value::String(s) => s.parse::<f64>().map_err(|_| RadarError::EnumerationFailed),
-                Value::Bool(b) => Ok(if *b { 1. } else { 0. }),
-                Value::Number(n) => n.as_f64().ok_or(RadarError::EnumerationFailed),
-                _ => Err(RadarError::EnumerationFailed),
-            }
-            .map_err(|_| RadarError::CannotSetControlId(self.id))
-        } else {
-            Err(RadarError::CannotSetControlId(self.id))
-        }
+        self.end_value
+            .ok_or(RadarError::CannotSetControlId(self.id))
     }
 }
 
@@ -1552,13 +1573,13 @@ pub struct RadarControlValue {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub auto_value: Option<serde_json::Value>,
+    pub auto_value: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub end_value: Option<serde_json::Value>,
+    pub end_value: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub start_distance: Option<serde_json::Value>,
+    pub start_distance: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub end_distance: Option<serde_json::Value>,
+    pub end_distance: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
@@ -1621,28 +1642,61 @@ impl From<RadarControlValue> for ControlValue {
     }
 }
 
-// This is the represenation of a control value used by the Signal K REST API
+/// Radar control value used by the Signal K REST API
+///
+/// Different control types use different fields:
+/// - Simple controls: `value` (numeric or string)
+/// - Auto-capable controls: `value`, `auto`, possibly `autoValue`
+/// - sectors: `value` (angle start), `endValue` (angle end)
+/// - zones: `value` (angle start), `endValue` (angle end), `startDistance`, `endDistance`, `enabled`
+///
+/// Numeric controls may send `units` when not in SI and control definition
+/// has units specified.
+///
 #[derive(Deserialize, Serialize, Clone, Debug, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ControlValue, example = json!({
+    "value": 50,
+    "auto": false,
+    "allowed": true
+}))]
 pub struct BareControlValue {
+    /// The control value (numeric for most controls, string for some modes)
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = json!(50))]
     pub value: Option<serde_json::Value>,
+    /// Units for the value (internal use)
     #[serde(skip_serializing)]
     pub units: Option<Units>,
+    /// Whether automatic mode is enabled (for Gain, Sea, Rain, etc.)
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = false)]
     pub auto: Option<bool>,
+    /// Adjustment of the auto algorithm when auto=true
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub auto_value: Option<Value>,
+    #[schema(example = -5.0)]
+    pub auto_value: Option<f64>,
+    /// End angle for sector and zone (radians)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub end_value: Option<Value>,
+    #[schema(example = 0.78593)]
+    pub end_value: Option<f64>,
+    /// Inner radius for zones (meters)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub start_distance: Option<Value>,
+    #[schema(example = 100.0)]
+    pub start_distance: Option<f64>,
+    /// Outer radius for zones (meters)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub end_distance: Option<Value>,
+    #[schema(example = 500.0)]
+    pub end_distance: Option<f64>,
+    /// Whether the user has enabled the control
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = true)]
     pub enabled: Option<bool>,
+    /// Whether changing this control is currently allowed (read-only)
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
+    #[schema(example = true)]
     pub allowed: Option<bool>,
+    /// Error message if the control change failed (read-only)
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -2022,7 +2076,7 @@ pub(crate) fn new_zone(
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Control {
     #[serde(flatten)]
@@ -2112,6 +2166,10 @@ impl Control {
         }
     }
 
+    fn to_f64(&self, v: f64) -> Option<f64> {
+        Some(v)
+    }
+
     pub fn value(&self) -> Option<Value> {
         if self.item.data_type == ControlDataType::String {
             return self.description.clone().map(|v| Value::String(v));
@@ -2120,40 +2178,38 @@ impl Control {
         self.value.map(|v| self.to_number(v))
     }
 
-    pub fn auto_value(&self) -> Option<Value> {
+    pub fn auto_value(&self) -> Option<f64> {
         if self.item.data_type == ControlDataType::String {
             return None;
         }
 
-        self.auto_value.map(|v| self.to_number(v))
+        self.auto_value.and_then(|v| self.to_f64(v))
     }
 
-    pub fn end_value(&self) -> Option<Value> {
+    pub fn end_value(&self) -> Option<f64> {
         if self.item.data_type != ControlDataType::Sector
             && self.item.data_type != ControlDataType::Zone
         {
             return None;
         }
 
-        self.end_value.map(|v| self.to_number(v))
+        self.end_value.and_then(|v| self.to_f64(v))
     }
 
-    pub fn start_distance(&self) -> Option<Value> {
+    pub fn start_distance(&self) -> Option<f64> {
         if self.item.data_type != ControlDataType::Zone {
             return None;
         }
 
         self.start_distance
-            .map(|v| Value::Number(Number::from_f64(v).unwrap()))
     }
 
-    pub fn end_distance(&self) -> Option<Value> {
+    pub fn end_distance(&self) -> Option<f64> {
         if self.item.data_type != ControlDataType::Zone {
             return None;
         }
 
         self.end_distance
-            .map(|v| Value::Number(Number::from_f64(v).unwrap()))
     }
 
     pub(crate) fn auto_as_f64(&self) -> Option<f64> {
@@ -2542,7 +2598,7 @@ impl Control {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AutomaticValue {
     #[serde(skip_serializing_if = "is_false")]
@@ -2565,7 +2621,7 @@ pub(crate) const HAS_AUTO_NOT_ADJUSTABLE: AutomaticValue = AutomaticValue {
     auto_adjust_max_value: None,
 };
 
-#[derive(Clone, Debug, Serialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, PartialEq, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ControlDataType {
     Number,
@@ -2585,7 +2641,7 @@ pub(crate) enum ControlDestination {
     Target,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlDefinition {
     pub(crate) id: u8,
@@ -2686,10 +2742,13 @@ impl ControlDefinition {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum Category {
     Base,
+    Targets,
+    GuardZones,
+    Trails,
     Advanced,
     Installation,
     Info,

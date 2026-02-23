@@ -522,8 +522,12 @@ function radarLoaded(r) {
 
 function controlUpdate(controlId, value) {
   if (controlId === "power") {
-    const powerState =
-      getControl(controlId).descriptions[value.value].toLowerCase();
+    const control = getControl(controlId);
+    // Default to "off" if control not loaded yet or description not found
+    let powerState = "off";
+    if (control?.descriptions && value.value in control.descriptions) {
+      powerState = control.descriptions[value.value].toLowerCase();
+    }
     if (ppi) {
       const time = getOperatingTime();
       ppi.setPowerMode(powerState, time.onTime, time.txTime);
