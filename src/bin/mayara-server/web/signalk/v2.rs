@@ -40,7 +40,7 @@ use mayara::{
 const PROVIDER: &str = mayara::PACKAGE;
 const VERSION: &str = mayara::VERSION;
 pub(crate) const BASE_URI: &str = "/signalk/v2/api/vessels/self/radars";
-pub(crate) const CONTROL_URI: &str = "/signalk/v2/api/vessels/self/radars/stream";
+pub(crate) const CONTROL_URI: &str = "/signalk/v1/stream";
 pub(crate) const SPOKES_URI: &str = "/signalk/v2/api/vessels/self/radars/{id}/spokes"; // plus radar_id
 const OPENAPI_URI: &str = "/signalk/v2/api/vessels/self/radars/resources/openapi.json";
 const RADAR_CAPABILITIES_URI: &str = "/signalk/v2/api/vessels/self/radars/{radar_id}/capabilities";
@@ -271,10 +271,7 @@ async fn get_interfaces(
     let (tx, mut rx) = mpsc::channel(1);
     state.tx_interface_request.send(Some(tx)).unwrap();
     match rx.recv().await {
-        Some(api) => wrap_response(RadarInterfaces {
-            radars: Interfaces { interfaces: api },
-        })
-        .into_response(),
+        Some(api) => wrap_response(Interfaces { interfaces: api }).into_response(),
         _ => Json(Vec::<String>::new()).into_response(),
     }
 }

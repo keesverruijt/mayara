@@ -1,7 +1,13 @@
 import van from "./van-1.5.2.debug.js";
-import { fetchRadars, fetchInterfaces, isStandaloneMode, detectMode } from "./api.js";
+import {
+  fetchRadars,
+  fetchInterfaces,
+  isStandaloneMode,
+  detectMode,
+} from "./api.js";
 
-const { a, tr, td, div, p, strong, details, summary, code, br, span } = van.tags;
+const { a, tr, td, div, p, strong, details, summary, code, br, span, button } =
+  van.tags;
 
 // Global WebGPU availability flag
 let webGPUAvailable = false;
@@ -10,58 +16,63 @@ let webGPUAvailable = false;
 const NETWORK_REQUIREMENTS = {
   furuno: {
     ipRange: "172.31.x.x/16",
-    description: "Furuno DRS radars require the host to have an IP address in the 172.31.x.x range.",
+    description:
+      "Furuno DRS radars require the host to have an IP address in the 172.31.x.x range.",
     setup: [
       "Configure your network interface with an IP like 172.31.3.100/16",
       "Connect to the radar network (usually via ethernet)",
-      "Ensure no firewall blocks UDP ports 10010, 10024, 10021"
+      "Ensure no firewall blocks UDP ports 10010, 10024, 10021",
     ],
-    example: "ip addr add 172.31.3.100/16 dev eth1"
+    example: "ip addr add 172.31.3.100/16 dev eth1",
   },
   navico: {
     ipRange: "236.6.7.x (multicast)",
     description: "Navico (Simrad/Lowrance/B&G) radars use multicast.",
-    setup: ["Ensure your network supports multicast routing"]
+    setup: ["Ensure your network supports multicast routing"],
   },
   raymarine: {
     ipRange: "232.1.1.x (multicast)",
     description: "Raymarine radars use multicast.",
-    setup: ["Ensure your network supports multicast routing"]
+    setup: ["Ensure your network supports multicast routing"],
   },
   garmin: {
     ipRange: "239.254.2.x (multicast)",
     description: "Garmin xHD radars use multicast.",
-    setup: ["Ensure your network supports multicast routing"]
-  }
+    setup: ["Ensure your network supports multicast routing"],
+  },
 };
 
 // Detect operating system
 function detectOS() {
   const ua = navigator.userAgent.toLowerCase();
-  const platform = navigator.platform?.toLowerCase() || '';
+  const platform = navigator.platform?.toLowerCase() || "";
 
   // Check mobile/tablet FIRST (iPadOS reports as macOS in Safari)
-  if (ua.includes('iphone') || ua.includes('ipad')) return 'ios';
+  if (ua.includes("iphone") || ua.includes("ipad")) return "ios";
   // Also detect iPad via touch + macOS combination (iPadOS 13+ desktop mode)
-  if (navigator.maxTouchPoints > 1 && (ua.includes('mac') || platform.includes('mac'))) return 'ios';
-  if (ua.includes('android')) return 'android';
+  if (
+    navigator.maxTouchPoints > 1 &&
+    (ua.includes("mac") || platform.includes("mac"))
+  )
+    return "ios";
+  if (ua.includes("android")) return "android";
 
   // Desktop OS detection
-  if (ua.includes('win') || platform.includes('win')) return 'windows';
-  if (ua.includes('mac') || platform.includes('mac')) return 'macos';
-  if (ua.includes('linux') || platform.includes('linux')) return 'linux';
-  return 'unknown';
+  if (ua.includes("win") || platform.includes("win")) return "windows";
+  if (ua.includes("mac") || platform.includes("mac")) return "macos";
+  if (ua.includes("linux") || platform.includes("linux")) return "linux";
+  return "unknown";
 }
 
 // Detect browser
 function detectBrowser() {
   const ua = navigator.userAgent.toLowerCase();
 
-  if (ua.includes('edg/')) return 'edge';
-  if (ua.includes('chrome')) return 'chrome';
-  if (ua.includes('firefox')) return 'firefox';
-  if (ua.includes('safari') && !ua.includes('chrome')) return 'safari';
-  return 'unknown';
+  if (ua.includes("edg/")) return "edge";
+  if (ua.includes("chrome")) return "chrome";
+  if (ua.includes("firefox")) return "firefox";
+  if (ua.includes("safari") && !ua.includes("chrome")) return "safari";
+  return "unknown";
 }
 
 // Check if using a secure context
@@ -82,7 +93,7 @@ async function checkWebGPUSupport() {
         return true;
       }
     } catch (e) {
-      console.warn('WebGPU adapter request failed:', e);
+      console.warn("WebGPU adapter request failed:", e);
     }
   }
 
@@ -92,259 +103,336 @@ async function checkWebGPUSupport() {
 
 // Show WebGPU warning in the info section
 function showWebGPUWarning() {
-  const warningDiv = document.getElementById('webgpu_warning');
+  const warningDiv = document.getElementById("webgpu_warning");
   if (!warningDiv) return;
 
   const os = detectOS();
   const browser = detectBrowser();
   const isSecure = isSecureContext();
 
-  warningDiv.style.display = 'block';
-  warningDiv.innerHTML = '';
+  warningDiv.style.display = "block";
+  warningDiv.innerHTML = "";
 
-  const title = div({ class: 'myr_warning_title' }, 'WebGPU Not Available');
+  const title = div({ class: "myr_warning_title" }, "WebGPU Not Available");
   van.add(warningDiv, title);
 
-  van.add(warningDiv, p({ class: 'myr_warning_subtitle' },
-    'The preferred rendering method (WebGPU) is not available. Opening the display will use the alternate method (WebGL).'
-  ));
+  van.add(
+    warningDiv,
+    p(
+      { class: "myr_warning_subtitle" },
+      "The preferred rendering method (WebGPU) is not available. Opening the display will use the alternate method (WebGL)."
+    )
+  );
 
-  const content = div({ class: 'myr_warning_content' });
+  const content = div({ class: "myr_warning_content" });
   van.add(warningDiv, content);
 
   // Secure context warning (if not secure)
   if (!isSecure) {
     const hostname = window.location.hostname;
-    const port = window.location.port || '80';
-    const isMobile = (os === 'ios' || os === 'android');
+    const port = window.location.port || "80";
+    const isMobile = os === "ios" || os === "android";
 
-    van.add(content, div({ class: 'myr_warning_item myr_warning_https' },
-      strong('Secure Context Required'),
-      p('WebGPU requires a secure context. You are currently using HTTP on "', hostname, '".'),
-      p('Options:'),
-      div({ class: 'myr_warning_options' },
-        // Only show localhost option for desktop (SignalK won't run on mobile)
-        !isMobile ? div({ class: 'myr_warning_option' },
-          strong('Option 1 (easiest): '), 'Access via localhost instead:',
-          div({ class: 'myr_code_block' },
-            p(code('http://localhost:' + port), ' or ', code('http://127.0.0.1:' + port)),
-            p({ class: 'myr_note' }, 'Browsers treat localhost as a secure context')
-          )
-        ) : null,
-        div({ class: 'myr_warning_option' },
-          strong(isMobile ? 'Option 1: ' : 'Option 2: '), 'Add this site to browser exceptions:',
-          getInsecureOriginInstructions(browser, os)
+    van.add(
+      content,
+      div(
+        { class: "myr_warning_item myr_warning_https" },
+        strong("Secure Context Required"),
+        p(
+          'WebGPU requires a secure context. You are currently using HTTP on "',
+          hostname,
+          '".'
         ),
-        div({ class: 'myr_warning_option' },
-          strong(isMobile ? 'Option 2: ' : 'Option 3: '), 'Use HTTPS (requires server configuration)'
+        p("Options:"),
+        div(
+          { class: "myr_warning_options" },
+          // Only show localhost option for desktop (SignalK won't run on mobile)
+          !isMobile
+            ? div(
+                { class: "myr_warning_option" },
+                strong("Option 1 (easiest): "),
+                "Access via localhost instead:",
+                div(
+                  { class: "myr_code_block" },
+                  p(
+                    code("http://localhost:" + port),
+                    " or ",
+                    code("http://127.0.0.1:" + port)
+                  ),
+                  p(
+                    { class: "myr_note" },
+                    "Browsers treat localhost as a secure context"
+                  )
+                )
+              )
+            : null,
+          div(
+            { class: "myr_warning_option" },
+            strong(isMobile ? "Option 1: " : "Option 2: "),
+            "Add this site to browser exceptions:",
+            getInsecureOriginInstructions(browser, os)
+          ),
+          div(
+            { class: "myr_warning_option" },
+            strong(isMobile ? "Option 2: " : "Option 3: "),
+            "Use HTTPS (requires server configuration)"
+          )
         )
       )
-    ));
+    );
   }
 
   // Always show browser-specific WebGPU/hardware acceleration instructions
-  van.add(content, div({ class: 'myr_warning_item' },
-    strong('Enable WebGPU / Hardware Acceleration'),
-    getBrowserInstructions(browser, os)
-  ));
+  van.add(
+    content,
+    div(
+      { class: "myr_warning_item" },
+      strong("Enable WebGPU / Hardware Acceleration"),
+      getBrowserInstructions(browser, os)
+    )
+  );
 }
 
 // Show info about rendering methods when WebGPU is available
 function showRenderingInfo() {
-  const infoDiv = document.getElementById('webgpu_warning');
+  const infoDiv = document.getElementById("webgpu_warning");
   if (!infoDiv) return;
 
-  infoDiv.style.display = 'block';
-  infoDiv.className = 'myr_rendering_info';
-  infoDiv.innerHTML = '';
+  infoDiv.style.display = "block";
+  infoDiv.className = "myr_rendering_info";
+  infoDiv.innerHTML = "";
 
-  van.add(infoDiv, div({ class: 'myr_info_title' }, 'Rendering Options'));
-  van.add(infoDiv, div({ class: 'myr_info_content' },
-    div({ class: 'myr_render_option' },
-      strong('Open Radar Display'), ' (Recommended)',
-      p('Uses WebGPU for GPU-accelerated rendering. More efficient, lower CPU usage, smoother display.')
-    ),
-    div({ class: 'myr_render_option' },
-      strong('Alternate Radar Display'),
-      p('Uses WebGL for rendering. Compatible fallback for systems without WebGPU support.')
+  van.add(infoDiv, div({ class: "myr_info_title" }, "Rendering Options"));
+  van.add(
+    infoDiv,
+    div(
+      { class: "myr_info_content" },
+      div(
+        { class: "myr_render_option" },
+        strong("Open Radar Display"),
+        " (Recommended)",
+        p(
+          "Uses WebGPU for GPU-accelerated rendering. More efficient, lower CPU usage, smoother display."
+        )
+      ),
+      div(
+        { class: "myr_render_option" },
+        strong("Alternate Radar Display"),
+        p(
+          "Uses WebGL for rendering. Compatible fallback for systems without WebGPU support."
+        )
+      )
     )
-  ));
+  );
 }
 
 function getInsecureOriginInstructions(browser, os) {
   const origin = window.location.origin;
 
   // iOS Safari has no way to add insecure origin exceptions
-  if (os === 'ios') {
-    return div({ class: 'myr_code_block' },
-      p('Safari on iOS/iPadOS does not support insecure origin exceptions.'),
-      p('Alternatives:'),
-      p('• Configure HTTPS on your SignalK server'),
-      p('• Use a tunneling service (e.g., ngrok) to get an HTTPS URL'),
-      p('• Access from a desktop browser where you can set the flag')
+  if (os === "ios") {
+    return div(
+      { class: "myr_code_block" },
+      p("Safari on iOS/iPadOS does not support insecure origin exceptions."),
+      p("Alternatives:"),
+      p("• Configure HTTPS on your SignalK server"),
+      p("• Use a tunneling service (e.g., ngrok) to get an HTTPS URL"),
+      p("• Access from a desktop browser where you can set the flag")
     );
   }
 
   // Android Chrome
-  if (os === 'android' && browser === 'chrome') {
-    return div({ class: 'myr_code_block' },
-      p('1. Open Chrome on your Android device'),
-      p('2. Go to: ', code('chrome://flags/#unsafely-treat-insecure-origin-as-secure')),
-      p('3. Add: ', code(origin)),
+  if (os === "android" && browser === "chrome") {
+    return div(
+      { class: "myr_code_block" },
+      p("1. Open Chrome on your Android device"),
+      p(
+        "2. Go to: ",
+        code("chrome://flags/#unsafely-treat-insecure-origin-as-secure")
+      ),
+      p("3. Add: ", code(origin)),
       p('4. Set to "Enabled"'),
       p('5. Tap "Relaunch"')
     );
   }
 
   switch (browser) {
-    case 'chrome':
-    case 'edge':
-      const flagPrefix = browser === 'edge' ? 'edge' : 'chrome';
+    case "chrome":
+    case "edge":
+      const flagPrefix = browser === "edge" ? "edge" : "chrome";
       const flagUrl = `${flagPrefix}://flags/#unsafely-treat-insecure-origin-as-secure`;
-      return div({ class: 'myr_code_block' },
-        p('1. Copy and paste this into your address bar:'),
-        p(a({ href: flagUrl, class: 'myr_flag_link' }, code(flagUrl))),
-        p('2. In the text field, add: ', code(origin)),
+      return div(
+        { class: "myr_code_block" },
+        p("1. Copy and paste this into your address bar:"),
+        p(a({ href: flagUrl, class: "myr_flag_link" }, code(flagUrl))),
+        p("2. In the text field, add: ", code(origin)),
         p('3. Set dropdown to "Enabled"'),
         p('4. Click "Relaunch" at the bottom')
       );
-    case 'firefox':
-      return div({ class: 'myr_code_block' },
-        p('1. Open: ', a({ href: 'about:config', class: 'myr_flag_link' }, code('about:config'))),
+    case "firefox":
+      return div(
+        { class: "myr_code_block" },
+        p(
+          "1. Open: ",
+          a(
+            { href: "about:config", class: "myr_flag_link" },
+            code("about:config")
+          )
+        ),
         p('2. Click "Accept the Risk and Continue"'),
-        p('3. Search for: ', code('dom.securecontext.allowlist')),
-        p('4. Click the + button to add: ', code(window.location.hostname)),
-        p('5. Restart Firefox')
+        p("3. Search for: ", code("dom.securecontext.allowlist")),
+        p("4. Click the + button to add: ", code(window.location.hostname)),
+        p("5. Restart Firefox")
       );
     default:
-      return div({ class: 'myr_code_block' },
-        p('Check your browser settings for allowing insecure origins.')
+      return div(
+        { class: "myr_code_block" },
+        p("Check your browser settings for allowing insecure origins.")
       );
   }
 }
 
 function getBrowserInstructions(browser, os) {
   // iOS/iPadOS Safari
-  if (browser === 'safari' && os === 'ios') {
-    return div({ class: 'myr_code_block' },
-      p('Safari on iOS/iPadOS 17+:'),
-      p('1. Open ', strong('Settings'), ' app'),
-      p('2. Scroll down and tap ', strong('Safari')),
-      p('3. Scroll down and tap ', strong('Advanced')),
-      p('4. Tap ', strong('Feature Flags')),
-      p('5. Enable ', strong('WebGPU')),
-      p('6. Return to Safari and reload this page'),
-      p({ class: 'myr_note' }, 'Note: Requires iOS/iPadOS 17 or later.')
+  if (browser === "safari" && os === "ios") {
+    return div(
+      { class: "myr_code_block" },
+      p("Safari on iOS/iPadOS 17+:"),
+      p("1. Open ", strong("Settings"), " app"),
+      p("2. Scroll down and tap ", strong("Safari")),
+      p("3. Scroll down and tap ", strong("Advanced")),
+      p("4. Tap ", strong("Feature Flags")),
+      p("5. Enable ", strong("WebGPU")),
+      p("6. Return to Safari and reload this page"),
+      p({ class: "myr_note" }, "Note: Requires iOS/iPadOS 17 or later.")
     );
   }
 
   switch (browser) {
-    case 'chrome':
-      return div({ class: 'myr_code_block' },
-        p('Chrome should have WebGPU enabled by default (v113+).'),
-        p('If not working, try:'),
-        p('1. Open: ', code('chrome://flags/#enable-unsafe-webgpu')),
+    case "chrome":
+      return div(
+        { class: "myr_code_block" },
+        p("Chrome should have WebGPU enabled by default (v113+)."),
+        p("If not working, try:"),
+        p("1. Open: ", code("chrome://flags/#enable-unsafe-webgpu")),
         p('2. Set to "Enabled"'),
-        p('3. Relaunch Chrome'),
-        os === 'linux' ? p({ class: 'myr_note' },
-          'Note: On Linux, you may need Vulkan drivers installed.') : null
+        p("3. Relaunch Chrome"),
+        os === "linux"
+          ? p(
+              { class: "myr_note" },
+              "Note: On Linux, you may need Vulkan drivers installed."
+            )
+          : null
       );
-    case 'edge':
-      return div({ class: 'myr_code_block' },
-        p('Edge should have WebGPU enabled by default.'),
-        p('If not working, try:'),
-        p('1. Open: ', code('edge://flags/#enable-unsafe-webgpu')),
+    case "edge":
+      return div(
+        { class: "myr_code_block" },
+        p("Edge should have WebGPU enabled by default."),
+        p("If not working, try:"),
+        p("1. Open: ", code("edge://flags/#enable-unsafe-webgpu")),
         p('2. Set to "Enabled"'),
-        p('3. Relaunch Edge')
+        p("3. Relaunch Edge")
       );
-    case 'firefox':
-      return div({ class: 'myr_code_block' },
-        p('Firefox WebGPU is experimental:'),
-        p('1. Open: ', code('about:config')),
-        p('2. Search for: ', code('dom.webgpu.enabled')),
-        p('3. Set to: ', code('true')),
-        p('4. Restart Firefox'),
-        p({ class: 'myr_note' }, 'Note: Firefox WebGPU support is still in development.')
+    case "firefox":
+      return div(
+        { class: "myr_code_block" },
+        p("Firefox WebGPU is experimental:"),
+        p("1. Open: ", code("about:config")),
+        p("2. Search for: ", code("dom.webgpu.enabled")),
+        p("3. Set to: ", code("true")),
+        p("4. Restart Firefox"),
+        p(
+          { class: "myr_note" },
+          "Note: Firefox WebGPU support is still in development."
+        )
       );
-    case 'safari':
-      return div({ class: 'myr_code_block' },
-        p('Safari WebGPU (macOS 14+):'),
-        p('1. Open Safari menu > Settings'),
-        p('2. Go to Advanced tab'),
+    case "safari":
+      return div(
+        { class: "myr_code_block" },
+        p("Safari WebGPU (macOS 14+):"),
+        p("1. Open Safari menu > Settings"),
+        p("2. Go to Advanced tab"),
         p('3. Check "Show features for web developers"'),
-        p('4. Go to Feature Flags tab'),
+        p("4. Go to Feature Flags tab"),
         p('5. Enable "WebGPU"'),
-        p('6. Restart Safari')
+        p("6. Restart Safari")
       );
     default:
-      return div({ class: 'myr_code_block' },
-        p('WebGPU requires a modern browser:'),
-        p('- Chrome 113+ (recommended)'),
-        p('- Edge 113+'),
-        p('- Safari 17+ (macOS/iOS)'),
-        p('- Firefox Nightly (experimental)')
+      return div(
+        { class: "myr_code_block" },
+        p("WebGPU requires a modern browser:"),
+        p("- Chrome 113+ (recommended)"),
+        p("- Edge 113+"),
+        p("- Safari 17+ (macOS/iOS)"),
+        p("- Firefox Nightly (experimental)")
       );
   }
 }
 
 function getHardwareAccelerationInstructions(browser, os) {
   // iOS/iPadOS - no hardware acceleration toggle
-  if (os === 'ios') {
-    return div({ class: 'myr_code_block' },
-      p('On iOS/iPadOS, hardware acceleration cannot be disabled.'),
-      p('If WebGPU is not working:'),
-      p('• Ensure you have iOS/iPadOS 17 or later'),
-      p('• Try closing and reopening Safari'),
-      p('• Restart your device')
+  if (os === "ios") {
+    return div(
+      { class: "myr_code_block" },
+      p("On iOS/iPadOS, hardware acceleration cannot be disabled."),
+      p("If WebGPU is not working:"),
+      p("• Ensure you have iOS/iPadOS 17 or later"),
+      p("• Try closing and reopening Safari"),
+      p("• Restart your device")
     );
   }
 
   switch (browser) {
-    case 'chrome':
-      return div({ class: 'myr_code_block' },
-        p('1. Open: ', code('chrome://settings/system')),
+    case "chrome":
+      return div(
+        { class: "myr_code_block" },
+        p("1. Open: ", code("chrome://settings/system")),
         p('2. Enable "Use graphics acceleration when available"'),
-        p('3. Relaunch Chrome')
+        p("3. Relaunch Chrome")
       );
-    case 'edge':
-      return div({ class: 'myr_code_block' },
-        p('1. Open: ', code('edge://settings/system')),
+    case "edge":
+      return div(
+        { class: "myr_code_block" },
+        p("1. Open: ", code("edge://settings/system")),
         p('2. Enable "Use graphics acceleration when available"'),
-        p('3. Relaunch Edge')
+        p("3. Relaunch Edge")
       );
-    case 'firefox':
-      return div({ class: 'myr_code_block' },
-        p('1. Open: ', code('about:preferences')),
+    case "firefox":
+      return div(
+        { class: "myr_code_block" },
+        p("1. Open: ", code("about:preferences")),
         p('2. Scroll to "Performance"'),
         p('3. Uncheck "Use recommended performance settings"'),
         p('4. Check "Use hardware acceleration when available"'),
-        p('5. Restart Firefox')
+        p("5. Restart Firefox")
       );
-    case 'safari':
-      return div({ class: 'myr_code_block' },
-        p('Safari uses hardware acceleration by default on macOS.'),
-        p('If WebGPU is not working:'),
-        p('• Ensure you have macOS 14 (Sonoma) or later'),
-        p('• Check that WebGPU is enabled in Feature Flags'),
-        p('• Try restarting Safari')
+    case "safari":
+      return div(
+        { class: "myr_code_block" },
+        p("Safari uses hardware acceleration by default on macOS."),
+        p("If WebGPU is not working:"),
+        p("• Ensure you have macOS 14 (Sonoma) or later"),
+        p("• Check that WebGPU is enabled in Feature Flags"),
+        p("• Try restarting Safari")
       );
     default:
-      return div({ class: 'myr_code_block' },
+      return div(
+        { class: "myr_code_block" },
         p('Check your browser settings for "Hardware acceleration"'),
         p('or "Use GPU" and ensure it is enabled.'),
-        p('Then restart the browser.')
+        p("Then restart the browser.")
       );
   }
 }
 
 const RadarEntry = (radar) => {
   // Build display name: "Brand Model (Name)" or "Brand Name" if no model
-  const brand = radar.brand || '';
-  const model = radar.model || '';
-  const name = radar.name || '';
+  const brand = radar.brand || "";
+  const model = radar.model || "";
+  const name = radar.name || "";
 
   let displayName;
-  if (model && model !== 'Unknown') {
+  if (model && model !== "Unknown") {
     displayName = `${brand} ${model} (${name})`;
   } else {
     displayName = `${brand} ${name}`;
@@ -352,23 +440,39 @@ const RadarEntry = (radar) => {
 
   // Show different links based on WebGPU availability
   if (webGPUAvailable) {
-    return tr({ class: 'myr_radar_row' },
-      td({ class: 'myr_radar_name' }, displayName),
-      td({ class: 'myr_radar_actions' },
-        a({ href: "viewer.html?id=" + radar.id, class: 'myr_radar_link myr_radar_link_primary' },
-          'Open Radar Display'
+    return tr(
+      { class: "myr_radar_row" },
+      td({ class: "myr_radar_name" }, displayName),
+      td(
+        { class: "myr_radar_actions" },
+        a(
+          {
+            href: "viewer.html?id=" + radar.id,
+            class: "myr_radar_link myr_radar_link_primary",
+          },
+          "Open Radar Display"
         ),
-        a({ href: "viewer.html?id=" + radar.id + "&renderer=webgl", class: 'myr_radar_link myr_radar_link_secondary' },
-          'Alternate Display'
+        a(
+          {
+            href: "viewer.html?id=" + radar.id + "&renderer=webgl",
+            class: "myr_radar_link myr_radar_link_secondary",
+          },
+          "Alternate Display"
         )
       )
     );
   } else {
-    return tr({ class: 'myr_radar_row' },
-      td({ class: 'myr_radar_name' }, displayName),
-      td({ class: 'myr_radar_actions' },
-        a({ href: "viewer.html?id=" + radar.id, class: 'myr_radar_link myr_radar_link_primary' },
-          'Open Radar Display'
+    return tr(
+      { class: "myr_radar_row" },
+      td({ class: "myr_radar_name" }, displayName),
+      td(
+        { class: "myr_radar_actions" },
+        a(
+          {
+            href: "viewer.html?id=" + radar.id,
+            class: "myr_radar_link myr_radar_link_primary",
+          },
+          "Open Radar Display"
         )
       )
     );
@@ -395,13 +499,17 @@ function radarsLoaded(d) {
   r.innerHTML = "";
 
   if (c > 0) {
-    van.add(r, div({ class: 'myr_section_title' },
-      span({ class: 'myr_radar_count' }, c),
-      ' Radar' + (c > 1 ? 's' : '') + ' Detected'
-    ));
+    van.add(
+      r,
+      div(
+        { class: "myr_section_title" },
+        span({ class: "myr_radar_count" }, c),
+        " Radar" + (c > 1 ? "s" : "") + " Detected"
+      )
+    );
 
     let table = document.createElement("table");
-    table.className = 'myr_radar_table';
+    table.className = "myr_radar_table";
     r.appendChild(table);
 
     radarIds.sort().forEach(function (v, i) {
@@ -410,55 +518,90 @@ function radarsLoaded(d) {
       van.add(table, RadarEntry(radar));
     });
 
-    // Add recordings link (standalone mode only)
+    // Add action buttons (standalone mode only)
     if (isStandaloneMode()) {
-      van.add(r, div({ class: 'myr_recordings_link' },
-        a({ href: 'recordings.html', class: 'myr_radar_link myr_radar_link_secondary' },
-          'Recordings'
+      van.add(
+        r,
+        div(
+          { class: "myr_action_buttons" },
+          button(
+            {
+              class: "myr_radar_link myr_radar_link_secondary",
+              onclick: () => showInterfacesPopup(),
+            },
+            "Interfaces"
+          ),
+          a(
+            {
+              href: "recordings.html",
+              class:
+                "myr_radar_link myr_radar_link_secondary myr_strikethrough",
+            },
+            "Recordings"
+          )
         )
-      ));
+      );
     }
 
     // Radar found, poll less frequently
     setTimeout(loadRadars, 15000);
   } else {
-    van.add(r, div({ class: 'myr_detecting' },
-      span({ class: 'myr_pulse' }),
-      'Searching for radars...'
-    ));
+    van.add(
+      r,
+      div(
+        { class: "myr_detecting" },
+        span({ class: "myr_pulse" }),
+        "Searching for radars..."
+      )
+    );
 
     // Show network requirements help
-    van.add(r,
-      details({ class: 'myr_network_help' },
-        summary('Network Configuration Help'),
-        div({ class: 'myr_help_content' },
+    van.add(
+      r,
+      details(
+        { class: "myr_network_help" },
+        summary("Network Configuration Help"),
+        div(
+          { class: "myr_help_content" },
           // Furuno section
-          div({ class: 'myr_brand_section' },
-            div({ class: 'myr_brand_header' }, 'Furuno DRS (DRS4D-NXT, DRS6A-NXT, etc.)'),
+          div(
+            { class: "myr_brand_section" },
+            div(
+              { class: "myr_brand_header" },
+              "Furuno DRS (DRS4D-NXT, DRS6A-NXT, etc.)"
+            ),
             p(NETWORK_REQUIREMENTS.furuno.description),
-            div({ class: 'myr_setup_steps' },
+            div(
+              { class: "myr_setup_steps" },
               NETWORK_REQUIREMENTS.furuno.setup.map((step, i) =>
-                div({ class: 'myr_setup_step' }, (i + 1) + '. ' + step)
+                div({ class: "myr_setup_step" }, i + 1 + ". " + step)
               )
             ),
-            div({ class: 'myr_code_example' },
+            div(
+              { class: "myr_code_example" },
               code(NETWORK_REQUIREMENTS.furuno.example)
             )
           ),
 
           // Other brands
-          div({ class: 'myr_brand_section myr_brand_other' },
-            div({ class: 'myr_brand_header' }, 'Navico (Simrad, Lowrance, B&G)'),
+          div(
+            { class: "myr_brand_section myr_brand_other" },
+            div(
+              { class: "myr_brand_header" },
+              "Navico (Simrad, Lowrance, B&G)"
+            ),
             p(NETWORK_REQUIREMENTS.navico.description)
           ),
 
-          div({ class: 'myr_brand_section myr_brand_other' },
-            div({ class: 'myr_brand_header' }, 'Raymarine'),
+          div(
+            { class: "myr_brand_section myr_brand_other" },
+            div({ class: "myr_brand_header" }, "Raymarine"),
             p(NETWORK_REQUIREMENTS.raymarine.description)
           ),
 
-          div({ class: 'myr_brand_section myr_brand_other' },
-            div({ class: 'myr_brand_header' }, 'Garmin xHD'),
+          div(
+            { class: "myr_brand_section myr_brand_other" },
+            div({ class: "myr_brand_header" }, "Garmin xHD"),
             p(NETWORK_REQUIREMENTS.garmin.description)
           )
         )
@@ -470,46 +613,174 @@ function radarsLoaded(d) {
   }
 }
 
-function interfacesLoaded(d) {
-  if (!d || !d.interfaces) {
-    return;
+function createInterfacesModal() {
+  // Create modal if it doesn't exist
+  let modal = document.getElementById("interfaces_modal");
+  if (modal) {
+    return modal;
   }
 
-  let c = Object.keys(d.interfaces).length;
-  if (c > 0) {
-    let r = document.getElementById("interfaces");
-    r.innerHTML = "";
+  modal = div(
+    { id: "interfaces_modal", class: "myr_interfaces_modal" },
+    div(
+      { class: "myr_interfaces_content" },
+      div(
+        { class: "myr_interfaces_header" },
+        div({ class: "myr_interfaces_title" }, "Network Interfaces"),
+        button(
+          {
+            class: "myr_interfaces_close",
+            onclick: () => hideInterfacesPopup(),
+          },
+          "Close"
+        )
+      ),
+      div({ id: "interfaces_modal_body" })
+    )
+  );
 
-    van.add(r, div({ class: 'myr_section_title' }, 'Network Interfaces'));
+  // Close when clicking outside the content
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) {
+      hideInterfacesPopup();
+    }
+  });
 
-    let table = document.createElement("table");
-    table.className = 'myr_interface_table';
-    r.appendChild(table);
+  document.body.appendChild(modal);
+  return modal;
+}
 
-    let brands = ["Interface", ...d.brands];
-    let hdr = van.add(table, tr({ class: 'myr_interface_header' }));
-    brands.forEach((v) => van.add(hdr, td(v)));
+async function showInterfacesPopup() {
+  const modal = createInterfacesModal();
+  const body = document.getElementById("interfaces_modal_body");
+  body.innerHTML = "";
 
-    let interfaces = d.interfaces;
-    if (interfaces) {
-      console.log("interfaces", interfaces);
-      Object.keys(interfaces).forEach(function (v, i) {
+  // Show loading state
+  van.add(
+    body,
+    div(
+      { class: "myr_detecting" },
+      span({ class: "myr_pulse" }),
+      "Loading interfaces..."
+    )
+  );
+  modal.classList.add("myr_show");
+
+  // Fetch fresh interface data
+  try {
+    const response = await fetchInterfaces();
+    const d = response?.radars?.interfaces;
+
+    body.innerHTML = "";
+
+    if (!d || !d.interfaces) {
+      van.add(
+        body,
+        div({ class: "myr_detecting" }, "No interface data available")
+      );
+      return;
+    }
+
+    const interfaces = d.interfaces;
+    const c = Object.keys(interfaces).length;
+
+    if (c === 0) {
+      van.add(body, div({ class: "myr_detecting" }, "No interfaces found"));
+      return;
+    }
+
+    // Categorize interfaces
+    const okInterfaces = [];
+    const noIpInterfaces = [];
+    const wirelessInterfaces = [];
+
+    Object.keys(interfaces).forEach((name) => {
+      const iface = interfaces[name];
+      if (iface.status === "NoIPv4Address") {
+        noIpInterfaces.push(name);
+      } else if (iface.status === "WirelessIgnored") {
+        wirelessInterfaces.push(name);
+      } else if (iface.status === "Ok") {
+        okInterfaces.push({ name, data: iface });
+      }
+    });
+
+    // Show active interfaces with brand status
+    if (okInterfaces.length > 0) {
+      let table = document.createElement("table");
+      table.className = "myr_interface_table";
+      body.appendChild(table);
+
+      let brands = ["Interface", ...d.brands];
+      let hdr = van.add(table, tr({ class: "myr_interface_header" }));
+      brands.forEach((v) => van.add(hdr, td(v)));
+
+      okInterfaces.forEach(({ name, data }) => {
         let row = van.add(table, tr());
-
-        van.add(row, td({ class: 'myr_interface_name' }, v));
-        if (interfaces[v].status) {
-          van.add(row, td({ class: 'myr_interface_error', colspan: d.brands.length }, interfaces[v].status));
-        } else {
-          d.brands.forEach((b) => {
-            let status = interfaces[v].listeners[b];
-            let className = (status == "Listening" || status == "Active")
-              ? 'myr_interface_ok'
-              : 'myr_interface_error';
-            van.add(row, td({ class: className }, status));
-          });
-        }
+        van.add(
+          row,
+          td({ class: "myr_interface_name" }, name + " (" + data.ip + ")")
+        );
+        d.brands.forEach((b) => {
+          let status = data.listeners[b];
+          let className;
+          if (status === "Active") {
+            className = "myr_interface_ok";
+          } else if (status === "Listening") {
+            className = "myr_interface_listening";
+          } else {
+            className = "myr_interface_error";
+          }
+          van.add(row, td({ class: className }, status));
+        });
       });
     }
+
+    // Show wireless ignored interfaces
+    if (wirelessInterfaces.length > 0) {
+      van.add(
+        body,
+        div(
+          { class: "myr_interface_ignored" },
+          strong("Wireless (ignored): "),
+          wirelessInterfaces.join(", ")
+        )
+      );
+    }
+
+    // Show no IPv4 interfaces
+    if (noIpInterfaces.length > 0) {
+      van.add(
+        body,
+        div(
+          { class: "myr_interface_ignored" },
+          strong("No IPv4 address: "),
+          noIpInterfaces.join(", ")
+        )
+      );
+    }
+
+    // If no active interfaces
+    if (okInterfaces.length === 0) {
+      van.add(
+        body,
+        div({ class: "myr_detecting" }, "No active network interfaces")
+      );
+    }
+  } catch (err) {
+    console.error("Failed to load interfaces:", err);
+    body.innerHTML = "";
+    van.add(
+      body,
+      div({ class: "myr_detecting" }, "Failed to load interface data")
+    );
+  }
+}
+
+function hideInterfacesPopup() {
+  const modal = document.getElementById("interfaces_modal");
+  if (modal) {
+    modal.classList.remove("myr_show");
   }
 }
 
@@ -520,23 +791,6 @@ async function loadRadars() {
   } catch (err) {
     console.error("Failed to load radars:", err);
     setTimeout(loadRadars, 15000);
-  }
-}
-
-async function loadInterfaces() {
-  try {
-    const interfaces = await fetchInterfaces();
-    if (interfaces) {
-      interfacesLoaded(interfaces);
-    } else {
-      // Hide interfaces section in SignalK mode
-      let r = document.getElementById("interfaces");
-      if (r) {
-        r.style.display = "none";
-      }
-    }
-  } catch (err) {
-    console.error("Failed to load interfaces:", err);
   }
 }
 
@@ -556,5 +810,10 @@ window.onload = async function () {
 
   // Load data
   loadRadars();
-  loadInterfaces();
+
+  // Hide the interfaces section (now shown via popup)
+  const interfacesSection = document.getElementById("interfaces");
+  if (interfacesSection) {
+    interfacesSection.style.display = "none";
+  }
 };

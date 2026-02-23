@@ -272,6 +272,10 @@
   color: rgb(100, 200, 100);
 }
 
+.myr_interface_listening {
+  color: rgb(220, 200, 80);
+}
+
 .myr_interface_error {
   color: rgb(200, 100, 100);
 }
@@ -479,7 +483,105 @@
   background: rgb(130, 230, 210);
 }
 
-/* Recordings link */
+/* Action buttons (Interfaces, Recordings) */
+.myr_action_buttons {
+  margin-top: 15px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* Strikethrough for non-functional buttons */
+.myr_strikethrough {
+  position: relative;
+}
+
+.myr_strikethrough::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: -2px;
+  right: -2px;
+  height: 2px;
+  background: linear-gradient(135deg, rgba(255, 80, 80, 0.9), rgba(200, 50, 50, 0.9));
+  transform: rotate(-15deg);
+  pointer-events: none;
+}
+
+/* Interfaces popup modal */
+.myr_interfaces_modal {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 1000;
+  justify-content: center;
+  align-items: center;
+}
+
+.myr_interfaces_modal.myr_show {
+  display: flex;
+}
+
+.myr_interfaces_content {
+  background: linear-gradient(135deg, rgba(30, 50, 40, 0.98), rgba(20, 40, 35, 0.98));
+  border: 1px solid rgba(100, 200, 180, 0.4);
+  border-radius: 12px;
+  padding: 25px;
+  max-width: 90%;
+  max-height: 80%;
+  overflow: auto;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.4);
+  position: relative;
+}
+
+.myr_interfaces_header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  border-bottom: 1px solid rgba(100, 200, 180, 0.3);
+  padding-bottom: 15px;
+}
+
+.myr_interfaces_title {
+  font-size: 20px;
+  font-weight: bold;
+  color: rgb(100, 200, 180);
+}
+
+.myr_interfaces_close {
+  background: rgba(100, 200, 180, 0.2);
+  border: 1px solid rgba(100, 200, 180, 0.4);
+  border-radius: 6px;
+  color: rgb(100, 200, 180);
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s ease;
+}
+
+.myr_interfaces_close:hover {
+  background: rgba(100, 200, 180, 0.3);
+}
+
+.myr_interface_ignored {
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: rgba(100, 100, 100, 0.2);
+  border-radius: 6px;
+  font-size: 13px;
+  color: rgba(200, 200, 200, 0.8);
+}
+
+.myr_interface_ignored strong {
+  color: rgba(200, 200, 200, 0.9);
+}
+
+/* Legacy - kept for compatibility */
 .myr_recordings_link {
   margin-top: 15px;
   text-align: right;
