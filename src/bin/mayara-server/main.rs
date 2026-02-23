@@ -17,6 +17,12 @@ use mayara::{Cli, network};
 async fn main() -> Result<()> {
     let args = Cli::parse();
 
+    // Handle --openapi flag: output OpenAPI spec and exit
+    if args.openapi {
+        println!("{}", web::generate_openapi_json());
+        return Ok(());
+    }
+
     let log_level = args.verbose.log_level_filter();
     env_logger::Builder::from_env(Env::default())
         // Only log mayara and mayara_server modules at the selected level
